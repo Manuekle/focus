@@ -1,0 +1,27 @@
+/* Same tokens as `product-figure.module.css`, with literal fallbacks so the
+   figure still draws in `global-error`, where the root layout's variables are
+   not on the page. */
+.frame {
+  --hairline-plate: var(--card, #ffffff);
+  --hairline-hi: var(--foreground, #232327);
+  --hairline-edge: color-mix(in oklch, var(--foreground, #232327) 55%, var(--hairline-plate));
+  --hairline-mid: color-mix(in oklch, var(--foreground, #232327) 36%, var(--hairline-plate));
+  --hairline-lo: color-mix(in oklch, var(--foreground, #232327) 18%, var(--hairline-plate));
+  --hairline-stroke: 1;
+  position: relative;
+  display: grid;
+  place-items: center;
+  aspect-ratio: 5 / 4;
+  flex-shrink: 0;
+}
+
+.fallback {
+  display: grid;
+  place-items: center;
+  pointer-events: none;
+}
+
+/* The engine draws its own svg over the mark once mounted. */
+.frame[data-ready] .fallback {
+  visibility: hidden;
+}

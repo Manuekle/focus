@@ -1,0 +1,136 @@
+/* A thick pill meter: a gradient fill that glows into the card, and a label
+   that sits in the empty end of the track and changes ink where the fill
+   passes under it. The fill, its glow and the on-fill copy of the label all
+   read one width, so they move together. */
+
+.meter {
+  --meter-height: 2.25rem;
+  /* Never thinner than its own height, so a sliver still reads as a pill. */
+  --meter-fill: max(var(--meter-height), var(--meter-value));
+  --meter-track: oklch(0 0 0 / 0.055);
+  --meter-track-edge: inset 0 1px 2px oklch(0 0 0 / 0.07), inset 0 0 0 1px oklch(0 0 0 / 0.035);
+  --meter-label: var(--muted-foreground);
+  --meter-glow-opacity: 0.45;
+
+  position: relative;
+  isolation: isolate;
+  height: var(--meter-height);
+  border-radius: 999px;
+  background: var(--meter-track);
+  box-shadow: var(--meter-track-edge);
+}
+
+.meter[data-empty] {
+  --meter-fill: 0px;
+}
+
+:global(.dark) .meter {
+  --meter-track: oklch(1 0 0 / 0.09);
+  --meter-track-edge: inset 0 1px 0 oklch(1 0 0 / 0.06), inset 0 0 0 1px oklch(1 0 0 / 0.04);
+  --meter-glow-opacity: 0.7;
+}
+
+.meter[data-tone="ok"] {
+  --meter-from: color-mix(in srgb, var(--primary) 72%, var(--card));
+  --meter-to: var(--primary);
+  --meter-ink: var(--primary-foreground);
+}
+
+.meter[data-tone="low"] {
+  --meter-from: oklch(0.91 0.16 100);
+  --meter-to: oklch(0.8 0.16 65);
+  --meter-ink: oklch(0.32 0.07 60);
+}
+
+.meter[data-tone="critical"] {
+  --meter-from: oklch(0.8 0.13 30);
+  --meter-to: oklch(0.66 0.2 22);
+  --meter-ink: oklch(0.24 0.06 25);
+}
+
+.fill,
+.glow {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-start: 0;
+  width: var(--meter-fill);
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--meter-from), var(--meter-to));
+  transition: width 900ms var(--ease-expo-out);
+  animation: meter-grow 1100ms var(--ease-expo-out) 120ms backwards;
+}
+
+.glow {
+  z-index: -1;
+  filter: blur(14px);
+  opacity: var(--meter-glow-opacity);
+}
+
+.fill {
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.45), inset 0 -1px 0 oklch(0 0 0 / 0.06);
+}
+
+.label {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding-inline: 1rem;
+  overflow: hidden;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+  color: var(--meter-label);
+}
+
+/* The same label in fill ink, cut to the fill's width: where the fill runs
+   under the text, the letters switch colour exactly at its edge. */
+.labelOnFill {
+  color: var(--meter-ink);
+  clip-path: inset(0 calc(100% - var(--meter-fill)) 0 0);
+  transition: clip-path 900ms var(--ease-expo-out);
+  animation: meter-reveal 1100ms var(--ease-expo-out) 120ms backwards;
+}
+
+@keyframes meter-grow {
+  from {
+    width: 0;
+  }
+}
+
+@keyframes meter-reveal {
+  from {
+    clip-path: inset(0 100% 0 0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .fill,
+  .glow,
+  .labelOnFill {
+    transition: none;
+    animation: none;
+  }
+}
+
+@media (forced-colors: active) {
+  .meter {
+    border: 1px solid CanvasText;
+  }
+
+  .fill {
+    forced-color-adjust: none;
+    background: Highlight;
+  }
+
+  .glow {
+    display: none;
+  }
+
+  .labelOnFill {
+    forced-color-adjust: none;
+    color: HighlightText;
+  }
+}

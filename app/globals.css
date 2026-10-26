@@ -1,0 +1,4 @@
+@import "../styles/index.css";
+@import "./catalog.css";
+@source ".";
+@source "../catalog";

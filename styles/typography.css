@@ -1,0 +1,36 @@
+/* The supplied Optimistic variable font is served unchanged. */
+@font-face {
+  font-family: "Optimistic Display";
+  src: url("/fonts/optimistic/optimistic.ttf") format("truetype");
+  font-weight: 300 800;
+  font-stretch: 80% 100%;
+  font-style: normal;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Optimistic Display";
+  src: url("/fonts/optimistic/optimistic.ttf") format("truetype");
+  font-weight: 300 800;
+  font-stretch: 80% 100%;
+  font-style: italic;
+  font-display: swap;
+}
+:root {
+  --app-tracking: -0.02em;
+  --app-tracking-xs: -0.02em;
+  --app-tracking-sm: -0.02em;
+  --app-tracking-base: -0.02em;
+  --app-tracking-lg: -0.02em;
+  --app-tracking-xl: -0.02em;
+  --app-tracking-2xl: -0.02em;
+  --app-tracking-3xl: -0.02em;
+  --app-tracking-4xl: -0.02em;
+}
+@layer base {
+  /* Resolve em against each element, including text smaller than its parent. */
+  * { letter-spacing: var(--app-tracking); }
+  body, button, input, select, textarea, code, pre, kbd, samp {
+    font-family: var(--app-font-sans);
+    letter-spacing: var(--app-tracking);
+  }
+}

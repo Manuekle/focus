@@ -1,0 +1,97 @@
+{
+  "name": "@focus/ui",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Sistema de dise\u00f1o de Oruka extra\u00eddo para Focus. Componentes React, tokens y cat\u00e1logo independiente.",
+  "sideEffects": [
+    "**/*.css"
+  ],
+  "exports": {
+    "./provider": "./components/focus-provider.tsx",
+    "./ui/*": "./components/ui/*.tsx",
+    "./motion/*": "./components/motion/*.tsx",
+    "./ai/*": "./components/ai-elements/*.tsx",
+    "./patterns/*": "./components/patterns/*.tsx",
+    "./marketing/*": "./components/marketing/*.tsx",
+    "./pet/*": "./components/pet/*.tsx",
+    "./hairline/*": "./components/hairline/*.tsx",
+    "./hooks/*": "./lib/hooks/*.ts",
+    "./icons": "./components/icons/icon.tsx",
+    "./styles": "./styles/index.css",
+    "./tokens.css": "./styles/tokens.css",
+    "./tokens.json": "./tokens/tokens.json",
+    "./utils": "./lib/utils.ts",
+    "./brand": "./components/icons/focus-mark.tsx"
+  },
+  "scripts": {
+    "dev": "next dev --hostname 127.0.0.1 --port 3200",
+    "build": "pnpm tokens && next build",
+    "start": "next start --hostname 127.0.0.1 --port 3200",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "check": "pnpm tokens && pnpm inventory && pnpm typecheck && pnpm lint && pnpm verify",
+    "verify": "node scripts/verify.mjs",
+    "tokens": "node scripts/export-tokens.mjs",
+    "inventory": "node scripts/inventory.mjs"
+  },
+  "peerDependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "dependencies": {
+    "@hugeicons/core-free-icons": "4.3.0",
+    "@hugeicons/react": "1.1.10",
+    "@lucasmarkes/hairline": "0.3.0",
+    "@radix-ui/react-use-controllable-state": "1.2.2",
+    "@streamdown/cjk": "1.0.3",
+    "@streamdown/code": "1.1.1",
+    "@streamdown/math": "1.0.2",
+    "@streamdown/mermaid": "1.0.2",
+    "@tailwindcss/postcss": "4.3.0",
+    "beautiful-mermaid": "1.1.3",
+    "border-beam": "1.3.0",
+    "class-variance-authority": "0.7.1",
+    "clsx": "2.1.1",
+    "cmdk": "1.1.1",
+    "cube-motion": "0.1.0",
+    "cuelume": "0.2.8",
+    "lenis": "1.3.26",
+    "liquid-gooey": "0.2.0",
+    "motion": "12.40.0",
+    "radix-ui": "1.4.3",
+    "streamdown": "2.5.0",
+    "tailwind-merge": "3.6.0",
+    "tailwindcss": "4.3.0",
+    "thinking-orbs": "0.3.1",
+    "voice-glow": "0.2.0"
+  },
+  "devDependencies": {
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "@types/react": "19.2.15",
+    "@types/react-dom": "19.2.3",
+    "@types/node": "24.13.2",
+    "typescript": "6.0.3",
+    "eslint": "9.39.5",
+    "eslint-config-next": "16.4.1",
+    "next": "16.4.1"
+  },
+  "packageManager": "pnpm@12.11.2",
+  "files": [
+    "components",
+    "lib",
+    "styles",
+    "tokens",
+    "public/fonts",
+    "public/logos/apps",
+    "public/brand",
+    "examples",
+    "docs",
+    "README.md",
+    "provenance.json"
+  ],
+  "engines": {
+    "node": ">=22.12.0"
+  }
+}

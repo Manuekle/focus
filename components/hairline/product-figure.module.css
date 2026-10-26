@@ -1,0 +1,18 @@
+.figure {
+  --hairline-plate: var(--card);
+  --hairline-hi: var(--foreground);
+  --hairline-edge: color-mix(in oklch, var(--foreground) 55%, var(--hairline-plate));
+  --hairline-mid: color-mix(in oklch, var(--foreground) 36%, var(--hairline-plate));
+  --hairline-lo: color-mix(in oklch, var(--foreground) 18%, var(--hairline-plate));
+  --hairline-stroke: 1;
+  position: relative;
+  aspect-ratio: 5 / 4;
+  flex-shrink: 0;
+}
+
+.figure[data-surface="feature"] {
+  --hairline-plate: color-mix(in oklch, var(--muted) 20%, var(--card));
+}
+
+/* These figures begin in their composed rest pose. Their shared kernel owns
+   pointer motion, reduced motion, and suspension outside the viewport. */

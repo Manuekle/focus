@@ -1,0 +1,385 @@
+/* Semantic surface tokens extracted from Oruka. Typography is defined in typography.css. */
+:root {
+  color-scheme: light;
+
+  /* ── Surfaces ─────────────────────────────────────────────── */
+  --background: oklch(0.971 0 0);          /* #F7F7F8 */
+  --foreground: oklch(0.16 0 0);
+  --card: oklch(1 0 0);                     /* #FFFFFF */
+  --card-foreground: oklch(0.16 0 0);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.16 0 0);
+  /* Brand blue, the hero's #325cfe. Primary actions and focus carry it. */
+  --primary: oklch(0.55 0.23 267);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.965 0 0);            /* #FAFAFA */
+  --secondary-foreground: oklch(0.2 0 0);
+  --muted: oklch(0.955 0 0);               /* #F2F2F3 */
+  --muted-foreground: oklch(0.52 0 0);
+  --accent: oklch(0.955 0 0);
+  --accent-foreground: oklch(0.2 0 0);
+  /* Error text also clears 4.5:1 over a 10% danger tint on muted surfaces. */
+  --destructive: oklch(0.52 0.21 27.325);
+  --destructive-foreground: oklch(0.985 0 0);
+  /* The violet the billing screens use the way the rest of the app uses
+     `--destructive`: a tinted text button, not a filled surface. Kept as a
+     token in both themes rather than a `violet-600 dark:violet-400` pair on
+     the element, which is what left the light-mode hover invisible. */
+  --billing: oklch(0.48 0.23 296);
+  --border: oklch(0 0 0 / 0.1);
+  --input: oklch(0 0 0 / 0.08);
+  /* The goo outline is flooded inside an SVG filter, which paints a flat
+     colour and cannot honour the alpha in `--border`: it has to be opaque. */
+  --goo-outline: #dfe2e8;
+  /* Focus indicators need 3:1 contrast against the card surface (WCAG
+     1.4.11). This neutral lands at 3.79:1 while still reading as part of the
+     interface rather than a second border. */
+  --ring: oklch(0.6 0.2 267);
+  /* The scrollbar thumb is a wash of the foreground over the page, the same
+     way `--border` is — so it reads as part of the surface rather than as a
+     platform widget sitting on top of it. */
+  --scrollbar-thumb: oklch(0 0 0 / 0.16);
+  --scrollbar-thumb-hover: oklch(0 0 0 / 0.32);
+  --radius: 0.75rem;                        /* 12px base */
+
+  /* ── Shadows ──────────────────────────────────────────────── */
+  --shadow-soft: 0 1px 2px oklch(0 0 0 / 0.04), 0 1px 1px oklch(0 0 0 / 0.02);
+  --shadow-elevated: 0 4px 14px oklch(0 0 0 / 0.06), 0 1px 3px oklch(0 0 0 / 0.04);
+  --shadow-float: 0 10px 30px oklch(0 0 0 / 0.08), 0 3px 8px oklch(0 0 0 / 0.04);
+  --shadow-inset: inset 0 1px 0 oklch(1 0 0 / 0.7), inset 0 -1px 0 oklch(0 0 0 / 0.03);
+
+  /* Approved Figma button surfaces. The 0.5px stroke is masked in Button. */
+  --btn-primary-bg: #325cfe;
+  --btn-primary-bg-hover: #244fe8;
+  --btn-primary-fg: #fff;
+  --btn-primary-border: #325cfe;
+  --btn-primary-ring: #325cfe;
+  --btn-primary-stroke: linear-gradient(180deg, rgb(255 255 255 / 26%) 0%, transparent 40%);
+  --btn-primary-shadow: inset 0 1px 20px rgb(255 255 255 / 16%),
+    0 2px 4px rgb(50 92 254 / 16%), 0 1px 2px rgb(50 92 254 / 8%), 0 0 0 1px #325cfe;
+  --btn-primary-shadow-hover: var(--btn-primary-shadow);
+  --btn-primary-shadow-pressed: inset 0 1px 3px rgb(0 0 0 / 16%),
+    inset 0 1px 14px rgb(255 255 255 / 16%), 0 0 0 1px #325cfe;
+  --btn-primary-sheen: none;
+  --btn-primary-sheen-pressed: none;
+
+  /* AI retains its exact blue fill, edge and drop shadows in both themes. */
+  --btn-ai-bg: #325cfe;
+  --btn-ai-bg-hover: #244fe8;
+  --btn-ai-fg: #fff;
+  --btn-ai-stroke: linear-gradient(180deg, rgb(255 255 255 / 26%) 0%, transparent 40%);
+  --btn-ai-shadow: inset 0 1px 20px rgb(255 255 255 / 16%),
+    0 2px 4px rgb(50 92 254 / 16%), 0 1px 2px rgb(50 92 254 / 8%), 0 0 0 1px #325cfe;
+  --btn-ai-shadow-pressed: inset 0 1px 3px rgb(0 0 0 / 16%),
+    inset 0 1px 14px rgb(255 255 255 / 16%), 0 0 0 1px #325cfe;
+
+  /* Chat send controls take the primary face: black in light, white in
+     dark, so the send button always reads as the strongest thing in the
+     composer. Referenced, not copied, so the dark theme's primary carries. */
+  --btn-chat-bg: var(--btn-primary-bg);
+  --btn-chat-bg-hover: var(--btn-primary-bg-hover);
+  --btn-chat-fg: var(--btn-primary-fg);
+  --btn-chat-shadow: var(--btn-primary-shadow);
+  --btn-chat-shadow-pressed: var(--btn-primary-shadow-pressed);
+
+  --btn-outline-bg: #fff;
+  --btn-outline-bg-hover: #f8f8f8;
+  --btn-outline-fg: #121212;
+  --btn-outline-border: #ededed;
+  --btn-outline-border-hover: #ededed;
+  --btn-outline-shadow: 0 0 0 2px rgb(18 18 18 / 2%),
+    0 1px 2px rgb(40 40 40 / 5%), 0 0 0 0.5px #ededed;
+  --btn-outline-shadow-pressed: inset 0 1px 2px rgb(18 18 18 / 8%),
+    0 0 0 0.5px var(--btn-outline-border);
+
+  --btn-secondary-bg: #f4f4f4;
+  --btn-secondary-bg-hover: #f8f8f8;
+  --btn-secondary-fg: #121212;
+  --btn-secondary-border: #ededed;
+  --btn-secondary-shadow: var(--btn-outline-shadow);
+  --btn-secondary-shadow-pressed: inset 0 1px 3px rgb(0 0 0 / 16%),
+    inset 0 1px 14px rgb(255 255 255 / 10%), 0 0 0 1px rgb(18 18 18 / 10%);
+
+  --btn-ghost-fg: oklch(0.4 0 0);
+  --btn-ghost-hover-bg: #f4f4f4;
+  --btn-ghost-hover-fg: #121212;
+
+  /* Destructive keeps its own red edge. Borrowing the outline's grey
+     hairline left a dirty rim around the pink fill. */
+  --btn-destructive-bg: #fff4f3;
+  --btn-destructive-bg-hover: #ffeceb;
+  --btn-destructive-fg: #bd3030;
+  --btn-destructive-border: rgb(189 48 48 / 16%);
+  --btn-destructive-shadow: 0 1px 2px rgb(189 48 48 / 6%), 0 0 0 1px var(--btn-destructive-border);
+  --btn-destructive-shadow-hover: 0 1px 2px rgb(189 48 48 / 8%), 0 0 0 1px rgb(189 48 48 / 22%);
+  --btn-destructive-shadow-pressed: inset 0 1px 2px rgb(189 48 48 / 12%),
+    0 0 0 1px var(--btn-destructive-border);
+  --btn-destructive-focus-ring: #bd3030;
+  --btn-focus-ring: #325cfe;
+
+  /* Fields share the buttons' blue focus. The border turns blue and a soft
+     halo hugs it, with no gap between the field and its ring. */
+  --field-focus-border: #325cfe;
+  --field-focus-halo: 0 0 0 3px rgb(50 92 254 / 14%);
+  --field-focus-shadow: var(--shadow-inset), var(--field-focus-halo);
+  /* Invalid + focused: same shape as the focus halo, tinted with the error
+     colour so it tracks `--destructive` in both themes. */
+  --field-error-shadow: var(--shadow-inset),
+    0 0 0 3px color-mix(in srgb, var(--destructive) 16%, transparent);
+
+  /* Checkbox: an outline button at rest, a primary button when checked. */
+  --checkbox-bg: #fff;
+  --checkbox-edge: rgb(18 18 18 / 26%);
+  --checkbox-edge-hover: rgb(18 18 18 / 42%);
+  --checkbox-shadow: 0 1px 2px rgb(18 18 18 / 6%);
+  --checkbox-on-bg: #121212;
+  --checkbox-on-fg: #fff;
+  --checkbox-on-shadow: inset 0 1px 0 rgb(255 255 255 / 18%), 0 1px 2px rgb(18 18 18 / 16%);
+  --btn-easing: var(--ease-smooth-out);
+  /* Legacy surfaces also include dark fills; keep this neutral recipe
+     independent of the outline button's pale perimeter. */
+  --shadow-button: 0 1px 2px oklch(0 0 0 / 0.05), 0 1px 1px oklch(0 0 0 / 0.03),
+    inset 0 1px 0 oklch(1 0 0 / 0.8), inset 0 -1px 0 oklch(0 0 0 / 0.03);
+  --shadow-button-pressed: inset 0 1px 2px oklch(0 0 0 / 0.06), inset 0 -1px 0 oklch(1 0 0 / 0.5);
+
+  /* ── Status badge palette ──────────────────────────────────── */
+  /* Ink at ~90% of the sRGB chroma ceiling for its lightness, every pair
+     at least 4.5:1 on its own fill. A pale fill this light can only hold
+     ~0.02 chroma, so the hue reads from the ink and the `.tone-pill` ring.
+     Review sits at 100°, clear of pending's orange. */
+  --status-pending-bg: oklch(0.96 0.024 70);
+  --status-pending-fg: oklch(0.54 0.125 55);
+  --status-progress-bg: oklch(0.955 0.02 250);
+  --status-progress-fg: oklch(0.52 0.15 252);
+  --status-submitted-bg: oklch(0.955 0.022 290);
+  --status-submitted-fg: oklch(0.52 0.2 290);
+  --status-review-bg: oklch(0.965 0.05 102);
+  --status-review-fg: oklch(0.53 0.105 98);
+  --status-success-bg: oklch(0.955 0.05 152);
+  --status-success-fg: oklch(0.52 0.13 152);
+  --status-failed-bg: oklch(0.955 0.02 25);
+  --status-failed-fg: oklch(0.54 0.19 25);
+  --status-expired-bg: oklch(0.955 0 0);
+  --status-expired-fg: oklch(0.5 0 0);
+
+  /* ── Mermaid diagrams (light) ──────────────────────────────── */
+  /* The palette `components/ai-elements/mermaid-plugin.ts` hands the SVG
+     renderer. Deliberately the raw zinc ramp rather than the app's surface
+     tokens: a diagram is a drawing, and drawing it in `--card` on `--card`
+     with `--border` between them is what made every flow read as a grey box
+     inside a grey box. Zinc is flatter and one step cooler, which is what the
+     nodes want and what the chart series below are tuned against. */
+  --diagram-bg: #ffffff;          /* white         */
+  --diagram-fg: #27272a;          /* zinc-800      */
+  --diagram-line: #a1a1aa;        /* zinc-400      */
+  --diagram-accent: #52525b;      /* zinc-600      */
+  --diagram-muted: #71717a;       /* zinc-500      */
+  --diagram-surface: #fafafa;     /* zinc-50       */
+  --diagram-border: #d4d4d8;      /* zinc-300      */
+
+  /* xychart series. The renderer would otherwise draw series 0 in
+     `--diagram-accent` and derive the rest from it, i.e. a bar chart in five
+     greys. Blue is the one hue that sits on zinc without fighting it; the ramp
+     walks blue -> indigo -> sky and back rather than shading one hue, because
+     two shades of the same blue are indistinguishable once they are bar fills
+     at 25 %. Eight is more series than any chat answer should have — past that
+     the renderer's own derived shade stays as the fallback. */
+  --diagram-series-0: #3b82f6;    /* blue-500      */
+  --diagram-series-1: #4338ca;    /* indigo-700    */
+  --diagram-series-2: #0ea5e9;    /* sky-500       */
+  --diagram-series-3: #1e3a8a;    /* blue-900      */
+  --diagram-series-4: #6366f1;    /* indigo-500    */
+  --diagram-series-5: #0369a1;    /* sky-700       */
+  --diagram-series-6: #60a5fa;    /* blue-400      */
+  --diagram-series-7: #a5b4fc;    /* indigo-300    */
+
+  /* ── KPI plate — brushed metal ─────────────────────────────── */
+  /* Diagonal sheen over the whole tile — bright corner, dark far corner. */
+  --kpi-sheen: linear-gradient(138deg,
+    oklch(1 0 0 / 0.55) 0%,
+    oklch(1 0 0 / 0) 44%,
+    oklch(0 0 0 / 0.018) 100%);
+  /* Bevel highlight along the top edge, faded at both ends. */
+  --kpi-edge: linear-gradient(90deg,
+    transparent 0%,
+    oklch(1 0 0 / 0.9) 22%,
+    oklch(1 0 0 / 0.9) 78%,
+    transparent 100%);
+
+  /* ── License card stock (light) ─────────────────────────── */
+  /* Near-white stock with dark ink, so the card reads as an object on the
+     muted wallet in light mode. Dark values live in the `.dark` block below. */
+  --license-card-bg: oklch(0.985 0 0);
+  --license-card-stripe: oklch(0.89 0 0);
+  --license-card-ink: oklch(0.22 0 0);
+  --license-card-ink-muted: oklch(0.22 0 0 / 0.6);
+  --license-card-edge: oklch(0 0 0 / 0.08);
+}
+
+/* Dark theme: applied via .dark class on <html>. The inline script
+   in layout.tsx sets this class before first paint based on localStorage
+   or system preference, so there is no FOUC.
+   The bare `.dark` in the selector lets a subtree opt into the dark token set
+   on its own — the landing page is dark whatever the app's theme is, and
+   re-declaring eighty variables to say so is how the two drift apart. */
+:root.dark,
+.dark {
+  color-scheme: dark;
+
+  /* ── Surfaces ─────────────────────────────────────────────── */
+  --background: oklch(0.21 0 0);          /* #181818 */
+  --foreground: oklch(0.93 0 0);
+  --card: oklch(0.255 0 0);               /* #232323 */
+  --card-foreground: oklch(0.93 0 0);
+  --popover: oklch(0.295 0 0);            /* #2C2C2C */
+  --popover-foreground: oklch(0.93 0 0);
+  --primary: oklch(0.62 0.21 267);
+  --primary-foreground: oklch(0.99 0 0);
+  --secondary: oklch(0.305 0 0);
+  --secondary-foreground: oklch(0.93 0 0);
+  --muted: oklch(0.285 0 0);
+  /* Secondary text also clears 4.5:1 on the brighter hover surface. */
+  --muted-foreground: oklch(0.7 0 0);
+  --accent: oklch(0.325 0 0);
+  --accent-foreground: oklch(0.93 0 0);
+  --destructive: oklch(0.79 0.12 22);
+  --destructive-foreground: oklch(0.18 0 0);
+  --billing: oklch(0.75 0.16 296);
+  --border: oklch(1 0 0 / 0.12);
+  --input: oklch(1 0 0 / 0.16);
+  --goo-outline: #3a3a3a;
+  /* Keep focus visible against cards, popovers and hover surfaces. */
+  --ring: oklch(0.7 0.15 267);
+  --scrollbar-thumb: oklch(1 0 0 / 0.16);
+  --scrollbar-thumb-hover: oklch(1 0 0 / 0.34);
+
+  /* ── Shadows ──────────────────────────────────────────────── */
+  --shadow-soft: 0 1px 2px oklch(0 0 0 / 0.25), 0 1px 1px oklch(0 0 0 / 0.15);
+  --shadow-elevated: 0 4px 14px oklch(0 0 0 / 0.35), 0 1px 3px oklch(0 0 0 / 0.2);
+  --shadow-float: 0 10px 30px oklch(0 0 0 / 0.45), 0 3px 8px oklch(0 0 0 / 0.25);
+  --shadow-inset: inset 0 1px 0 oklch(1 0 0 / 0.04), inset 0 -1px 0 oklch(0 0 0 / 0.15);
+
+  /* Approved button surfaces adapted to dark mode. AI stays #325cfe. */
+  --btn-primary-bg: #3b68ff;
+  --btn-primary-bg-hover: #5078ff;
+  --btn-primary-fg: #fff;
+  --btn-primary-border: #3b68ff;
+  --btn-primary-ring: #91acff;
+  --btn-primary-stroke: linear-gradient(180deg, rgb(255 255 255 / 30%) 0%, transparent 40%);
+  --btn-primary-shadow: inset 0 1px 20px rgb(255 255 255 / 16%),
+    0 2px 4px rgb(0 0 0 / 30%), 0 1px 2px rgb(0 0 0 / 20%), 0 0 0 1px #3b68ff;
+  --btn-primary-shadow-hover: var(--btn-primary-shadow);
+  --btn-primary-shadow-pressed: inset 0 1px 3px rgb(0 0 0 / 24%),
+    inset 0 1px 14px rgb(255 255 255 / 16%), 0 0 0 1px #3b68ff;
+
+  --btn-outline-bg: #222;
+  --btn-outline-bg-hover: #303030;
+  --btn-outline-fg: #ededed;
+  --btn-outline-border: rgb(255 255 255 / 10%);
+  --btn-outline-border-hover: rgb(255 255 255 / 10%);
+  --btn-outline-shadow: 0 0 0 2px rgb(255 255 255 / 2%),
+    0 1px 2px rgb(0 0 0 / 12%), 0 0 0 0.5px rgb(255 255 255 / 10%);
+  --btn-outline-shadow-pressed: inset 0 1px 2px rgb(0 0 0 / 16%),
+    0 0 0 0.5px var(--btn-outline-border);
+
+  --btn-secondary-bg: #2b2b2b;
+  --btn-secondary-bg-hover: #303030;
+  --btn-secondary-fg: #ededed;
+  --btn-secondary-border: rgb(255 255 255 / 12%);
+  --btn-secondary-shadow: var(--btn-outline-shadow);
+  --btn-secondary-shadow-pressed: inset 0 1px 3px rgb(0 0 0 / 16%),
+    inset 0 1px 14px rgb(255 255 255 / 10%), 0 0 0 1px rgb(255 255 255 / 12%);
+
+  --btn-ghost-fg: oklch(0.7 0 0);
+  --btn-ghost-hover-bg: #2b2b2b;
+  --btn-ghost-hover-fg: #ededed;
+
+  --btn-destructive-bg: #382423;
+  --btn-destructive-bg-hover: #42292a;
+  --btn-destructive-fg: #ffaaa1;
+  --btn-destructive-border: rgb(255 170 161 / 16%);
+  --btn-destructive-shadow: 0 1px 2px rgb(0 0 0 / 16%), 0 0 0 1px var(--btn-destructive-border);
+  --btn-destructive-shadow-hover: 0 1px 2px rgb(0 0 0 / 20%), 0 0 0 1px rgb(255 170 161 / 24%);
+  --btn-destructive-shadow-pressed: inset 0 1px 2px rgb(0 0 0 / 24%),
+    0 0 0 1px var(--btn-destructive-border);
+  --btn-destructive-focus-ring: #ffaaa1;
+  --btn-focus-ring: #91acff;
+  --field-focus-border: #91acff;
+  --field-focus-halo: 0 0 0 3px rgb(145 172 255 / 18%);
+  --field-focus-shadow: var(--shadow-inset), var(--field-focus-halo);
+  --field-error-shadow: var(--shadow-inset),
+    0 0 0 3px color-mix(in srgb, var(--destructive) 22%, transparent);
+  --checkbox-bg: #222;
+  --checkbox-edge: rgb(255 255 255 / 22%);
+  --checkbox-edge-hover: rgb(255 255 255 / 36%);
+  --checkbox-shadow: 0 1px 2px rgb(0 0 0 / 24%);
+  --checkbox-on-bg: #f5f5f5;
+  --checkbox-on-fg: #171717;
+  --checkbox-on-shadow: inset 0 1px 0 rgb(255 255 255 / 70%), 0 1px 2px rgb(0 0 0 / 30%);
+  --shadow-button: 0 1px 2px oklch(0 0 0 / 0.3), 0 1px 1px oklch(0 0 0 / 0.2),
+    inset 0 1px 0 oklch(1 0 0 / 0.05), inset 0 -1px 0 oklch(0 0 0 / 0.1);
+  --shadow-button-pressed: inset 0 1px 2px oklch(0 0 0 / 0.3), inset 0 -1px 0 oklch(1 0 0 / 0.03);
+
+  /* ── Mermaid diagrams (dark) ───────────────────────────────── */
+  /* Same roles, the zinc ramp read from the other end. `--diagram-bg` is the
+     colour `color-mix()` blends against inside the SVG — it has to be the
+     surface the diagram actually sits on, not black, or every tint comes out
+     too dark. */
+  --diagram-bg: #18181b;          /* zinc-900      */
+  --diagram-fg: #fafafa;          /* zinc-50       */
+  --diagram-line: #52525b;        /* zinc-600      */
+  --diagram-accent: #a1a1aa;      /* zinc-400      */
+  --diagram-muted: #a1a1aa;       /* zinc-400      */
+  --diagram-surface: #27272a;     /* zinc-800      */
+  --diagram-border: #3f3f46;      /* zinc-700      */
+
+  /* The same three hues, lifted a step or two: blue-700 on zinc-900 is nearly
+     invisible, so the dark ramp starts brighter and never goes below
+     blue-600. */
+  --diagram-series-0: #60a5fa;    /* blue-400      */
+  --diagram-series-1: #a5b4fc;    /* indigo-300    */
+  --diagram-series-2: #38bdf8;    /* sky-400       */
+  --diagram-series-3: #3b82f6;    /* blue-500      */
+  --diagram-series-4: #818cf8;    /* indigo-400    */
+  --diagram-series-5: #7dd3fc;    /* sky-300       */
+  --diagram-series-6: #2563eb;    /* blue-600      */
+  --diagram-series-7: #c7d2fe;    /* indigo-200    */
+
+  /* ── Status badge palette (dark) ───────────────────────────── */
+  /* Deep tinted fills a step above --card, saturated ink near the gamut
+     edge: the colour has to carry on a dark surface, not fade into it. */
+  --status-pending-bg: oklch(0.3 0.065 55);
+  --status-pending-fg: oklch(0.78 0.14 62);
+  --status-progress-bg: oklch(0.3 0.08 252);
+  --status-progress-fg: oklch(0.75 0.125 248);
+  --status-submitted-bg: oklch(0.3 0.09 290);
+  --status-submitted-fg: oklch(0.75 0.13 290);
+  --status-review-bg: oklch(0.3 0.058 102);
+  --status-review-fg: oklch(0.84 0.15 102);
+  --status-success-bg: oklch(0.3 0.07 152);
+  --status-success-fg: oklch(0.78 0.17 152);
+  --status-failed-bg: oklch(0.3 0.09 25);
+  --status-failed-fg: oklch(0.74 0.15 25);
+  --status-expired-bg: oklch(0.3 0 0);
+  --status-expired-fg: oklch(0.74 0 0);
+
+  /* ── KPI plate — brushed metal (dark) ─────────────────────── */
+  --kpi-sheen: linear-gradient(138deg,
+    oklch(1 0 0 / 0.055) 0%,
+    oklch(1 0 0 / 0) 46%,
+    oklch(0 0 0 / 0.14) 100%);
+  --kpi-edge: linear-gradient(90deg,
+    transparent 0%,
+    oklch(1 0 0 / 0.14) 22%,
+    oklch(1 0 0 / 0.14) 78%,
+    transparent 100%);
+
+  /* ── License card stock (dark) ──────────────────────────── */
+  /* Neutral charcoal with light-grey ink. Never black, never white. */
+  --license-card-bg: oklch(0.255 0 0);
+  --license-card-stripe: oklch(0.2 0 0);
+  --license-card-ink: oklch(0.88 0 0);
+  --license-card-ink-muted: oklch(0.88 0 0 / 0.55);
+  --license-card-edge: oklch(1 0 0 / 0.08);
+}
+
