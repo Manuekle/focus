@@ -7,7 +7,7 @@ import { FLOW_STEPS, type FlowStepId } from "../../shared/pipeline";
 export function FlowRail({ current }: { readonly current: FlowStepId }) {
   const currentIndex = FLOW_STEPS.findIndex((step) => step.id === current);
   return (
-    <ol aria-label="Flujo de edición" className="x-fade flex items-center gap-1 overflow-x-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+    <ol aria-label="Editing progress" className="x-fade flex items-center gap-1 overflow-x-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
       {FLOW_STEPS.map((step, index) => {
         const done = index < currentIndex;
         const active = index === currentIndex;

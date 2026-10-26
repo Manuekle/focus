@@ -29,7 +29,7 @@ export default { transpilePackages: ['@focus/ui'] };
 
 Focus incluye la importación de Tailwind, el reset, el tema y las recetas. Evita duplicar una segunda base de Tailwind en ese mismo árbol. `@source` es relativo al CSS que lo declara; adapta las rutas a tu estructura. Si no usas los estilos completos, integra manualmente el orden de `styles/index.css` y documenta qué recetas dejas fuera.
 
-Copia `public/fonts` al directorio público del consumidor. Optimistic Display son las fuentes activas. `public/logos/apps` contiene los assets de iconos de servicios; cópialo si usas `ChannelBadge` o marcas de integraciones. Los componentes de iluminación y las ilustraciones de producto se empaquetan con su código, sin backend.
+Copia `public/fonts` al directorio público del consumidor. Inter son las fuentes activas. `public/logos/apps` contiene los assets de iconos de servicios; cópialo si usas `ChannelBadge` o marcas de integraciones. Los componentes de iluminación y las ilustraciones de producto se empaquetan con su código, sin backend.
 
 ## Proveedor
 

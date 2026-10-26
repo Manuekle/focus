@@ -5,6 +5,7 @@ import { PauseIcon, PlayIcon, VolumeHighIcon, VolumeMute01Icon } from "@hugeicon
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { formatSeconds } from "../../shared/media";
 import type { VideoAsset } from "../../shared/schemas";
+import { EditorNotice } from "./editor-notice";
 
 /** The centerpiece: the normalized video exactly as the pipeline will read it. */
 export function VideoStage({
@@ -82,19 +83,17 @@ export function VideoStage({
           onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
           onError={() => setFailed(true)}
           className="block h-auto max-h-[min(68dvh,720px)] w-auto max-w-full cursor-pointer"
-          aria-label={`Vista previa de ${video.originalName}`}
+          aria-label={`Preview of ${video.originalName}`}
         />
         {overlay?.(ref)}
         {hud ? (
-          <div className="pointer-events-none absolute top-2 left-2 rounded-md bg-[rgb(20_22_30/0.82)] px-2 py-1 text-[11px] leading-4 text-white tabular-nums">
+          <div className="pointer-events-none absolute top-2 left-2 rounded-md bg-[rgb(20_22_30/0.82)] px-2 py-1 text-xs leading-4 text-white tabular-nums">
             {hud}
           </div>
         ) : null}
         </div>
         {failed ? (
-          <p className="absolute inset-x-6 bottom-6 rounded-lg bg-card px-4 py-3 text-sm text-foreground shadow-[var(--shadow-elevated)]">
-            El navegador no pudo reproducir la vista previa. Recarga la página o vuelve a subir el video.
-          </p>
+          <EditorNotice title="Preview couldn’t be played" description="Reload the page or upload your video again." />
         ) : null}
       </div>
 
@@ -102,7 +101,7 @@ export function VideoStage({
         <button
           type="button"
           onClick={toggle}
-          aria-label={playing ? "Pausar" : "Reproducir"}
+          aria-label={playing ? "Pause" : "Play"}
           className="grid size-8 shrink-0 place-items-center rounded-lg text-foreground transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
         >
           <HugeiconsIcon icon={playing ? PauseIcon : PlayIcon} size={18} strokeWidth={1.75} />
@@ -117,7 +116,7 @@ export function VideoStage({
           step={1 / fps}
           value={Math.min(time, duration)}
           onChange={(event) => seek(Number(event.currentTarget.value))}
-          aria-label="Posición en el video"
+          aria-label="Video position"
           aria-valuetext={`${formatSeconds(time)} de ${formatSeconds(duration)}`}
           className="editor-scrubber min-w-0 flex-1"
           style={{ "--scrub": `${progress}%` } as CSSProperties}
@@ -126,7 +125,7 @@ export function VideoStage({
           <button
             type="button"
             onClick={() => setMuted((value) => !value)}
-            aria-label={muted ? "Activar sonido" : "Silenciar"}
+            aria-label={muted ? "Unmute" : "Mute"}
             aria-pressed={!muted}
             className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >

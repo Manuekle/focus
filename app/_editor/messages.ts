@@ -1,0 +1,49 @@
+import { MAX_DURATION_SECONDS, MAX_UPLOAD_BYTES, formatBytes } from "../../shared/media";
+
+// API error codes remain stable across server versions and saved jobs.
+const errors: Readonly<Record<string, string>> = {
+  unsupported_type: "Unsupported format. Choose an MP4 or MOV file.",
+  empty_file: "This file is empty. Choose another video.",
+  file_too_large: `This file is too large. Choose a video under ${formatBytes(MAX_UPLOAD_BYTES)}.`,
+  duration_too_long: `Trim your clip to ${MAX_DURATION_SECONDS}s or less, then try again.`,
+  unreadable_media: "We couldn’t read this file as a video. It may be damaged or use an unsupported format.",
+  normalization_failed: "We couldn’t prepare this video. Export it as an MP4 (H.264), then try again.",
+  video_not_found: "This video is no longer available. Upload it again to continue.",
+  media_not_found: "This file is no longer available.",
+  ai_disabled: "AI editing is temporarily paused. Please try again later.",
+  busy: "Too many videos are processing right now. Try again in a minute.",
+  budget_exhausted: "The daily AI processing limit has been reached. Try again tomorrow.",
+  rate_limited: "You’ve reached the hourly limit. Please try again later.",
+  invalid_edit: "Describe your change in at least 3 characters and choose an effect.",
+  job_not_found: "This edit is no longer available. Start a new edit to continue.",
+  interrupted: "Processing was interrupted. Generate again to continue from your saved progress.",
+  unsupported_edit: "This edit isn’t supported yet. Try another instruction or effect.",
+  no_match: "We couldn’t find that subject in your clip. Try describing it another way.",
+  tracking_not_ready: "Your subject is still being tracked. Please wait a moment.",
+  tracking_not_found: "Your saved selection is no longer available. Generate again to continue.",
+  render_not_ready: "Choose your subject before rendering.",
+  render_not_allowed: "This edit can’t be rendered yet. Check your selection and try again.",
+  result_not_ready: "Your edited video isn’t ready yet.",
+  selection_not_allowed: "Wait for processing to finish before changing your selection.",
+  unknown_object: "That subject is no longer available. Choose another subject.",
+  invalid_point: "Choose a point inside the video.",
+  nothing_to_fill: "Your subject is already tracked throughout the clip.",
+  planner_invalid_output: "We couldn’t interpret the AI response. Please try again.",
+  planner_incomplete: "AI couldn’t finish interpreting your edit. Please try again.",
+  meta_not_configured: "AI editing isn’t configured yet. Ask the administrator to connect Meta AI.",
+  meta_unauthorized: "The AI service credentials were rejected. Ask the administrator to check the connection.",
+  meta_forbidden: "The AI account doesn’t have access or enough credits for this edit.",
+  meta_model_not_found: "This AI model isn’t available for the connected account.",
+  meta_rate_limited: "The AI service is receiving too many requests. Wait a moment and try again.",
+  meta_timeout: "The AI service took too long. Try again to continue from your saved progress.",
+  meta_unreachable: "We couldn’t reach the AI service. Please try again shortly.",
+  meta_bad_request: "The AI service couldn’t accept this edit. Adjust your instruction and try again.",
+  meta_unavailable: "The AI service is unavailable. Please try again shortly.",
+  meta_failed: "The AI step failed. Try again to continue from your saved progress.",
+  canceled: "Editing canceled. Your progress is saved.",
+  network: "We couldn’t connect. Check your connection and try again.",
+};
+
+export function editorErrorMessage(code: string): string {
+  return errors[code] ?? "We couldn’t complete your edit. Please try again.";
+}

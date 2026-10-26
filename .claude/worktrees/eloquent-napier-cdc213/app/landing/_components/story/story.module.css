@@ -1,0 +1,52 @@
+/* The ground a story stands on: a dot plate and a pool of light, the same
+   under every story on the page, so they read as one set of figures. No box and no frame — the cards float on the page itself, and
+   the plate dissolves into it at the edges. */
+
+.plate {
+  --dot: oklch(0.5 0 0 / 0.2);
+  --pool: oklch(0.2 0 0 / 0.05);
+  /* Tight, with a negative spread: the shadow stays under its own card. The
+     app's --shadow-float (30px blur) poured into the 18px gaps between
+     stacked cards and printed a grey band there. */
+  --story-shadow: 0 1px 2px oklch(0 0 0 / 0.04), 0 14px 40px -18px oklch(0 0 0 / 0.14), 0 4px 12px -6px oklch(0 0 0 / 0.04);
+  position: relative;
+  isolation: isolate;
+}
+
+:global(.dark) .plate {
+  --dot: oklch(0.85 0 0 / 0.11);
+  --pool: oklch(1 0 0 / 0.06);
+  --story-shadow: 0 1px 2px oklch(0 0 0 / 0.22), 0 18px 48px -20px oklch(0 0 0 / 0.5), 0 4px 12px -6px oklch(0 0 0 / 0.16);
+}
+
+.plate::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background-image: radial-gradient(circle at center, var(--dot) 0.75px, transparent 1.25px);
+  background-size: 16px 16px;
+  background-position: center;
+  mask-image: radial-gradient(ellipse 58% 62% at 50% 50%, #000 12%, rgb(0 0 0 / 0.6) 42%, rgb(0 0 0 / 0.22) 64%, transparent 84%);
+  -webkit-mask-image: radial-gradient(ellipse 58% 62% at 50% 50%, #000 12%, rgb(0 0 0 / 0.6) 42%, rgb(0 0 0 / 0.22) 64%, transparent 84%);
+  pointer-events: none;
+}
+
+/* The pool: eased, many-stop falloff that runs well past the plate, so it
+   has no edge to find. A plain two-stop radial reads as a lit box. */
+.plate::after {
+  content: "";
+  position: absolute;
+  inset: -24% -6%;
+  z-index: -2;
+  background: radial-gradient(
+    ellipse 50% 50% at 50% 50%,
+    var(--pool) 0%,
+    color-mix(in oklab, var(--pool) 72%, transparent) 30%,
+    color-mix(in oklab, var(--pool) 40%, transparent) 52%,
+    color-mix(in oklab, var(--pool) 16%, transparent) 72%,
+    color-mix(in oklab, var(--pool) 4%, transparent) 88%,
+    transparent 100%
+  );
+  pointer-events: none;
+}

@@ -1,0 +1,20 @@
+.desktopNav {
+  display: none;
+}
+
+.menuToggle {
+  display: inline-flex;
+}
+
+/* Product utilities remain loaded after a client navigation. Own these
+   display rules so a later inline-flex utility cannot reveal the burger. */
+@media (min-width: 64rem) {
+  .desktopNav {
+    display: flex;
+  }
+
+  .menuToggle,
+  .mobileMenu {
+    display: none;
+  }
+}

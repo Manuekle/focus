@@ -1,5 +1,6 @@
 import { SelectionRequestSchema } from "../../../../../shared/schemas";
 import { AppError, errorResponse } from "../../../../../server/errors";
+import { readJsonBody } from "../../../../../server/guard";
 import { reopenSelection, setSelection } from "../../../../../server/jobs";
 
 type Context = { params: Promise<{ id: string }> };
@@ -8,7 +9,7 @@ type Context = { params: Promise<{ id: string }> };
 export async function POST(request: Request, { params }: Context) {
   try {
     const { id } = await params;
-    const parsed = SelectionRequestSchema.safeParse(await request.json().catch(() => null));
+    const parsed = SelectionRequestSchema.safeParse(await readJsonBody(request));
     if (!parsed.success) throw new AppError("invalid_selection", 400, "Elige al menos un objeto.");
     return Response.json(await setSelection(id, parsed.data.objectIds));
   } catch (error) {

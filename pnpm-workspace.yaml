@@ -1,3 +1,5 @@
 # These packages ship the platform binaries used by this source kit.
 allowBuilds:
   unrs-resolver: false
+  # vitest dependency; its platform binary arrives as an optional package.
+  esbuild: false

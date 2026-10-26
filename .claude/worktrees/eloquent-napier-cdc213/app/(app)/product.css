@@ -1,0 +1,13 @@
+@reference "../tailwind-theme.css";
+@layer utilities {
+  @tailwind utilities source(none);
+}
+
+/* Editors load these utilities with their route instead of the shared shell.
+   All theme variables are emitted once by the root stylesheet. */
+@source ".";
+@source "../_components";
+@source "../dev";
+@source "../../components";
+@source "../../lib";
+@source "../../node_modules/streamdown/dist/*.js";

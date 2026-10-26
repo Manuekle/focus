@@ -46,7 +46,7 @@ const es: Dictionary = {
   "foundations.elevation.shadows.title": "Sombras",
   "foundations.elevation.radius.title": "Radios",
   "foundations.typography.name": "Tipografía",
-  "foundations.typography.desc": "Optimistic Display en todos los roles, con tracking de -0.02em. Fuentes locales y roles estables en todas las plataformas.",
+  "foundations.typography.desc": "Inter en todos los roles, con tracking de -0.02em. Fuentes locales y roles estables en todas las plataformas.",
   "foundations.typography.families.title": "Familias",
   "foundations.typography.scale.title": "Escala de texto",
 
@@ -548,7 +548,7 @@ const en: Dictionary = {
   "foundations.elevation.shadows.title": "Shadows",
   "foundations.elevation.radius.title": "Radii",
   "foundations.typography.name": "Typography",
-  "foundations.typography.desc": "Optimistic Display for every text role, with -0.02em tracking. Local fonts with stable roles on every platform.",
+  "foundations.typography.desc": "Inter for every text role, with -0.02em tracking. Local fonts with stable roles on every platform.",
   "foundations.typography.families.title": "Families",
   "foundations.typography.scale.title": "Type scale",
 

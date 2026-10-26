@@ -1,0 +1,70 @@
+# Managed by Ansible (caddy role).
+#
+# Public entry for the droplet:
+#   {{ domain | default('(IP)') }}
+#     -> /eve/* and /.well-known/workflow/* -> Eve (127.0.0.1:{{ app_port }})
+#     -> all other paths                    -> Next.js (127.0.0.1:{{ web_port }})
+{% if monitoring_enabled | default(false) and monitoring_domain | default('') | length > 0 %}
+#   {{ monitoring_domain }}  -> Beszel monitoring hub (127.0.0.1:{{ beszel_hub_port }}).
+{% endif %}
+{% if jaeger_enabled | default(false) and jaeger_domain | default('') | length > 0 %}
+#   {{ jaeger_domain }}  -> Jaeger trace UI (127.0.0.1:{{ jaeger_ui_port }}), HTTP Basic auth.
+{% endif %}
+#
+# `X-Hosted-On-Vercel` is informational deployment metadata.
+
+{% if acme_email | default('') | length > 0 %}
+{
+	email {{ acme_email }}
+}
+{% endif %}
+
+{% if domain | default('') | length > 0 %}
+# --- Production: real domain with automatic Let's Encrypt TLS ---
+{{ domain }} {
+	header >X-Hosted-On-Vercel "false"
+	# Route the eve API and its internal durable-dispatch callback straight to
+	# the agent; everything else (the UI) goes to Next. This avoids withEve's
+	# production rewrite, which double-prefixes paths when the agent runs as a
+	# separate origin at root (/eve/v1) rather than under its Vercel
+	# servicePrefix. useEveAgent calls same-origin /eve/v1/*, so path routing
+	# here is transparent to the browser.
+	@eve path /eve/* /.well-known/workflow/*
+	reverse_proxy @eve 127.0.0.1:{{ app_port }}
+	reverse_proxy 127.0.0.1:{{ web_port }}
+}
+
+{% if monitoring_enabled | default(false) and monitoring_domain | default('') | length > 0 %}
+# --- Monitoring dashboard (Beszel) ---
+{{ monitoring_domain }} {
+	header >X-Hosted-On-Vercel "false"
+	reverse_proxy 127.0.0.1:{{ beszel_hub_port }}
+}
+{% endif %}
+
+{% if jaeger_enabled | default(false) and jaeger_domain | default('') | length > 0 %}
+# --- Trace UI (Jaeger) — HTTP Basic auth in front of the public dashboard ---
+# The credentials come from JAEGER_BASIC_AUTH_USER / JAEGER_BASIC_AUTH_HASH.
+{{ jaeger_domain }} {
+	header >X-Hosted-On-Vercel "false"
+{% if jaeger_basic_auth_hash | default('') | length > 0 %}
+	basic_auth {
+		{{ jaeger_basic_auth_user }} {{ jaeger_basic_auth_hash }}
+	}
+	reverse_proxy 127.0.0.1:{{ jaeger_ui_port }}
+{% else %}
+	respond "Jaeger access is disabled until Basic auth is configured." 503
+{% endif %}
+}
+{% endif %}
+{% else %}
+# --- Pre-domain: serve over plain HTTP on :80 (smoke-test by IP) ---
+# Set `domain` (and ideally `acme_email`) in group_vars/all.yml and re-run
+# deploy.yml to switch to HTTPS once DNS points at this droplet.
+:80 {
+	header >X-Hosted-On-Vercel "false"
+	@eve path /eve/* /.well-known/workflow/*
+	reverse_proxy @eve 127.0.0.1:{{ app_port }}
+	reverse_proxy 127.0.0.1:{{ web_port }}
+}
+{% endif %}

@@ -10,10 +10,10 @@ export const FONT_PLATFORM_SCRIPT = `
 })();
 `;
 
-export type InterfaceFontPath = "/fonts/optimistic/optimistic.ttf";
+export type InterfaceFontPath = "/fonts/inter/InterVariable-latin.woff2";
 
 /** The URL is a fixed local font asset, never user input. A parser-executed
- * hint loads the single Optimistic face on every platform. */
+ * hint loads the Inter variable face on every platform. */
 export function interfaceFontPreloadScript(href: InterfaceFontPath): string {
-  return `(function(){{var link=document.createElement('link');link.rel='preload';link.as='font';link.type='font/ttf';link.crossOrigin='anonymous';link.href=${JSON.stringify(href)};document.head.appendChild(link);}})();`;
+  return `(function(){{var link=document.createElement('link');link.rel='preload';link.as='font';link.type='font/woff2';link.crossOrigin='anonymous';link.href=${JSON.stringify(href)};document.head.appendChild(link);}})();`;
 }

@@ -1,0 +1,179 @@
+/* The landing's Anatomy figures (`.lp-anatomy`): the kit's tokens (`components/iso/iso.css`)
+   set to the landing's own ground and the capability cards' blue ink. The
+   paper is the page background, so a nearer part hides what is behind it
+   without showing as a patch; tops are a step lighter, the four side shades a
+   few steps darker, and the one lit part takes the cards' ink. Light first,
+   then `.dark`, which the theme toggle puts on <html>. */
+
+.iso.lp-anatomy {
+  --anatomy-paper: var(--background);
+  --anatomy-face: #ffffff;
+  --anatomy-top: #ffffff;
+  --anatomy-shade-0: oklch(0.885 0.008 262);
+  --anatomy-shade-1: oklch(0.912 0.007 262);
+  --anatomy-shade-2: oklch(0.937 0.005 262);
+  --anatomy-shade-3: oklch(0.958 0.004 262);
+  --anatomy-lit-top: #ffffff;
+  --anatomy-lit-shade: oklch(0.935 0.025 262);
+  --anatomy-hi: oklch(0.34 0.045 262);
+  --anatomy-mid: oklch(0.6 0.035 262);
+  --anatomy-lo: oklch(0.75 0.022 262);
+  --anatomy-faint: oklch(0.86 0.014 262);
+  --anatomy-lit: oklch(0.5 0.16 262);
+  --anatomy-halo: oklch(0.5 0.03 262);
+  --anatomy-halo-opacity: 0.26;
+  --anatomy-dot: oklch(0.28 0.04 262);
+  --anatomy-weight: 0.75px;
+  --lp-void: oklch(0.82 0.012 262);
+  --lp-text: oklch(0.6 0.035 262);
+  position: relative;
+  width: 100%;
+  container-type: inline-size;
+  touch-action: pan-y;
+  -webkit-tap-highlight-color: transparent;
+  user-select: none;
+}
+
+:root.dark .iso.lp-anatomy,
+.dark .iso.lp-anatomy {
+  --anatomy-face: oklch(0.27 0.006 262);
+  --anatomy-top: oklch(0.285 0.008 262);
+  --anatomy-shade-0: oklch(0.205 0.004 262);
+  --anatomy-shade-1: oklch(0.222 0.005 262);
+  --anatomy-shade-2: oklch(0.238 0.006 262);
+  --anatomy-shade-3: oklch(0.255 0.007 262);
+  --anatomy-lit-top: oklch(0.33 0.03 262);
+  --anatomy-lit-shade: oklch(0.27 0.025 262);
+  --anatomy-hi: oklch(0.88 0.018 262);
+  --anatomy-mid: oklch(0.58 0.02 262);
+  --anatomy-lo: oklch(0.43 0.016 262);
+  --anatomy-faint: oklch(0.33 0.01 262);
+  --anatomy-lit: oklch(0.8 0.11 262);
+  --anatomy-halo: #000000;
+  --anatomy-halo-opacity: 0.7;
+  --anatomy-dot: oklch(0.92 0.01 262);
+  --lp-void: oklch(0.17 0.004 262);
+  --lp-text: oklch(0.58 0.02 262);
+}
+
+.lp-anatomy .iso-svg {
+  overflow: visible;
+}
+
+/* A slot or recess cut into a face: its void, under its outline. */
+.lp-void {
+  fill: var(--lp-void);
+  stroke: none;
+}
+
+/* The card in the label holder, a hair lighter than the face it sits on. */
+.kn-holder {
+  fill: var(--anatomy-top);
+  stroke: none;
+}
+
+/* The drawer's own soft shadow on the bench, tighter than the bench's. */
+.lp-anatomy .lp-shadow {
+  filter: blur(4px);
+  opacity: calc(var(--anatomy-halo-opacity) * 0.8);
+  transform: translateY(1px);
+}
+
+/* Cards: once a question has been answered, the five it returned stay in
+   the subject's ink, the best one takes the lit ink, and every other passage
+   steps back a tone. */
+.kn-card > .iso-solid > .iso-edge,
+.kn-card .kn-text {
+  transition: stroke 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.kn-card[data-rank="rest"] > .iso-solid > .iso-edge {
+  stroke: var(--anatomy-mid);
+}
+.kn-card[data-rank="rest"] .kn-text {
+  stroke: var(--anatomy-faint);
+}
+.kn-card[data-rank="best"] .kn-text {
+  stroke: var(--anatomy-lit);
+  opacity: 0.55;
+}
+
+/* The rod the question lifts takes the subject's ink while it is up, so the
+   reader can follow it from the carriage to the cards it raises. */
+.kn-stub > .iso-solid > .iso-edge {
+  transition: stroke 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.kn-stub[data-on] > .iso-solid > .iso-edge {
+  stroke: var(--anatomy-hi);
+}
+
+/* A cable on the bench: its sheath's edge, then its core a shade lighter. */
+.lp-cable-edge,
+.lp-cable-core {
+  fill: none;
+  stroke-linecap: butt;
+  stroke-linejoin: round;
+}
+.lp-cable-edge {
+  stroke: var(--anatomy-mid);
+  stroke-width: 2.3px;
+}
+.lp-cable-core {
+  stroke: var(--anatomy-shade-3);
+  stroke-width: 1.1px;
+}
+
+/* Fig 05.2: the rocker's pivot pin, a dot of the screws' ink. */
+.ho-pin {
+  fill: var(--anatomy-dot);
+}
+
+/* The corners of the plate: what to do, top left; what it found, bottom
+   right. Top and bottom rather than both along the bottom, because in Spanish
+   the two together run wider than a card's drawing. */
+.lp-corner {
+  position: absolute;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  line-height: 1;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.lp-corner[data-corner="hint"] {
+  top: 0;
+  left: 0;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  opacity: 0.8;
+}
+.lp-corner[data-corner="readout"] {
+  bottom: 0;
+  right: 0;
+  color: var(--foreground);
+  font-variant-numeric: tabular-nums;
+}
+.lp-touch {
+  display: none;
+}
+@media (hover: none) {
+  .lp-hover {
+    display: none;
+  }
+  .lp-touch {
+    display: inline;
+  }
+}
+/* The figure's own width, not the viewport's: below a phone's card the hint
+   would run past the drawing's edge. */
+@container (max-width: 360px) {
+  .lp-corner[data-corner="hint"] {
+    display: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .lp-anatomy * {
+    transition: none !important;
+  }
+}

@@ -21,21 +21,26 @@ const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 const THEME_STORAGE_KEY = "focus-theme";
 
-export function ThemeProvider({ children }: { readonly children: ReactNode }) {
-  // Always start as "light" so server HTML and the first client render match
-  // (hydration-safe). The inline script in layout.tsx has already set the
-  // correct `dark` class on <html> before paint, so there is no white flash —
-  // the CSS is already dark. We sync the React state to the DOM after mount.
-  const [theme, setThemeState] = useState<Theme>("light");
+export function ThemeProvider({ children, forcedTheme }: {
+  readonly children: ReactNode;
+  readonly forcedTheme?: Theme;
+}) {
+  // A fixed theme matches the server HTML from the first render. Consumers
+  // without one can still manage their own light/dark preference.
+  const [theme, setThemeState] = useState<Theme>(forcedTheme ?? "light");
 
   useEffect(() => {
-    const actual: Theme = document.documentElement.classList.contains("dark") ? "dark" : "light";
+    const root = document.documentElement;
+    const actual: Theme = forcedTheme ?? (root.classList.contains("dark") ? "dark" : "light");
+    if (forcedTheme) {
+      root.classList.toggle("dark", forcedTheme === "dark");
+      root.classList.toggle("light", forcedTheme === "light");
+      root.style.colorScheme = forcedTheme;
+    }
     setThemeState((prev) => (prev === actual ? prev : actual));
-  }, []);
+  }, [forcedTheme]);
 
-  // After mount, enable smooth theme transitions. Before this, transitions
-  // are disabled so the initial theme set by the inline script doesn't
-  // animate (which causes a visible light→dark flash on load).
+  // Enable theme transitions only after the initial server theme has painted.
   useEffect(() => {
     document.documentElement.classList.add("theme-ready");
     return () => document.documentElement.classList.remove("theme-ready");
@@ -45,11 +50,8 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }) {
     const root = document.documentElement;
     root.classList.toggle("dark", next === "dark");
     root.classList.toggle("light", next === "light");
-    // The inline script in layout.tsx writes `color-scheme` as an INLINE
-    // style, which outranks the `:root` / `:root.dark` rules in globals.css
-    // forever. Toggling only the class therefore left the UA-painted parts —
-    // scrollbars, form controls, the overscroll canvas — on the theme the
-    // page loaded with until a refresh. Rewrite the same inline property.
+    // Keep native controls and scrollbars in sync with the CSS theme, even
+    // when the consumer renders an inline color-scheme on the root element.
     root.style.colorScheme = next;
     try {
       localStorage.setItem(THEME_STORAGE_KEY, next);
@@ -60,19 +62,21 @@ export function ThemeProvider({ children }: { readonly children: ReactNode }) {
 
   const setTheme = useCallback(
     (next: Theme) => {
+      if (forcedTheme) return;
       setThemeState(next);
       applyTheme(next);
     },
-    [applyTheme],
+    [applyTheme, forcedTheme],
   );
 
   const toggleTheme = useCallback(() => {
+    if (forcedTheme) return;
     setThemeState((prev) => {
       const next = prev === "dark" ? "light" : "dark";
       applyTheme(next);
       return next;
     });
-  }, [applyTheme]);
+  }, [applyTheme, forcedTheme]);
 
   return (
     <ThemeContext.Provider value={{ theme, toggleTheme, setTheme }}>

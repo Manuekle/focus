@@ -2803,7 +2803,7 @@ html:has(.lp) body {
 }
 
 /* Landing display titles use the shared display face; each element selects its weight. The rebuilt
-   app screens use Optimistic Display; only the Inbox mockup's chrome title (inside
+   app screens use Inter; only the Inbox mockup's chrome title (inside
    #bandeja) uses the platform UI face. The the shared display face class never reaches inside a frame. */
 .font-cooper {
   font-family: var(--font-cooper);

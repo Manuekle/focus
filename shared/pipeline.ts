@@ -2,13 +2,13 @@ import type { EffectId } from "./schemas";
 
 /** Upload → Describe → Identify → Track → Transform → Preview → Export */
 export const FLOW_STEPS = [
-  { id: "upload", label: "Subir" },
-  { id: "describe", label: "Describir" },
-  { id: "identify", label: "Identificar" },
-  { id: "track", label: "Seguir" },
-  { id: "transform", label: "Transformar" },
-  { id: "preview", label: "Previsualizar" },
-  { id: "export", label: "Exportar" },
+  { id: "upload", label: "Upload" },
+  { id: "describe", label: "Describe" },
+  { id: "identify", label: "Identify" },
+  { id: "track", label: "Track" },
+  { id: "transform", label: "Transform" },
+  { id: "preview", label: "Preview" },
+  { id: "export", label: "Export" },
 ] as const;
 export type FlowStepId = (typeof FLOW_STEPS)[number]["id"];
 
@@ -22,19 +22,19 @@ export const EFFECTS: readonly {
   {
     id: "reality-shift",
     name: "Reality Shift",
-    summary: "El sujeto conserva su color o su nitidez; el resto pasa a gris o se desenfoca.",
-    examples: ["Deja al skater en color y el resto en gris", "Desenfoca todo menos el perro"],
+    summary: "Keep your subject in color. Let everything else fade or blur.",
+    examples: ["Keep the skater in color", "Blur everything but the dog"],
   },
   {
     id: "break-the-frame",
     name: "Break the Frame",
-    summary: "El video queda dentro de un marco y el sujeto sale por encima de su borde.",
-    examples: ["Haz que la bailarina salga del cuadro", "Que el corredor rompa el marco"],
+    summary: "Give your clip a frame. Let your subject step beyond it.",
+    examples: ["Let the dancer step out of the frame", "Make the runner break the frame"],
   },
   {
     id: "motion-echo",
     name: "Motion Echo",
-    summary: "Copias del sujeto en instantes anteriores dibujan su recorrido. Mejor con cámara fija.",
-    examples: ["Añade estelas al ciclista", "Dale una estela cinematográfica al bailarín"],
+    summary: "Turn movement into a trail of echoes. Best with a still camera.",
+    examples: ["Add motion trails to the cyclist", "Give the dancer a cinematic echo"],
   },
 ];

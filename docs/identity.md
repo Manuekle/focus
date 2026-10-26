@@ -21,11 +21,11 @@ Los estados usan verde para éxito, rosa para fallo y ámbar para atención. Aco
 
 ## Tipografía
 
-Optimistic Display en títulos, texto, cifras, código y metadatos, con tracking uniforme de -0.02em. La escala de lectura no depende de la plataforma. Los archivos se sirven localmente; no hay peticiones a Google Fonts.
+Inter en títulos, texto, cifras, código y metadatos, con tracking uniforme de -0.02em. La escala de lectura no depende de la plataforma. Los archivos se sirven localmente; no hay peticiones a Google Fonts.
 
 Usa pesos 400 para texto, 500 para controles y 550–600 para encabezados. Un título de página tiene 30–36 px; la portada de documentación puede ampliar su escala. El cuerpo de producto utiliza 14 px y el contenido largo 16 px. Código: 11–12 px. Reserva metadatos de 10–12 px para información secundaria.
 
-`font-heading`, `font-sans`, `font-numeral` y `font-mono` conservan sus nombres por compatibilidad; todos usan Optimistic Display con tracking de `-0.02em`. `tabular-nums` alinea importes y contadores.
+`font-heading`, `font-sans`, `font-numeral` y `font-mono` conservan sus nombres por compatibilidad; todos usan Inter con tracking de `-0.02em`. `tabular-nums` alinea importes y contadores.
 
 ## Forma y densidad
 

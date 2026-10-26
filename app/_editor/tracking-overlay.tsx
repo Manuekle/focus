@@ -92,9 +92,9 @@ export function TrackingOverlay({
         context.strokeRect(left + lineWidth / 2, top + lineWidth / 2, right - left - lineWidth, bottom - top - lineWidth);
       }
       if (diagnostic) {
-        const label = `#${object.objectId}${object.confidence !== null ? ` ${object.confidence.toFixed(2)}` : ""}${object.mask ? "" : " sin máscara"}`;
+        const label = `#${object.objectId}${object.confidence !== null ? ` ${object.confidence.toFixed(2)}` : ""}${object.mask ? "" : " no mask"}`;
         const size = Math.max(12, Math.round(tracking.width / 70));
-        context.font = `600 ${size}px "Optimistic Display", sans-serif`;
+        context.font = `600 ${size}px "Inter", sans-serif`;
         const width = context.measureText(label).width + size * 0.8;
         context.setLineDash([]);
         context.fillStyle = isSelected ? "#325cfe" : "rgba(20,22,30,0.85)";
@@ -169,7 +169,7 @@ export function TrackingOverlay({
       width={tracking.width}
       height={tracking.height}
       aria-hidden={mode !== "pick"}
-      aria-label={mode === "pick" ? "Haz clic sobre el objeto que quieres destacar" : undefined}
+      aria-label={mode === "pick" ? "Click the subject you want to highlight" : undefined}
       onClick={(event) => {
         if (mode !== "pick" || !onPick) return;
         event.stopPropagation();

@@ -90,9 +90,14 @@ export function ToastProvider({ children }: { readonly children: ReactNode }) {
       <AnimatedToastStack
         toasts={toasts}
         onDismiss={dismissToast}
-        position="bottom-right"
+        position="bottom-center"
         placement="fixed"
         portal
+        classNames={{
+          root: "bottom-[max(24px,env(safe-area-inset-bottom))]",
+          title: "line-clamp-none",
+          description: "line-clamp-none",
+        }}
         dismissLabel={t("apiError.dismiss")}
       />
     </ToastContext.Provider>

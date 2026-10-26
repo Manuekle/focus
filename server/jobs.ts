@@ -162,7 +162,14 @@ export async function getJobTracking(jobId: string): Promise<Tracking> {
   return tracking;
 }
 
-export async function createJob(request: EditRequest): Promise<EditJob> {
+/** Called right before new paid work starts, with its worst-case SAM frame cost. */
+export type PaidWorkGate = (input: { activeJobs: number; estimatedFrames: number }) => Promise<void>;
+
+export function activeJobCount(): number {
+  return running.size;
+}
+
+export async function createJob(request: EditRequest, gate?: PaidWorkGate): Promise<EditJob> {
   const video = await getVideo(request.videoId);
   void cleanupJobs();
   const key = requestKey(request);
@@ -171,6 +178,7 @@ export async function createJob(request: EditRequest): Promise<EditJob> {
   // finished job instead of starting new paid work.
   const existing = await findJobByKey(key);
   if (existing && !["failed", "canceled"].includes(existing.status)) return existing;
+  await gate?.({ activeJobs: running.size, estimatedFrames: video.normalized.frameCount });
 
   const now = new Date().toISOString();
   const job = await saveJob({
@@ -250,6 +258,17 @@ async function planFor(video: VideoAsset, request: EditRequest, key: string, sig
     inflightPlans.set(key, pending);
   }
   return { plan: await pending, reused: false };
+}
+
+/** The stored gap-filled variant of a concept segmentation with the most tracked frames, if any. */
+async function filledVariant(video: VideoAsset, conceptId: string): Promise<Tracking | null> {
+  const names = await readdir(path.join(videoDir(video.id), "segmentations")).catch(() => [] as string[]);
+  let best: Tracking | null = null;
+  for (const name of names.filter((entry) => entry.startsWith(`${conceptId}+g-`) && entry.endsWith(".json"))) {
+    const tracking = await readTracking(video, name.slice(0, -5)).catch(() => null);
+    if (tracking && (!best || tracking.frames.length > best.frames.length)) best = tracking;
+  }
+  return best;
 }
 
 /** Concepts with a stored concept segmentation for this video. */
@@ -333,10 +352,10 @@ async function runJob(id: string, video: VideoAsset, request: EditRequest, key: 
   });
 
   let lastWrite = 0;
-  const segmentationId = segmentationKey(plan.target.concept);
-  const { tracking, reused } = await trackingFor(
+  const conceptId = segmentationKey(plan.target.concept);
+  const { tracking: conceptTracking, reused } = await trackingFor(
     video,
-    segmentationId,
+    conceptId,
     { kind: "concept", concept: plan.target.concept },
     signal,
     (fraction) => {
@@ -347,6 +366,11 @@ async function runJob(id: string, video: VideoAsset, request: EditRequest, key: 
     },
   );
   if (signal.aborted) return;
+  // A gap-filled version of this same segmentation (a superset: same objects,
+  // more frames) is reused when one exists, so the first render is complete.
+  const filled = await filledVariant(video, conceptId);
+  const segmentationId = filled?.id ?? conceptId;
+  const tracking = filled ?? conceptTracking;
 
   if (tracking.objects.length === 0) {
     await patchJob(id, {
@@ -564,7 +588,7 @@ export async function reopenSelection(id: string): Promise<EditJob> {
  * A click on the preview. If an existing mask already covers the point, that
  * object is selected for free; only an uncovered point costs a SAM pass.
  */
-export async function refineWithPoint(id: string, refine: RefineRequest): Promise<EditJob> {
+export async function refineWithPoint(id: string, refine: RefineRequest, gate?: PaidWorkGate): Promise<EditJob> {
   const job = await getJob(id);
   if (!["awaiting_selection", "ready_to_render", "completed"].includes(job.status) || !job.segmentationId) {
     throw new AppError("refine_not_allowed", 409, "Este proceso no admite una selección por punto ahora.");
@@ -580,6 +604,7 @@ export async function refineWithPoint(id: string, refine: RefineRequest): Promis
   const hit = hitTest(frameAt(base, refine.frameIndex), refine.point.x, refine.point.y);
   if (hit) return saveJob({ ...job, selection: [hit], status: "awaiting_selection", detail: null });
 
+  await gate?.({ activeJobs: running.size, estimatedFrames: frameCount });
   const pointObjects = base.objects.filter((object) => object.source === "point").length;
   const objectId = 100 + pointObjects;
   const pointId = `p-${hash(`${refine.frameIndex}:${refine.point.x}:${refine.point.y}`)}`;
@@ -620,7 +645,7 @@ export async function refineWithPoint(id: string, refine: RefineRequest): Promis
  * tracked frame, propagated both ways. Only missing frames are filled; it is a
  * paid call, so it only runs when the user asks.
  */
-export async function fillGaps(id: string): Promise<EditJob> {
+export async function fillGaps(id: string, gate?: PaidWorkGate): Promise<EditJob> {
   const job = await getJob(id);
   if (!["awaiting_selection", "ready_to_render", "completed"].includes(job.status) || !job.segmentationId || job.selection.length === 0) {
     throw new AppError("fill_not_allowed", 409, "Elige primero el sujeto.");
@@ -638,6 +663,7 @@ export async function fillGaps(id: string): Promise<EditJob> {
       return { id: Number(object.id), frameIndex: object.firstFrame, box };
     });
   if (targets.length === 0) throw new AppError("nothing_to_fill", 409, "El sujeto ya está seguido en todos los fotogramas.");
+  await gate?.({ activeJobs: running.size, estimatedFrames: frameCount });
 
   const wasCompleted = job.status === "completed";
   const previousStatus = job.status;
@@ -682,10 +708,15 @@ export async function cleanupVideos(): Promise<void> {
     if (busy.has(id)) continue;
     const dir = path.join(root, id);
     const info = await stat(path.join(dir, VIDEO_FILES.asset)).catch(() => null);
-    if (!info || Date.now() - info.mtimeMs > JOB_TTL_MS) {
+    // Uploads have no asset.json until probing and normalization finish.
+    // Give incomplete directories the same retention window as ready clips.
+    const touched = info ?? await stat(dir).catch(() => null);
+    if (!touched) continue;
+    if (Date.now() - touched.mtimeMs > JOB_TTL_MS) {
       await rm(dir, { recursive: true, force: true });
       continue;
     }
+    if (!info) continue;
     const renders = await readdir(path.join(dir, "renders")).catch(() => [] as string[]);
     for (const name of renders.filter((entry) => entry.includes(".tmp-"))) {
       if (inflightRenders.size === 0) await rm(path.join(dir, "renders", name), { recursive: true, force: true });

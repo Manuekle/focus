@@ -1,0 +1,13 @@
+# Managed by Ansible (backup role). Do not edit by hand.
+[Unit]
+Description=oruka database backup schedule
+
+[Timer]
+OnCalendar={{ backup_schedule }}
+# A droplet that was off at the scheduled time still gets its backup.
+Persistent=true
+# So every install does not hit its storage provider at the same second.
+RandomizedDelaySec=900
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,110 @@
+/* Motion for /start/ready. Each animation says something true about the
+   build: the sheen runs only while the address is still being assembled, the
+   pulse marks the one stage in progress, the check draws once when a stage
+   finishes. All of it stops under prefers-reduced-motion. */
+
+.address {
+  position: relative;
+  overflow: hidden;
+  isolation: isolate;
+}
+
+/* A light pass across the address while it is not live yet. */
+.sheen::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(
+    100deg,
+    transparent 35%,
+    color-mix(in oklch, currentColor 9%, transparent) 50%,
+    transparent 65%
+  );
+  background-size: 250% 100%;
+  animation: sheen var(--duration-very-slow, 500ms) cubic-bezier(0.4, 0, 0.2, 1) infinite;
+}
+
+@keyframes sheen {
+  from {
+    background-position: 130% 0;
+  }
+  to {
+    background-position: -30% 0;
+  }
+}
+
+/* The bar under the address: how much of the build is done. */
+.fill {
+  transition: width var(--duration-very-slow, 500ms) cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.pulse {
+  animation: pulse var(--duration-very-slow, 500ms) ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%,
+  100% {
+    transform: scale(0.55);
+    opacity: 0.45;
+  }
+  50% {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+.check path {
+  stroke-dasharray: 24;
+  stroke-dashoffset: 24;
+  animation: draw var(--duration-slow, 400ms) cubic-bezier(0.65, 0, 0.35, 1) forwards;
+}
+
+@keyframes draw {
+  to {
+    stroke-dashoffset: 0;
+  }
+}
+
+/* The current stage's detail line opening under its label. */
+.detail {
+  display: grid;
+  grid-template-rows: 0fr;
+  opacity: 0;
+  transition:
+    grid-template-rows var(--duration-slow, 400ms) cubic-bezier(0.22, 1, 0.36, 1),
+    opacity var(--duration-fast, 250ms) ease-out;
+}
+
+.detailOpen {
+  grid-template-rows: 1fr;
+  opacity: 1;
+}
+
+.enter {
+  animation: enter var(--duration-very-slow, 500ms) cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@keyframes enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sheen::before,
+  .pulse,
+  .enter {
+    animation: none;
+  }
+  .check path {
+    animation: none;
+    stroke-dashoffset: 0;
+  }
+  .fill,
+  .detail {
+    transition: none;
+  }
+}

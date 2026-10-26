@@ -35,7 +35,8 @@
     "tokens": "node scripts/export-tokens.mjs",
     "inventory": "node scripts/inventory.mjs",
     "test": "vitest run",
-    "test:live": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run --config vitest.live.config.ts"
+    "test:live": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run --config vitest.live.config.ts",
+    "test:e2e": "playwright test"
   },
   "peerDependencies": {
     "react": "^19.0.0",
@@ -73,6 +74,7 @@
     "zod": "4.1.12"
   },
   "devDependencies": {
+    "@playwright/test": "^1.64.1",
     "@types/node": "24.13.2",
     "@types/react": "19.2.15",
     "@types/react-dom": "19.2.3",

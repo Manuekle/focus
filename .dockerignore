@@ -1,0 +1,13 @@
+# Never send secrets, local media or build output into the image context.
+.env
+.env.*
+!.env.example
+.focus-data
+node_modules
+.next
+.git
+.claude
+*.tsbuildinfo
+*.mp4
+*.mov
+PHASES

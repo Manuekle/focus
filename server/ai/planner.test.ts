@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import OpenAI from "openai";
 import { AppError } from "../errors";
-import { Limiter, metaError, readMetaConfig, withRetry } from "./meta";
+import { Limiter, metaError, readMetaConfig, requireMetaConfig, withRetry } from "./meta";
 import { PLAN_JSON_SCHEMA, parsePlanOutput } from "./planner";
 
 const plan = (overrides: Record<string, unknown> = {}) =>
@@ -129,6 +129,18 @@ describe("Meta client helpers", () => {
     });
     await Promise.all([task(), task(), task()]);
     expect(peak).toBe(1);
+  });
+
+  it("fails clearly when the server has no key", () => {
+    const saved = { model: process.env.MODEL_API_KEY, meta: process.env.META_API_KEY };
+    delete process.env.MODEL_API_KEY;
+    delete process.env.META_API_KEY;
+    try {
+      expect(() => requireMetaConfig()).toThrowError(expect.objectContaining({ code: "meta_not_configured", status: 503 }));
+    } finally {
+      if (saved.model !== undefined) process.env.MODEL_API_KEY = saved.model;
+      if (saved.meta !== undefined) process.env.META_API_KEY = saved.meta;
+    }
   });
 
   it("reads MODEL_API_KEY, falling back to META_API_KEY", () => {

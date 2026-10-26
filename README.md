@@ -1,89 +1,115 @@
-# Focus · Design system
+# Focus — Make anything stand out.
 
-Sistema completo con una identidad nueva, construido sobre los componentes e interacciones existentes de Oruka. Incluye código React reutilizable, temas claro y oscuro, tokens exportables y un catálogo interactivo independiente.
+Focus is an AI video editor. Drop a short clip, describe what should stand out in one sentence, and Focus finds the subject, tracks it frame by frame and renders a cinematic effect around it — exported as a real MP4.
 
-## Abrir
+> **Built during Meta Global AI Developer Hackathon 2026.** See [the hackathon section](#built-during-meta-global-ai-developer-hackathon-2026).
+
+The interface is in Spanish. The three effects:
+
+| Effect | What it does | Status |
+| --- | --- | --- |
+| **Reality Shift** | The subject keeps its color (or stays sharp); everything else turns gray (or blurs). | Working, verified on real footage |
+| **Break the Frame** | The video sits inside an inner frame on a 1080×1350 canvas; the subject is drawn above it and steps out across the frame edge. | Working, verified on real footage |
+| **Motion Echo** | Fading copies of the subject from earlier frames trace its path. | Working; designed for static cameras (see limitations) |
+
+## How it works
+
+```
+Upload → Describe → Identify → Track → Transform → Preview → Export
+```
+
+1. **Upload.** FFprobe validates the real media (MP4/MOV, ≤ 10 s, ≤ 50 MB). FFmpeg normalizes it once: ≤ 720p, 24 fps constant, H.264, rotation applied. This normalized file is the single source for segmentation *and* rendering, so masks and frames can never drift apart.
+2. **Describe → Identify.** **Muse Spark 1.3** reads the instruction (any language) and the first frame and returns a strict JSON edit plan: a short English noun phrase for the subject, the effect, bounded parameters, or a clear "unsupported" / "needs clarification" verdict. Zod validates everything; the model never produces commands, paths or FFmpeg arguments.
+3. **Track.** **SAM 3.1** receives that noun phrase and the normalized video (Files API + streaming Responses API) and returns per-frame masks with stable object ids, parsed with `@meta-sam/parser`. When several objects match, the user clicks the right one on the video — a click on an existing mask costs nothing. Frames SAM missed can be completed with one explicit box-prompted pass.
+4. **Transform → Export.** A deterministic compositor decodes the normalized video frame by frame through an FFmpeg pipe, applies the selected masks of that same frame, and encodes H.264/yuv420p with the original audio. Every export is verified with FFprobe (codec, size, fps, exact frame count, duration, audio) before it is offered for download.
+5. **Preview.** A before/after slider draws both halves from one stacked stream, so the two sides cannot desynchronize.
+
+Changing an effect setting re-renders from the stored masks: no new AI call. Identical requests reuse the existing job.
+
+More detail: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). Release status: [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md).
+
+## Run it locally
+
+Requirements: Node.js 24, pnpm 12, FFmpeg + FFprobe on `PATH`, a Meta Model API key.
 
 ```sh
-cd /Users/manudev/Dev/focus
 pnpm install
-pnpm dev
+cp .env.example .env      # set MODEL_API_KEY
+pnpm dev                  # http://localhost:3200
 ```
 
-- http://localhost:3200 — **editor de video Focus** ("Make anything stand out."). Requiere `ffmpeg` y `ffprobe` en el `PATH` (o `FFMPEG_PATH` / `FFPROBE_PATH`). Los videos subidos se guardan en `.focus-data/` (ignorado por git; cambia la ruta con `FOCUS_DATA_DIR`).
-- http://localhost:3200/system — catálogo del design system. No requiere cuentas ni backend; sus ejemplos conservan datos solo en memoria. El sonido está desactivado inicialmente; puedes activarlo desde la barra del catálogo.
+- `/` — the editor.
+- `/system` — the Focus design-system catalog the editor is built with ([package docs](docs/DESIGN_SYSTEM_PACKAGE.md), [identity](docs/DESIGN_SYSTEM.md)).
+- `/api/health` — readiness (FFmpeg, FFprobe, storage, AI switch, daily budget).
 
-IA (Meta Model API, solo en servidor): define `MODEL_API_KEY` en `.env` (también se acepta `META_API_KEY`; ver `.env.example`). Muse Spark 1.3 convierte la instrucción en un plan validado con Zod; SAM 3.1 segmenta y sigue el sujeto sobre el video normalizado. Planes y máscaras se guardan por video en `.focus-data/` y se reutilizan; `GET /api/usage` muestra llamadas, aciertos de caché, tokens y fotogramas de SAM. `pnpm test` no hace llamadas pagas; `pnpm test:live` sí (una llamada a Muse Spark y una pasada de SAM de ~50 fotogramas).
+Uploads, masks and renders live in `.focus-data/` (git-ignored) and expire after 24 h.
 
-Efectos (`server/video/`): un solo compositor determinista decodifica el video normalizado fotograma a fotograma por pipe de FFmpeg, aplica las máscaras SAM de ese mismo fotograma y codifica H.264/yuv420p (con el audio original si existe). Reality Shift (color selectivo y fondo desenfocado), Break the Frame (lienzo 1080×1350, video recortado al marco interior y sujeto sin recortar) y Motion Echo (estelas del sujeto, pensado para cámara fija). Cada exportación se verifica con FFprobe; los renders se guardan por parámetros y cambiar un ajuste no vuelve a llamar a Meta AI.
-
-Arquitectura del editor: `app/_editor` (UI del workspace), `app/api` (rutas), `server/` (FFmpeg, almacenamiento, contratos de Meta AI y del compositor), `shared/` (límites de media y esquemas Zod). Identidad aplicada: [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md). `pnpm test` ejecuta Vitest, incluida una prueba de ingesta real con FFmpeg.
-
-## Qué incluye
-
-- **Fundamentos:** identidad azul/grafito, Optimistic Display, color semántico, tipografía, espaciado, radios, elevación, capas y movimiento.
-- **Controles:** botones, campos, agrupaciones, selectores, calendario, OTP, switches, checkbox, radio, sliders, chips, badges, avatares y medidores.
-- **Superficies:** diálogos, confirmaciones, drawer, dropdown, menú contextual, command palette, hover card y tooltips.
-- **Feedback:** alertas, errores recuperables, toasts, esqueletos, spinner, éxito y carga de archivos.
-- **Patrones:** formularios accesibles, tablas con búsqueda/orden/paginación/estados, tarjetas, KPI, gráficos, estados vacíos y composer.
-- **UI de IA:** razonamiento, respuestas Markdown, estado de pensamiento, sugerencias y cambios de contenido.
-- **Recursos:** ilustraciones de producto, estados de sistema, marca Focus, iconos Hugeicons, lighting y mascota.
-- **Documentación:** variantes, ejemplos con código copiable, API de las piezas principales, integración, accesibilidad, uso y mantenimiento.
-
-## Reutilizar desde otro proyecto
-
-Paquete privado de **código fuente** para React 19 + TypeScript + Tailwind 4. Next.js ejecuta el catálogo; los componentes no dependen de Next ni Eve. El consumidor debe procesar TSX, CSS Modules y los estilos de Tailwind.
+## Tests
 
 ```sh
-# En un proyecto al lado de la carpeta focus:
-pnpm add @focus/ui@file:../focus
+pnpm check       # tokens, inventory, TypeScript, ESLint, import verification, unit + integration tests
+pnpm test        # Vitest only (no network, no credits): parsing, plans, jobs, compositor, FFmpeg exports
+pnpm build && pnpm test:e2e   # Playwright (installed Chrome) against the production build, AI switched off
+pnpm test:live   # Paid: one Muse Spark call and one SAM pass (~50 frames). Needs MODEL_API_KEY.
 ```
 
-```tsx
-import { Button } from '@focus/ui/ui/button';
-import { Field } from '@focus/ui/ui/field';
-import { Input } from '@focus/ui/ui/input';
-import { FocusProvider } from '@focus/ui/provider';
-```
+Unit tests replay **recorded** SAM 3.1 output (`server/ai/__fixtures__`); they are not live tests. The live path is covered by `pnpm test:live` and by the end-to-end journey recorded in [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md).
 
-Importa `@focus/ui/styles` **una vez** en tu CSS principal. Copia `public/fonts` y, si usas iconos de servicios, `public/logos/apps` a `public` del consumidor. Añade sus directorios de código al escaneo `@source` de Tailwind. Con Next, configura `transpilePackages: ['@focus/ui']` y monta `FocusProvider` por debajo de `body`.
+## Deploy
 
-La guía completa está en [docs/integration.md](docs/integration.md) y en `/guide` del catálogo. También puedes copiar componentes y sus imports relativos manteniendo la estructura `components/`, `lib/` y `styles/`.
-
-## Personalizar
-
-`styles/focus-theme.css` es el lugar para modificar la identidad. Conserva valores para ambos temas y los tokens de controles que dependan del acento. La base extraída se conserva en `styles/base-tokens.css`; el tema de Focus la sobreescribe al final.
+A single Docker container (Next.js standalone + FFmpeg). Video processing is long-running and CPU-bound, so it needs a container host, not serverless functions.
 
 ```sh
-pnpm tokens      # Regenera tokens/tokens.json desde el CSS real
-pnpm check       # Tipos, lint e integridad del paquete
-pnpm build       # Catálogo de producción
-pnpm start       # Sirve el build en :3200
+docker build -t focus .
+docker run -p 3000:3000 --env-file .env -v focus-data:/data focus
 ```
 
-Para usar solo variables CSS, importa `@focus/ui/tokens.css`. Para herramientas externas, usa `@focus/ui/tokens.json`; los valores que contienen `var(...)` se mantienen como referencias CSS.
+Resources, abuse protection and environment variables: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
-## Mapa
+## Known limitations
 
-| Carpeta | Contenido |
-| --- | --- |
-| `components/ui` | Primitivas y controles |
-| `components/motion` | Feedback, presencia y controles con movimiento |
-| `components/patterns` | Composición de pantallas, tablas y gráficos |
-| `components/ai-elements` | Piezas de chat y contenido de IA |
-| `components/hairline` | Ilustraciones y estados |
-| `components/marketing`, `components/pet` | Recursos expresivos opcionales |
-| `lib` | Utilidades, traducciones, hooks y tipos requeridos por UI |
-| `styles` | Tokens, tema Focus y recetas originales |
-| `tokens` | Exportación JSON de ambos temas y escalas |
-| `catalog`, `app` | Documentación interactiva |
-| `docs` | Guías de diseño, código y mantenimiento |
-| `provenance.json` | Fuente y revisión de las piezas extraídas |
+- Clips up to 10 s / 50 MB, processed at ≤ 720p and 24 fps.
+- **Motion Echo assumes a static camera.** With a panning camera, trails stay where the subject *was on screen*, not in the world; there is no stabilization.
+- **Break the Frame** chooses its framing automatically. When the subject barely leaves the inner frame, the app says so; it never invents pixels beyond the source.
+- SAM may miss a subject on some frames (e.g. at the start of a shot or while partly hidden). Those frames are reported, never faked; "Completar el seguimiento" runs one extra paid SAM pass.
+- Concepts work best as simple nouns plus one attribute ("white-haired boy", "red car").
+- One container instance: jobs and limits live in process memory plus local files.
 
-## Procedencia y límites
+## Built during Meta Global AI Developer Hackathon 2026
 
-La base se extrajo de Oruka en la revisión registrada en `provenance.json`. La identidad de Focus, el catálogo y los patrones añadidos se mantienen aquí por separado. Los cambios de Oruka no se sincronizan automáticamente. No se modificó el repositorio original.
+**Problem.** Object-aware video effects — keeping one person in color, letting a dancer step out of the frame — normally need rotoscoping by hand, frame by frame, in professional software. Most people who want these shots for social video cannot do that.
 
-Los ejemplos son UI local. La aplicación que los adopte implementa autenticación, permisos, peticiones, persistencia y validación del servidor. `FileUpload` proporciona callbacks; `AnimatedQR` requiere un endpoint SVG/JSON suministrado por el consumidor. Las recetas de lighting y goo son optativas, para superficies expresivas.
+**What we built.** A focused editor where the whole workflow is one sentence: upload, describe, get an exported MP4 with the effect applied to the right subject on every frame.
 
-La fuente Optimistic proporcionada conserva su archivo original y su aviso de copyright en `public/fonts/optimistic/`. Los componentes extraídos conservan la procedencia del proyecto; esta carpeta no concede una licencia pública sobre el código de Oruka.
+**Meta models and why each is essential.**
+
+- **Muse Spark 1.3** turns free-form, multilingual instructions ("Deja al chico de pelo blanco en color…") into a constrained plan. It looks at the actual frame to choose a noun phrase SAM can see, picks the effect variant, and refuses edits Focus cannot do. Without it, users would have to speak SAM's prompt language.
+- **SAM 3.1** does the part that used to be manual: it finds every instance of the concept and tracks each with a stable identity through the clip, returning pixel masks for every frame. Box prompts complete frames the concept pass missed.
+
+**Technical challenges.**
+
+- *Mask/frame alignment:* SAM and the compositor read the exact same normalized file; frame indices are explicit (SAM may stream frames out of order).
+- *Edge quality:* masks are feathered symmetrically around SAM's boundary; background blur uses normalized convolution so the subject's color never smears into the background.
+- *Break the Frame:* one source→canvas transform drives both the clipped video layer and the unclipped subject layer; the layout cuts the frame edge through the subject on its nearest side.
+- *Honest progress:* every stage in the UI is driven by a real signal (first SAM frame received, last frame composited, verification started).
+- *Cost control:* plan, segmentation and render caches; deduplicated requests; free re-selection; rate limits, a daily SAM budget and an emergency switch for public demos.
+
+**Real-world utility.** Creators, marketers and editors get rotoscope-grade isolation for short clips in seconds, with an MP4 ready to post.
+
+**Demo.** Use a short clip (≤ 10 s) of a person or object moving against a mostly static background:
+
+1. *Reality Shift* — "Deja a la persona en color y todo lo demás en blanco y negro".
+2. *Break the Frame* — "Haz que la persona salga del marco"; switch the background to *Claro* for dark subjects.
+3. *Motion Echo* — on a fixed-camera shot: "Añade estelas de movimiento a la persona".
+
+Drag the before/after slider, change a setting (re-render without AI calls), and download the MP4.
+
+## Rights and attribution
+
+No open-source license is granted at this time: **all rights reserved** unless stated otherwise.
+
+- The design-system base in `components/`, `lib/`, `styles/` and `catalog/` was extracted from Oruka (see `provenance.json`); this repository grants no license to that code.
+- **Inter** (`public/fonts/inter/`) is © The Inter Project Authors and distributed under the included SIL Open Font License 1.1 (`LICENSE.txt`).
+- Meta models are used through the Meta Model API under Meta's terms; `@meta-sam/parser` is distributed under the SAM License.
+- Dependencies keep their licenses: Next.js, React, Zod, Motion and Hugeicons free icons (MIT); OpenAI SDK and Sharp (Apache-2.0). FFmpeg (LGPL/GPL, including libx264) is invoked as an external program.
+- No sample videos are included. Use media you have the rights to.

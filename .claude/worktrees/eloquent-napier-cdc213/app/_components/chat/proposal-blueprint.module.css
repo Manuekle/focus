@@ -1,0 +1,94 @@
+/*
+ * The blueprint is drawn, not shown.
+ *
+ * Shared by every proposal the console chat draws (`propose_agent`,
+ * `propose_automation`; see proposal-blueprint.tsx). A proposal arrives whole
+ * — Eve hands the tool call over with its arguments complete — so the
+ * "architect at work" is this reveal: the spine grows down the sheet and each
+ * section settles onto it in reading order, then the decision appears once
+ * there is a finished plan to decide on. It is a reveal
+ * (motion-system category 1/3 boundary): transform and opacity only, the
+ * expo-out curve the other reveals use, and nothing loops.
+ *
+ * Reduced motion: no travel, no blur, no tween. The component also skips the
+ * staged timer, so the plan and its buttons are there on the first frame.
+ */
+
+.sheet {
+  background-image: radial-gradient(circle, var(--border) 1px, transparent 1px);
+  background-size: 16px 16px;
+  background-position: -8px -8px;
+}
+
+.spine {
+  transform-origin: top;
+  transition: transform 520ms var(--ease-expo-out);
+}
+
+.node {
+  transition:
+    opacity 420ms var(--ease-expo-out),
+    transform 420ms var(--ease-expo-out),
+    filter 420ms var(--ease-expo-out);
+}
+.node[data-shown="false"] {
+  opacity: 0;
+  transform: translateY(6px);
+  filter: blur(2px);
+}
+
+/* The marker on the spine fills in as its section lands. */
+.marker {
+  transition:
+    background-color 260ms var(--ease-expo-out),
+    border-color 260ms var(--ease-expo-out),
+    color 260ms var(--ease-expo-out);
+}
+
+/* The diagram view assembles the same way: each node settles in as its turn
+ * comes, and the connector into it draws itself from the node above. */
+.diagramNode {
+  transition:
+    opacity 380ms var(--ease-expo-out),
+    transform 380ms var(--ease-expo-out);
+}
+.diagramNode[data-shown="false"] {
+  opacity: 0;
+  transform: translateY(8px) scale(0.96);
+}
+
+.diagramEdge {
+  stroke-dashoffset: 0;
+  transition:
+    stroke-dashoffset 420ms var(--ease-expo-out),
+    opacity 200ms ease-out;
+}
+.diagramEdge[data-shown="false"] {
+  stroke-dashoffset: 1;
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .spine,
+  .node,
+  .marker {
+    transition: none;
+  }
+  .node[data-shown="false"] {
+    opacity: 1;
+    transform: none;
+    filter: none;
+  }
+  .diagramNode,
+  .diagramEdge {
+    transition: none;
+  }
+  .diagramNode[data-shown="false"] {
+    opacity: 1;
+    transform: none;
+  }
+  .diagramEdge[data-shown="false"] {
+    stroke-dashoffset: 0;
+    opacity: 1;
+  }
+}

@@ -19,8 +19,9 @@ import {
 } from "@hugeicons/core-free-icons";
 
 import { AnimatePresence, motion } from "motion/react";
+import type { VariantProps } from "class-variance-authority";
 import { useReducedMotion } from "../../lib/hooks/use-reduced-motion";
-import { useCallback, useId, useRef, useState } from "react";
+import { useCallback, useId, useRef, useState, type ReactNode } from "react";
 import { EASE_OUT } from "../../lib/ease";
 import { cn } from "../../lib/utils";
 import { buttonVariants } from "../ui/button";
@@ -66,7 +67,9 @@ export interface FileUploadProps {
   variant?: FileUploadVariant;
   title?: string;
   description?: string;
+  dropzoneIcon?: ReactNode;
   browseLabel?: string;
+  browseVariant?: VariantProps<typeof buttonVariants>["variant"];
   className?: string;
   classNames?: FileUploadClassNames;
 }
@@ -401,7 +404,9 @@ export function FileUpload({
   variant = "default",
   title = "Drop files here",
   description = "Add files to the upload queue",
+  dropzoneIcon,
   browseLabel = "Browse",
+  browseVariant = "outline",
   className,
   classNames,
 }: FileUploadProps) {
@@ -554,7 +559,7 @@ export function FileUpload({
           }
           transition={FAST_TRANSITION}
         >
-          <HugeiconsIcon icon={CloudUploadIcon} size={centered ? 28 : 18} strokeWidth={1.75} />
+          {dropzoneIcon ?? <HugeiconsIcon icon={CloudUploadIcon} size={centered ? 28 : 18} strokeWidth={1.75} />}
         </motion.span>
 
         <span className={cn("min-w-0", centered ? "max-w-xs" : "flex-1 basis-48")}>
@@ -581,7 +586,7 @@ export function FileUpload({
         <span
           aria-hidden="true"
           className={cn(
-            buttonVariants({ variant: "outline", size: "sm" }),
+            buttonVariants({ variant: browseVariant, size: "sm" }),
             "pointer-events-none",
             centered ? "mt-1" : undefined,
           )}

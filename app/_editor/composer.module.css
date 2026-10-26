@@ -1,0 +1,26 @@
+.composer { display: flex; flex-direction: column; gap: 20px; }
+.effects { display: flex; min-width: 0; flex-direction: column; gap: 9px; }
+.tabs { display: flex; width: 100%; --tabs-bar-bg: #ffffff03; --tabs-bar-border: transparent; --tabs-pill-bg: #ffffff08; --tabs-pill-border: #ffffff06; --tabs-pill-shadow: 0 2px 5px #0000001a; box-shadow: none; }
+.tabs :global(.t-tab) { flex: 1; padding-inline: 8px; }
+.summary { min-height: 17px; color: var(--muted-foreground); font-size: 12px; line-height: 1.55; }
+.instruction { display: flex; flex-direction: column; gap: 7px; }
+.label { color: var(--foreground); font-size: 12px; font-weight: 500; }
+.instruction .textarea { min-height: 88px; border-color: #ffffff08; background: #ffffff04; box-shadow: inset 0 1px 2px #0000000a; font-size: 12px; line-height: 1.6; }
+.hint { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+.hint > span:last-child { flex-shrink: 0; white-space: nowrap; }
+.examples { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: var(--muted-foreground); font-size: 12px; }
+.submit { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
+.generate { width: 100%; }
+.blocked { color: var(--muted-foreground); font-size: 12px; text-align: center; }
+@media (max-width: 760px) {
+  .tabs :global(.t-tab) { padding-inline: 6px; }
+}
+@media (max-width: 680px) {
+  .instruction .textarea { font-size: 12px; }
+  .hint { font-size: 12px; }
+  .examples { font-size: 12px; row-gap: 8px; }
+}
+@media (max-width: 420px) {
+  .tabs :global(.t-tab) { min-width: 0; height: 38px; white-space: normal; font-size: 12px; line-height: 1.2; }
+  .tabs :global(.t-tabs-pill) { height: calc(100% - 4px); }
+}

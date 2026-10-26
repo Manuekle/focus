@@ -6,3 +6,7 @@ node_modules/
 *.tgz
 .focus-data/
 !.env.example
+.focus-data-e2e/
+e2e/.fixtures/
+test-results/
+playwright-report/

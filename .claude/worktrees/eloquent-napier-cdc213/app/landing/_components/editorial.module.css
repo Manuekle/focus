@@ -1,0 +1,318 @@
+.surface {
+  --editorial-light: oklch(0 0 0 / 0.055);
+  --editorial-spill: oklch(0 0 0 / 0.018);
+  --editorial-grain: 0.025;
+  --editorial-grain-strong: 0.035;
+  --editorial-metal-top: oklch(0.98 0 0);
+  --editorial-metal-bottom: oklch(0.88 0 0);
+}
+
+:global(.dark) .surface {
+  --editorial-light: oklch(1 0 0 / 0.105);
+  --editorial-spill: oklch(1 0 0 / 0.025);
+  --editorial-grain: 0.055;
+  --editorial-grain-strong: 0.075;
+  --editorial-metal-top: oklch(0.28 0 0);
+  --editorial-metal-bottom: oklch(0.17 0 0);
+}
+
+.grain {
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  display: block;
+  pointer-events: none;
+  background-image: url("/textures/grain.svg");
+  background-size: 192px 192px;
+  opacity: var(--editorial-grain);
+}
+
+.grain[data-grain="hero"] {
+  mask-image: radial-gradient(ellipse 62% 70% at 44% 28%, black 12%, transparent 100%);
+}
+
+.grain[data-grain="surface"] {
+  opacity: var(--editorial-grain-strong);
+  mask-image: linear-gradient(transparent, black 12%, black 88%, transparent);
+}
+
+.grain[data-grain="closing"] {
+  opacity: var(--editorial-grain-strong);
+  mask-image: radial-gradient(ellipse at 85% 45%, black 10%, transparent 90%);
+}
+
+.hero {
+  isolation: isolate;
+}
+
+.heroIntro {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(0, 0.85fr);
+  align-items: center;
+  column-gap: 3rem;
+  row-gap: 1.5rem;
+}
+
+.heroVisual {
+  min-width: 0;
+}
+
+@media (max-width: 767px) {
+  .heroIntro {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 1.5rem;
+  }
+
+  /* On a phone the portrait stood between the offer and the demo, ~440px of
+     it. The demo is the proof, so it follows the buttons directly. The image
+     is lazy, so a hidden one is never fetched. */
+  .heroVisual {
+    display: none;
+  }
+}
+
+.publicHeader {
+  isolation: isolate;
+}
+
+.publicHeader :global(.lp-grid) {
+  opacity: 0.65;
+}
+
+.authAtmosphere {
+  --editorial-light: oklch(0 0 0 / 0.04);
+  --editorial-spill: oklch(0 0 0 / 0.012);
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  pointer-events: none;
+  mask-image: linear-gradient(black 8%, transparent 86%);
+}
+
+:global(.dark) .authAtmosphere {
+  --editorial-light: oklch(1 0 0 / 0.09);
+  --editorial-spill: oklch(1 0 0 / 0.022);
+}
+
+.authAtmosphere .grain {
+  opacity: 0.018;
+  mix-blend-mode: soft-light;
+}
+
+:global(.dark) .authAtmosphere .grain {
+  opacity: 0.032;
+  mix-blend-mode: overlay;
+}
+
+.authAtmosphere .heroLight {
+  inset: -12% -25% auto;
+  height: 42rem;
+  mask-image: linear-gradient(black 8%, transparent 92%);
+}
+
+.authAtmosphere .grain {
+  mask-image: radial-gradient(ellipse 62% 58% at 50% 30%, black 12%, transparent 100%);
+}
+
+.publicBody {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+}
+
+.publicBodyContent {
+  position: relative;
+  z-index: 1;
+}
+
+.heroAtmosphere {
+  position: absolute;
+  inset: 0 0 auto;
+  height: min(100%, 58rem);
+  overflow: hidden;
+  pointer-events: none;
+  mask-image: linear-gradient(black 65%, transparent);
+}
+
+/* An oblique wash, like light passing through the aperture in Oruka's mark. */
+.heroLight {
+  position: absolute;
+  inset: 0;
+  background:
+    radial-gradient(ellipse 42% 68% at 47% 4%, var(--editorial-spill), transparent 85%),
+    conic-gradient(from 151deg at 46% -18%, transparent 0deg,
+      var(--editorial-spill) 9deg, var(--editorial-light) 20deg,
+      var(--editorial-spill) 33deg, transparent 45deg);
+  mask-image: linear-gradient(black 5%, transparent 95%);
+}
+
+.automation {
+  position: relative;
+  isolation: isolate;
+}
+
+.automationHead {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.8fr);
+  align-items: end;
+  gap: 1.5rem 4rem;
+}
+
+.hosting {
+  position: relative;
+  isolation: isolate;
+  background: linear-gradient(180deg, var(--background), var(--muted) 45%, var(--background));
+}
+
+.hostingContent {
+  position: relative;
+  z-index: 1;
+}
+
+.hostingIntro {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 4rem;
+}
+
+.installation {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-items: center;
+  padding: 3rem 1rem 1.5rem;
+}
+
+/* The light the card sits in.
+
+   The box is deliberately much larger than the figure. A radial gradient with
+   no explicit size is `farthest-corner`, which scales its radii to the box it
+   is in — so `transparent 70%` landed *past* the top edge of a box that
+   stopped at the figure, and the wash was still a third of its strength there.
+   The result was a straight horizontal line across the page where the light
+   should have faded. Growing the box and sizing the ramp off the closest side
+   puts the whole falloff inside it: the alpha is zero well before any edge, so
+   there is nothing for the element's bounds to cut. */
+.installation::before {
+  content: "";
+  position: absolute;
+  inset: -30% -20%;
+  z-index: -1;
+  background: radial-gradient(closest-side at 50% 40%, var(--editorial-light), transparent 85%);
+}
+
+.modelConnection {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+  margin-block-start: 0.75rem;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  text-align: center;
+}
+
+.modelConnection::before {
+  content: "";
+  height: 2.5rem;
+  width: 1px;
+  background: linear-gradient(var(--border), var(--muted-foreground));
+}
+
+/* The one drawing of the install, on a ruled sheet with square corners. */
+/* The machine and its guarantees side by side: the drawing is the list's
+   picture, and the list is the drawing's legend. */
+.serverRow {
+  display: grid;
+  grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr);
+  align-items: center;
+  gap: 2.5rem;
+  margin-block-start: 4.5rem;
+}
+
+.serverPlan {
+  margin: 0;
+  padding-block: 1rem;
+}
+
+.guarantees {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  column-gap: 2rem;
+  row-gap: 1.75rem;
+}
+
+.guarantee {
+  min-width: 0;
+  border-block-start: 1px solid var(--border);
+  padding-block-start: 1.1rem;
+  transition:
+    opacity 320ms cubic-bezier(0.22, 1, 0.36, 1),
+    border-color 320ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+/* While the pointer is on a part of the machine, its lines keep full ink and
+   the rest step back. */
+.guarantees[data-lit] .guarantee {
+  opacity: 0.42;
+}
+.guarantees[data-lit] .guarantee[data-active] {
+  opacity: 1;
+  border-block-start-color: var(--foreground);
+}
+
+@media (max-width: 1023px) {
+  .automationHead {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .hostingIntro {
+    gap: 1.5rem;
+  }
+
+  .serverRow {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 2.5rem;
+  }
+
+  .serverPlan {
+    max-width: 36rem;
+    margin-inline: auto;
+    width: 100%;
+  }
+}
+
+@media (max-width: 639px) {
+  .heroAtmosphere {
+    height: min(100%, 54rem);
+  }
+
+  .heroLight {
+    inset-inline: -65%;
+  }
+
+  .hostingIntro,
+  .guarantees {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .installation {
+    padding-block-start: 1.5rem;
+  }
+
+  .guarantees {
+    gap: 2rem;
+  }
+
+  .serverRow {
+    margin-block-start: 2.5rem;
+  }
+}
+
+@media (prefers-contrast: more), (forced-colors: active) {
+  .grain,
+  .heroLight {
+    display: none;
+  }
+}

@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
-import { PauseIcon, PlayIcon, VolumeHighIcon, VolumeMute01Icon } from "@hugeicons/core-free-icons";
+import { ArrowLeftRightIcon, PauseIcon, PlayIcon, VolumeHighIcon, VolumeMute01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
 import { formatSeconds } from "../../shared/media";
@@ -10,9 +10,9 @@ import type { RenderResult } from "../../shared/render";
 type Mode = "compare" | "edited";
 
 /**
- * The edited result. "Antes / después" draws both halves of one stacked
+ * The edited result. "Before / after" draws both halves of one stacked
  * stream (original above, edited below) from a single <video>, so the two
- * sides can never drift apart. "Editado" plays the exported MP4 itself, with
+ * sides can never drift apart. "Edited" plays the exported MP4 itself, with
  * its audio — exactly the file the download button delivers.
  */
 export function CompareStage({
@@ -162,17 +162,17 @@ export function CompareStage({
               ref={canvasRef}
               width={width}
               height={height}
-              aria-label="Comparación antes y después"
+              aria-label="Before and after comparison"
               className="block h-auto max-h-[min(68dvh,720px)] w-auto max-w-full"
               style={{ aspectRatio: `${width} / ${height}` }}
             />
-            <span className="pointer-events-none absolute top-2 left-2 rounded-md bg-[rgb(20_22_30/0.78)] px-2 py-1 text-[11px] text-white">Original</span>
-            <span className="pointer-events-none absolute top-2 right-2 rounded-md bg-primary px-2 py-1 text-[11px] text-primary-foreground">Editado</span>
+            <span className="pointer-events-none absolute top-2 left-2 rounded-md bg-[rgb(20_22_30/0.78)] px-2 py-1 text-xs text-white">Original</span>
+            <span className="pointer-events-none absolute top-2 right-2 rounded-md bg-primary px-2 py-1 text-xs text-primary-foreground">Edited</span>
             <div className="pointer-events-none absolute inset-y-0 w-px bg-white/90" style={{ left: `${split}%` }} />
             <div
               role="slider"
               tabIndex={0}
-              aria-label="Divisor antes/después"
+              aria-label="Before and after divider"
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={Math.round(split)}
@@ -181,7 +181,7 @@ export function CompareStage({
               className="absolute top-1/2 grid size-9 -translate-x-1/2 -translate-y-1/2 place-items-center rounded-full border border-white/80 bg-[rgb(20_22_30/0.72)] text-white shadow-[var(--shadow-elevated)] outline-none focus-visible:ring-2 focus-visible:ring-ring"
               style={{ left: `${split}%` }}
             >
-              <span aria-hidden className="text-xs tracking-normal">‹ ›</span>
+              <HugeiconsIcon icon={ArrowLeftRightIcon} size={14} strokeWidth={1.75} />
             </div>
           </div>
         ) : (
@@ -194,14 +194,14 @@ export function CompareStage({
             preload="auto"
             onClick={toggle}
             className="block h-auto max-h-[min(68dvh,720px)] w-auto max-w-full cursor-pointer"
-            aria-label="Video editado"
+            aria-label="Edited video"
             {...mediaEvents}
           />
         )}
       </div>
 
       <figcaption className="flex flex-wrap items-center gap-3 border-t border-border px-3 py-2.5 sm:px-4">
-        <button type="button" onClick={toggle} aria-label={playing ? "Pausar" : "Reproducir"} className="grid size-8 shrink-0 place-items-center rounded-lg text-foreground transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring">
+        <button type="button" onClick={toggle} aria-label={playing ? "Pause" : "Play"} className="grid size-8 shrink-0 place-items-center rounded-lg text-foreground transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring">
           <HugeiconsIcon icon={playing ? PauseIcon : PlayIcon} size={18} strokeWidth={1.75} />
         </button>
         <span className="w-[72px] shrink-0 text-xs tabular-nums text-muted-foreground">
@@ -214,7 +214,7 @@ export function CompareStage({
           step={1 / render.fps}
           value={Math.min(time, duration)}
           onChange={(event) => seek(Number(event.currentTarget.value))}
-          aria-label="Posición en el video"
+          aria-label="Video position"
           className="editor-scrubber min-w-0 flex-1"
           style={{ "--scrub": `${(time / duration) * 100}%` } as CSSProperties}
         />
@@ -222,7 +222,7 @@ export function CompareStage({
           <button
             type="button"
             onClick={() => setMuted((value) => !value)}
-            aria-label={muted ? "Activar sonido" : "Silenciar"}
+            aria-label={muted ? "Unmute" : "Mute"}
             aria-pressed={!muted}
             className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
@@ -231,8 +231,8 @@ export function CompareStage({
         ) : null}
         <SlidingTabs
           tabs={[
-            { id: "compare", label: "Antes / después" },
-            { id: "edited", label: "Editado" },
+            { id: "compare", label: "Before / after" },
+            { id: "edited", label: "Edited" },
           ]}
           value={mode}
           onValueChange={(id) => switchMode(id as Mode)}

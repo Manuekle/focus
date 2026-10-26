@@ -9,7 +9,7 @@ import type { EditJob, EditPlan, VideoAsset } from "../shared/schemas";
 import { buildTracking, type Tracking } from "../shared/tracking";
 import { AppError } from "./errors";
 import { ffmpeg } from "./ffmpeg";
-import { cancelJob, createJob, getJob, refineWithPoint, reopenSelection, resultFile, services, setSelection, startRender } from "./jobs";
+import { cancelJob, createJob, fillGaps, getJob, refineWithPoint, reopenSelection, resultFile, services, setSelection, startRender } from "./jobs";
 import { ingestVideo } from "./videos";
 
 // The job lifecycle with the two paid services replaced by fakes: no network,
@@ -71,6 +71,8 @@ beforeAll(async () => {
         });
       });
     }
+    if (input.prompt.kind === "concept" && input.prompt.concept === "gappy")
+      return fakeTracking(input.id, BRIDGE.split("\n").filter(Boolean).slice(43).join("\n") + "\n");
     if (input.prompt.kind === "point") return fakeTracking(input.id, ROCKS.split("\n")[0].replace(/^<0f>\d+/, "<0f>100").split(/,(?=\d+<\|box)/)[0] + "\n");
     return fakeTracking(input.id, objectCount === 0 ? "" : objectCount === 1 ? BRIDGE : ROCKS);
   };
@@ -237,6 +239,24 @@ describe("render reuse", () => {
     const file = await resultFile(job.id, "output");
     expect(file.path).toContain(path.join("renders", job.render!.key));
     expect(file.downloadName).toBe("focus-selective-color-clip.mp4");
+  });
+});
+
+describe("gap filling", () => {
+  it("fills missing frames once, and later jobs start from the filled masks", async () => {
+    nextPlan = { target: { concept: "gappy", selection: "single" } };
+    const first = await settle((await createJob({ videoId: video.id, effect: "reality-shift", prompt: prompt("the gappy one") })).id);
+    expect(first.render?.framesWithoutMask).toBe(43);
+    const filled = await settle((await fillGaps(first.id)).id);
+    expect(filled.render?.framesWithoutMask).toBe(0);
+    expect(filled.segmentationId).toMatch(/\+g-/);
+    await expect(fillGaps(first.id)).rejects.toMatchObject({ code: "nothing_to_fill" });
+
+    const calls0 = calls.segment;
+    const next = await settle((await createJob({ videoId: video.id, effect: "motion-echo", prompt: prompt("trails on the gappy one") })).id);
+    expect(next.segmentationId).toBe(filled.segmentationId);
+    expect(next.render?.framesWithoutMask).toBe(0);
+    expect(calls.segment).toBe(calls0);
   });
 });
 

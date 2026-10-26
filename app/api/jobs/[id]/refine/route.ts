@@ -1,5 +1,6 @@
 import { RefineRequestSchema } from "../../../../../shared/schemas";
 import { AppError, errorResponse } from "../../../../../server/errors";
+import { guardAiRequest, readJsonBody } from "../../../../../server/guard";
 import { refineWithPoint } from "../../../../../server/jobs";
 
 type Context = { params: Promise<{ id: string }> };
@@ -8,9 +9,9 @@ type Context = { params: Promise<{ id: string }> };
 export async function POST(request: Request, { params }: Context) {
   try {
     const { id } = await params;
-    const parsed = RefineRequestSchema.safeParse(await request.json().catch(() => null));
+    const parsed = RefineRequestSchema.safeParse(await readJsonBody(request));
     if (!parsed.success) throw new AppError("invalid_point", 400, "Punto no válido.");
-    return Response.json(await refineWithPoint(id, parsed.data), { status: 202 });
+    return Response.json(await refineWithPoint(id, parsed.data, (cost) => guardAiRequest(request, cost)), { status: 202 });
   } catch (error) {
     return errorResponse(error);
   }

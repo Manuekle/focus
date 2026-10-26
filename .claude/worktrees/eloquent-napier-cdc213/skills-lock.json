@@ -1,0 +1,161 @@
+{
+  "version": 1,
+  "skills": {
+    "agent-tool-security": {
+      "source": "Manuekle/ai-security-skills",
+      "sourceType": "github",
+      "skillPath": "skills/agent-tool-security/SKILL.md",
+      "computedHash": "65b63c37a9a85afa494ba87e93b1d756c7cc9a2a7a2689bfb4efb6fb762acb80"
+    },
+    "ai-security-architect": {
+      "source": "Manuekle/ai-security-skills",
+      "sourceType": "github",
+      "skillPath": "skills/ai-security-architect/SKILL.md",
+      "computedHash": "309234c8ed5a171348e6bf0174b697c66dbf8453dade4f74653698f4a3549e1c"
+    },
+    "anatomy": {
+      "source": "wheresryan22/anatomy",
+      "sourceType": "github",
+      "skillPath": "SKILL.md",
+      "computedHash": "b8ced09c690eb178684c27d02d0d8aaa48b28d5ce5b0bb9ea3addf2187ffd8a6"
+    },
+    "api-security": {
+      "source": "Manuekle/ai-security-skills",
+      "sourceType": "github",
+      "skillPath": "skills/api-security/SKILL.md",
+      "computedHash": "88e1c6c8a6542c04539f7709ca911d9e473078a244cc43f8087c126b0b0ae2cb"
+    },
+    "cube-motion": {
+      "source": "danilaa1/cube-motion",
+      "sourceType": "github",
+      "skillPath": "skills/cube-motion/SKILL.md",
+      "computedHash": "61e10e79c87f382a2fc1569b94fb788db86aebe30c6dbb3d0043d147c331f1f9"
+    },
+    "data-rag-security": {
+      "source": "Manuekle/ai-security-skills",
+      "sourceType": "github",
+      "skillPath": "skills/data-rag-security/SKILL.md",
+      "computedHash": "4957ac593e55d7cf4e664f2981cdbafad42d4e084d77fb5b3c442344c954f1b9"
+    },
+    "emil-design-eng": {
+      "source": "emilkowalski/skills",
+      "sourceType": "github",
+      "skillPath": "skills/emil-design-eng/SKILL.md",
+      "computedHash": "51f2537e04d15911b41d78e2de24c36a0e26d41beae15e82a954fe5496a5eda9"
+    },
+    "hairline-create": {
+      "source": "lucasmarkes/hairline",
+      "sourceType": "github",
+      "skillPath": "skills/hairline-create/SKILL.md",
+      "computedHash": "3fbb60d314c7851e41caf8433ecab366d58b6b907afc68848f2264ed9dea5c8c"
+    },
+    "production-security": {
+      "source": "Manuekle/ai-security-skills",
+      "sourceType": "github",
+      "skillPath": "skills/production-security/SKILL.md",
+      "computedHash": "72855437b3288b53cc41f59368718ce172da707d0f54e68145ddc35c4b8055a7"
+    },
+    "remotion-best-practices": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-best-practices/SKILL.md",
+      "computedHash": "82737c4a08aae4d4d28b75dcafacbf6ef934679ae98457d22fc8c4be16b99e73"
+    },
+    "remotion-captions": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-captions/SKILL.md",
+      "computedHash": "4dd60d5c1a8c95723f74163dc1e18a0947846a6d366cb321609dffe16d90c461"
+    },
+    "remotion-create": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-create/SKILL.md",
+      "computedHash": "89d7b8ae666190661ebdc75b7ea68362859ccd05e00e4e683521dbb80e2845dd"
+    },
+    "remotion-docs": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-docs/SKILL.md",
+      "computedHash": "6422ebc0925ef0f824eece0fb3a319902a884ff6f1e0ca2e3a5490ceeda75375"
+    },
+    "remotion-interactivity": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-interactivity/SKILL.md",
+      "computedHash": "ee7542beb8290a9da11b54f583cae0df0426c693e831229cd87f6918462420c9"
+    },
+    "remotion-maps": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-maps/SKILL.md",
+      "computedHash": "cbab37ba9d6c412a7e633d0f781a5180ebe47598934c120d0e4e3e6561469b50"
+    },
+    "remotion-markup": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-markup/SKILL.md",
+      "computedHash": "47cfcc16e39e6be14e0ed2815d56091c639a68b6b21ef77be557b52a5c66ea21"
+    },
+    "remotion-multimedia": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-multimedia/SKILL.md",
+      "computedHash": "7db80a5865cc627b0e2c98f8866175f55aca8df81c8bbf2927de01c44f7690d8"
+    },
+    "remotion-render": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-render/SKILL.md",
+      "computedHash": "68c4ebeb3ac9ee13ae951c77a5416857c283e4fce17d3491afbe907b330f89b5"
+    },
+    "remotion-saas": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-saas/SKILL.md",
+      "computedHash": "0a60f2deae0935faf45e9da0ac253b4c395c7487f512a08678704bf369f20941"
+    },
+    "remotion-studio": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-studio/SKILL.md",
+      "computedHash": "0d8b4e4f4908bb6e6e9cba13633fe66d7e51f5ea4d1355e3b507c3a354643ed2"
+    },
+    "remotion-upgrade": {
+      "source": "remotion-dev/skills",
+      "sourceType": "github",
+      "skillPath": "skills/remotion-upgrade/SKILL.md",
+      "computedHash": "73dcf3d924abb3dc04a185a9768259c75d3206e07da6948f4868e9e28f46b06a"
+    },
+    "sandbox-execution-security": {
+      "source": "Manuekle/ai-security-skills",
+      "sourceType": "github",
+      "skillPath": "skills/sandbox-execution-security/SKILL.md",
+      "computedHash": "ee308a1e0d9061931848f099a07f8231ac2492dc23344dc123659633f5c951dc"
+    },
+    "seo-geo": {
+      "source": "resciencelab/opc-skills",
+      "sourceType": "github",
+      "skillPath": "skills/seo-geo/SKILL.md",
+      "computedHash": "56f90ba46b36563bb5461feb8462aed9283e74dfc4cdac2a98c42c4bc86a95be"
+    },
+    "text-to-speech": {
+      "source": "elevenlabs/skills",
+      "sourceType": "github",
+      "skillPath": "text-to-speech/SKILL.md",
+      "computedHash": "a07858869c331494278dc201fde7c002ab4155cf93b642cc0f712e8e86793be9"
+    },
+    "webhook-security": {
+      "source": "Manuekle/ai-security-skills",
+      "sourceType": "github",
+      "skillPath": "skills/webhook-security/SKILL.md",
+      "computedHash": "c791a38593a5b70b1fb2021fb00fdffe8408d59498831499ab81bd6b9c656857"
+    },
+    "whatsapp-automation": {
+      "source": "claude-office-skills/skills",
+      "sourceType": "github",
+      "skillPath": "whatsapp-automation/SKILL.md",
+      "computedHash": "e2d1e6e888803e24a5ac4bde08a9cac434d9911f0d3c2ba4e9cc7edf11dc5f08"
+    }
+  }
+}

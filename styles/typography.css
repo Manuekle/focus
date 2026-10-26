@@ -1,21 +1,70 @@
-/* The supplied Optimistic variable font is served unchanged. */
+/* Local Inter variable faces. Latin extensions load only when needed. */
 @font-face {
-  font-family: "Optimistic Display";
-  src: url("/fonts/optimistic/optimistic.ttf") format("truetype");
-  font-weight: 300 800;
-  font-stretch: 80% 100%;
+  font-family: "Inter";
+  src: url("/fonts/inter/InterVariable-latin.woff2") format("woff2");
+  font-weight: 100 900;
   font-style: normal;
   font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2193,
+    U+2212, U+2215, U+FEFF, U+FFFD, U+2264-2265, U+00D7, U+00F7, U+2713-2714,
+    U+2717, U+25CF, U+25A0, U+221E, U+2605-2606;
 }
 @font-face {
-  font-family: "Optimistic Display";
-  src: url("/fonts/optimistic/optimistic.ttf") format("truetype");
-  font-weight: 300 800;
-  font-stretch: 80% 100%;
+  font-family: "Inter";
+  src: url("/fonts/inter/InterVariable-latinext.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+    U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/inter/InterVariable-Italic-latin.woff2") format("woff2");
+  font-weight: 100 900;
   font-style: italic;
   font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2193,
+    U+2212, U+2215, U+FEFF, U+FFFD, U+2264-2265, U+00D7, U+00F7, U+2713-2714,
+    U+2717, U+25CF, U+25A0, U+221E, U+2605-2606;
+}
+@font-face {
+  font-family: "Inter";
+  src: url("/fonts/inter/InterVariable-Italic-latinext.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: italic;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+    U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* SN Pro is reserved for the studio's display labels; controls stay in Inter. */
+@font-face {
+  font-family: "SN Pro";
+  src: url("/fonts/sn-pro/SNPro-latin.woff2") format("woff2");
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA,
+    U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2190-2193,
+    U+2212, U+2215, U+FEFF, U+FFFD, U+2264-2265, U+00D7, U+00F7, U+2713-2714,
+    U+2717, U+25CF, U+25A0, U+221E, U+2605-2606;
+}
+@font-face {
+  font-family: "SN Pro";
+  src: url("/fonts/sn-pro/SNPro-latinext.woff2") format("woff2");
+  font-weight: 200 900;
+  font-style: normal;
+  font-display: swap;
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7,
+    U+02DD-02FF, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB,
+    U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
 }
 :root {
+  --font-sn-pro: "SN Pro", "Inter", sans-serif;
   --app-tracking: -0.02em;
   --app-tracking-xs: -0.02em;
   --app-tracking-sm: -0.02em;
@@ -31,6 +80,7 @@
   * { letter-spacing: var(--app-tracking); }
   body, button, input, select, textarea, code, pre, kbd, samp {
     font-family: var(--app-font-sans);
+    font-optical-sizing: auto;
     letter-spacing: var(--app-tracking);
   }
 }

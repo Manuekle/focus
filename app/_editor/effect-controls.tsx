@@ -85,24 +85,24 @@ export function EffectControls({
     <div className="flex flex-col gap-4">
       {choices.length > 1 ? (
         <SlidingTabs
-          tabs={choices.map((effect) => ({ id: effect, label: effect === "selective_color" ? "Color selectivo" : "Fondo desenfocado" }))}
+          tabs={choices.map((effect) => ({ id: effect, label: effect === "selective_color" ? "Selective color" : "Background blur" }))}
           value={value.effect}
           onValueChange={(id) => onChange(defaultsFor(id as PlanEffect))}
         />
       ) : null}
 
       {value.effect === "selective_color" ? (
-        <Range label="Desaturación del fondo" value={value.intensity} min={0.2} max={1} step={0.05} format={percent} onChange={(intensity) => onChange({ ...value, intensity })} />
+        <Range label="Background desaturation" value={value.intensity} min={0.2} max={1} step={0.05} format={percent} onChange={(intensity) => onChange({ ...value, intensity })} />
       ) : null}
 
       {value.effect === "background_blur" ? (
         <div className="flex flex-col gap-1.5">
-          <span className="text-xs text-muted-foreground">Desenfoque</span>
+          <span className="text-xs text-muted-foreground">Blur</span>
           <SlidingTabs
             tabs={[
-              { id: "low", label: "Suave" },
-              { id: "medium", label: "Medio" },
-              { id: "high", label: "Intenso" },
+              { id: "low", label: "Low" },
+              { id: "medium", label: "Medium" },
+              { id: "high", label: "High" },
             ]}
             value={value.level}
             onValueChange={(id) => onChange({ ...value, level: id as typeof value.level })}
@@ -113,25 +113,25 @@ export function EffectControls({
       {value.effect === "break_frame" ? (
         <>
           <div className="flex flex-col gap-1.5">
-            <span className="text-xs text-muted-foreground">Marco</span>
+            <span className="text-xs text-muted-foreground">Frame</span>
             <SlidingTabs
               tabs={[
-                { id: "compact", label: "Compacto" },
-                { id: "balanced", label: "Equilibrado" },
-                { id: "wide", label: "Amplio" },
+                { id: "compact", label: "Compact" },
+                { id: "balanced", label: "Balanced" },
+                { id: "wide", label: "Wide" },
               ]}
               value={value.frameSize}
               onValueChange={(id) => onChange({ ...value, frameSize: id as typeof value.frameSize })}
             />
           </div>
           <div className="flex flex-col gap-1.5">
-            <span className="text-xs text-muted-foreground">Fondo</span>
+            <span className="text-xs text-muted-foreground">Background</span>
             <div className="flex gap-1.5">
               <ToggleChip size="xs" selected={value.background === "dark"} onClick={() => onChange({ ...value, background: "dark" })}>
-                Oscuro
+                Dark
               </ToggleChip>
               <ToggleChip size="xs" selected={value.background === "light"} onClick={() => onChange({ ...value, background: "light" })}>
-                Claro
+                Light
               </ToggleChip>
             </div>
           </div>
@@ -140,13 +140,13 @@ export function EffectControls({
 
       {value.effect === "motion_echo" ? (
         <>
-          <Range label="Estelas" value={value.trailCount} min={2} max={6} step={1} format={(count) => String(count)} onChange={(trailCount) => onChange({ ...value, trailCount })} />
-          <Range label="Separación" value={value.trailSpacingMs} min={60} max={400} step={20} format={(ms) => `${ms} ms`} onChange={(trailSpacingMs) => onChange({ ...value, trailSpacingMs })} />
-          <Range label="Intensidad" value={value.intensity} min={0.2} max={1} step={0.05} format={percent} onChange={(intensity) => onChange({ ...value, intensity })} />
+          <Range label="Trails" value={value.trailCount} min={2} max={6} step={1} format={(count) => String(count)} onChange={(trailCount) => onChange({ ...value, trailCount })} />
+          <Range label="Spacing" value={value.trailSpacingMs} min={60} max={400} step={20} format={(ms) => `${ms} ms`} onChange={(trailSpacingMs) => onChange({ ...value, trailSpacingMs })} />
+          <Range label="Intensity" value={value.intensity} min={0.2} max={1} step={0.05} format={percent} onChange={(intensity) => onChange({ ...value, intensity })} />
         </>
       ) : null}
 
-      <Range label="Suavizado del borde" value={value.feather} min={0} max={4} step={0.5} format={(px) => `${px} px`} onChange={(feather) => onChange({ ...value, feather })} />
+      <Range label="Edge softness" value={value.feather} min={0} max={4} step={0.5} format={(px) => `${px} px`} onChange={(feather) => onChange({ ...value, feather })} />
     </div>
   );
 }

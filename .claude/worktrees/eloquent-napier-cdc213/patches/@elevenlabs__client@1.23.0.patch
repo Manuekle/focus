@@ -1,0 +1,92 @@
+diff --git a/dist/utils/WebRTCConnection.js b/dist/utils/WebRTCConnection.js
+index 224595d69dae3a3a0c42c6526a81802757e8b66c..e0c5c2523ae30fc51c260a083b37c1690e9ff793 100644
+--- a/dist/utils/WebRTCConnection.js
++++ b/dist/utils/WebRTCConnection.js
+@@ -34,18 +34,20 @@ export class WebRTCConnection extends BaseConnection {
+     // InputController interface exposed as a property
+     input = {
+         close: async () => {
+-            // Close only microphone tracks, not the entire connection
+-            if (this.isConnected) {
+-                try {
+-                    this.room.localParticipant.audioTrackPublications.forEach(publication => {
+-                        if (publication.track) {
+-                            publication.track.stop();
+-                        }
+-                    });
+-                }
+-                catch (error) {
+-                    console.warn("Error stopping local tracks:", error);
+-                }
++            // Close only microphone tracks, not the entire connection.
++            // Not gated on `this.isConnected` — see the note on the outer
++            // `close()` above: the room's own disconnect handlers flip it to
++            // `false` before this runs on every non-manual hangup, and
++            // stopping an already-stopped track is a no-op.
++            try {
++                this.room.localParticipant.audioTrackPublications.forEach(publication => {
++                    if (publication.track) {
++                        publication.track.stop();
++                    }
++                });
++            }
++            catch (error) {
++                console.warn("Error stopping local tracks:", error);
+             }
+         },
+         setDevice: async (config) => {
+@@ -358,26 +360,35 @@ export class WebRTCConnection extends BaseConnection {
+         });
+     }
+     close() {
+-        if (this.isConnected) {
+-            try {
+-                // Explicitly stop all local tracks before disconnecting to ensure microphone is released
+-                this.room.localParticipant.audioTrackPublications.forEach(publication => {
+-                    if (publication.track) {
+-                        publication.track.stop();
+-                    }
+-                });
+-            }
+-            catch (error) {
+-                console.warn("Error stopping local tracks:", error);
+-            }
+-            // Delegate all audio cleanup to the adapter
+-            this.audioAdapter?.cleanup();
+-            this.inputAnalyser = undefined;
+-            this.outputAnalyser = undefined;
+-            this.inputVolumeProvider = NO_VOLUME;
+-            this.outputVolumeProvider = NO_VOLUME;
+-            this.room.disconnect();
++        // Not gated on `this.isConnected`: the room's own `RoomEvent.Disconnected`
++        // / `RoomEvent.ConnectionStateChanged` handlers set it to `false` *before*
++        // calling `this.disconnect()`, which is what drives `endSessionWithDetails`
++        // into calling `close()` for every hangup that isn't the local "end call"
++        // button — the agent ending the call, a timeout, a transport error. On
++        // those paths the flag was already false by the time `close()` ran, so the
++        // explicit track-stop below (the whole reason this override exists over
++        // LiveKit's own teardown) never fired, and the browser's microphone
++        // indicator stayed lit after the call had already ended. Stopping already-
++        // stopped tracks and disconnecting an already-disconnected room are both
++        // no-ops, so running this unconditionally is safe on every path.
++        try {
++            // Explicitly stop all local tracks before disconnecting to ensure microphone is released
++            this.room.localParticipant.audioTrackPublications.forEach(publication => {
++                if (publication.track) {
++                    publication.track.stop();
++                }
++            });
++        }
++        catch (error) {
++            console.warn("Error stopping local tracks:", error);
+         }
++        // Delegate all audio cleanup to the adapter
++        this.audioAdapter?.cleanup();
++        this.inputAnalyser = undefined;
++        this.outputAnalyser = undefined;
++        this.inputVolumeProvider = NO_VOLUME;
++        this.outputVolumeProvider = NO_VOLUME;
++        this.room.disconnect();
+     }
+     async sendMessage(message) {
+         if (!this.isConnected || !this.room.localParticipant) {

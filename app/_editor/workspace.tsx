@@ -1,31 +1,40 @@
 "use client";
 
 import Link from "next/link";
+import Image from "next/image";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { motion } from "motion/react";
+import { AnimatePresence, motion } from "motion/react";
+import { ArrowRight01Icon, ArrowUpRight01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { EASE_OUT } from "../../lib/ease";
-import { FocusMark } from "../../components/icons/focus-mark";
-import { FileUpload, type FileUploadItem } from "../../components/motion/file-upload";
-import { ThemeToggle } from "../../components/motion/theme-toggle";
-import { ErrorBanner } from "../../components/ui/error-banner";
+import { useReducedMotion } from "../../lib/hooks/use-reduced-motion";
+import { HugeiconsIcon } from "../../components/icons/icon";
+import type { FileUploadItem } from "../../components/motion/file-upload";
+import { Button } from "../../components/ui/button";
 import { useToast } from "../../components/toast-provider";
-import {
-  ACCEPT_ATTRIBUTE,
-  MAX_DURATION_SECONDS,
-  MAX_UPLOAD_BYTES,
-  formatBytes,
-  formatSeconds,
-} from "../../shared/media";
+import { formatSeconds } from "../../shared/media";
 import { VideoAssetSchema, type EffectId, type VideoAsset } from "../../shared/schemas";
-import { Composer } from "./composer";
 import { EditorView } from "./editor-view";
+import { EditorNotice } from "./editor-notice";
+import { ClipboardColored24 } from "../../components/icons/ClipboardColored24";
+import { FeatherSparkleColored24 } from "../../components/icons/FeatherSparkleColored24";
+import { ShapesColored24 } from "../../components/icons/ShapesColored24";
+import { GithubIcon, XIcon } from "../../components/icons/social-icons";
+import { HeroAtmosphere } from "./hero-atmosphere";
+import { StudioUpload, type UploadPhase } from "./studio-upload";
 import { UploadError, checkFileLocally, uploadVideo } from "./upload";
+import styles from "./workspace.module.css";
 
-type Failure = { readonly message: string; readonly detail?: string; readonly retry?: () => void };
+const HOW_STEPS = [
+  { n: "01", copy: "Start with a clip you love the most.", Icon: ShapesColored24 },
+  { n: "02", copy: "Describe the look. AI does the rest.", Icon: FeatherSparkleColored24 },
+  { n: "03", copy: "Fine-tune, preview, export the clip.", Icon: ClipboardColored24 },
+] as const;
+
+type Failure = { readonly id: number; readonly message: string; readonly detail?: string; readonly retry?: () => void };
 
 type Stage =
   | { readonly kind: "empty" }
-  | { readonly kind: "uploading"; readonly item: FileUploadItem; readonly phase: "sending" | "preparing" }
+  | { readonly kind: "uploading"; readonly item: FileUploadItem; readonly phase: UploadPhase }
   | { readonly kind: "ready"; readonly video: VideoAsset };
 
 export function Workspace() {
@@ -34,21 +43,48 @@ export function Workspace() {
   const [effect, setEffect] = useState<EffectId>("reality-shift");
   const [prompt, setPrompt] = useState("");
   const abortRef = useRef<(() => void) | null>(null);
+  const uploadIdRef = useRef(0);
+  const studioRef = useRef<HTMLElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  const [contentHeight, setContentHeight] = useState<number | "auto">("auto");
   const { toast } = useToast();
+  const reducedMotion = useReducedMotion();
+  const entrance = (delay: number, distance = 12) => ({
+    initial: reducedMotion ? false as const : { opacity: 0, y: distance },
+    animate: { opacity: 1, y: 0 },
+    transition: { duration: reducedMotion ? 0 : 0.5, delay: reducedMotion ? 0 : delay, ease: EASE_OUT },
+  });
+
+  useEffect(() => {
+    const element = contentRef.current;
+    if (!element) return;
+    const observer = new ResizeObserver(() => setContentHeight(element.getBoundingClientRect().height));
+    observer.observe(element);
+    return () => observer.disconnect();
+  }, []);
+
+  useEffect(() => () => {
+    uploadIdRef.current += 1;
+    abortRef.current?.();
+  }, []);
 
   // The current video lives in the URL (?v=id), so a reload keeps the clip
   // and every cached plan and mask that belongs to it.
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("v");
     if (!id) return;
+    const attempt = uploadIdRef.current;
+    let canceled = false;
     fetch(`/api/videos/${encodeURIComponent(id)}`)
       .then((response) => (response.ok ? response.json() : null))
       .then((body) => {
+        if (canceled || uploadIdRef.current !== attempt) return;
         const parsed = VideoAssetSchema.safeParse(body);
         if (parsed.success) setStage({ kind: "ready", video: parsed.data });
         else window.history.replaceState(null, "", window.location.pathname);
       })
       .catch(() => undefined);
+    return () => { canceled = true; };
   }, []);
 
   useEffect(() => {
@@ -57,12 +93,18 @@ export function Workspace() {
   }, [stage]);
 
   const start = useCallback(async (file: File) => {
+    const attempt = ++uploadIdRef.current;
+    abortRef.current?.();
+    abortRef.current = null;
     setFailure(null);
     const base: FileUploadItem = { id: `${Date.now()}`, name: file.name, size: file.size, type: file.type, file };
-    setStage({ kind: "uploading", phase: "sending", item: { ...base, status: "uploading", progress: 0 } });
+    setStage({ kind: "uploading", phase: "checking", item: { ...base, status: "uploading", progress: 0 } });
     try {
       await checkFileLocally(file);
+      if (uploadIdRef.current !== attempt) return;
+      setStage({ kind: "uploading", phase: "sending", item: { ...base, status: "uploading", progress: 0 } });
       const handle = uploadVideo(file, (fraction) => {
+        if (uploadIdRef.current !== attempt) return;
         setStage({
           kind: "uploading",
           // Bytes are in; FFprobe and FFmpeg are now running on the server.
@@ -72,127 +114,126 @@ export function Workspace() {
       });
       abortRef.current = handle.abort;
       const video = await handle.promise;
+      if (uploadIdRef.current !== attempt) return;
       setStage({ kind: "ready", video });
-      toast({ title: "Video listo", description: `${video.normalized.width}×${video.normalized.height} · ${formatSeconds(video.normalized.durationSeconds)}`, status: "success" });
+      toast({ title: "Your clip is ready", description: `${video.normalized.width}×${video.normalized.height} · ${formatSeconds(video.normalized.durationSeconds)}`, status: "success" });
     } catch (error) {
+      if (uploadIdRef.current !== attempt) return;
       setStage({ kind: "empty" });
       if (error instanceof UploadError && error.code === "aborted") return;
       setFailure({
-        message: error instanceof Error ? error.message : "No pudimos subir el video.",
+        id: attempt,
+        message: error instanceof Error ? error.message : "We couldn’t upload your video. Try again.",
         detail: error instanceof UploadError ? error.detail : undefined,
         retry: () => void start(file),
       });
     } finally {
-      abortRef.current = null;
+      if (uploadIdRef.current === attempt) abortRef.current = null;
     }
   }, [toast]);
 
-  const reset = useCallback(async () => {
+  const reset = useCallback(() => {
     if (stage.kind === "ready") {
-      await fetch(`/api/videos/${stage.video.id}`, { method: "DELETE" }).catch(() => undefined);
+      void fetch(`/api/videos/${stage.video.id}`, { method: "DELETE" }).catch(() => undefined);
     }
     setStage({ kind: "empty" });
     setFailure(null);
+    studioRef.current?.focus({ preventScroll: true });
   }, [stage]);
 
-  return (
-    <div className="flex min-h-dvh flex-col bg-background text-foreground">
-      <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-[color-mix(in_srgb,var(--background)_94%,transparent)] px-4 backdrop-blur-[10px] sm:px-8">
-        <Link href="/" className="flex items-center gap-2.5" aria-label="Focus — Inicio">
-          <FocusMark className="h-[26px] w-auto" />
-          <strong className="text-[22px] leading-none font-[650]">
-            focus<span className="text-primary">.</span>
-          </strong>
-        </Link>
-        <ThemeToggle variant="circle-blur" start="top-right" />
-      </header>
+  const cancelUpload = useCallback(() => {
+    uploadIdRef.current += 1;
+    abortRef.current?.();
+    abortRef.current = null;
+    setStage({ kind: "empty" });
+    setFailure(null);
+    studioRef.current?.focus({ preventScroll: true });
+  }, []);
 
-      {stage.kind === "ready" ? (
-        <motion.div key={stage.video.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22, ease: EASE_OUT }} className="flex flex-1 flex-col">
-        <EditorView
-          key={stage.video.id}
-          video={stage.video}
-          effect={effect}
-          onEffectChange={setEffect}
-          prompt={prompt}
-          onPromptChange={setPrompt}
-          onReset={() => void reset()}
-        />
-        </motion.div>
-      ) : (
-        <motion.main
-          key="empty"
-          initial={{ opacity: 0 }}
-          animate={{ opacity: 1 }}
-          transition={{ duration: 0.2, ease: EASE_OUT }}
-          className="mx-auto grid w-full max-w-[1180px] flex-1 content-start gap-x-14 gap-y-8 px-4 pt-12 pb-16 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,520px)] lg:items-start lg:pt-20"
-        >
-          <div className="lg:sticky lg:top-28">
-            <p className="flex items-center gap-2 text-xs text-muted-foreground">
-              <span aria-hidden className="size-1.5 rounded-full bg-primary" />
-              Editor de video con IA · Meta AI
-            </p>
-            <h1 className="mt-5 text-[clamp(40px,6vw,68px)] leading-[1.04] font-[550]">
-              Make anything
+  return (
+    <div className={styles.workspace}>
+      <a className={styles.skipLink} href="#studio">Skip to studio</a>
+      <motion.header data-home-enter="" {...entrance(0, 6)} className={styles.header}>
+        <Link href="/" className={styles.brand} aria-label="Focus — Home">
+          <Image src="/brand/focus-cat.webp" alt="" width={38} height={38} />
+          <span>focus<span className={styles.brandDot}>.</span></span>
+        </Link>
+        <nav className={styles.nav} aria-label="Main navigation">
+          <Button asChild size="sm"><a href="#studio">Open studio <HugeiconsIcon icon={ArrowUpRight01Icon} size={14} strokeWidth={1.75} /></a></Button>
+        </nav>
+      </motion.header>
+
+        <main className={styles.home}>
+          <section className={styles.hero} aria-labelledby="home-title">
+            <HeroAtmosphere />
+            <motion.p data-home-enter="" {...entrance(0.04, 6)} className={styles.eyebrow}><span aria-hidden />Small clips. Big possibilities.</motion.p>
+            <h1 id="home-title" className={styles.title}>
+              <motion.span data-home-enter="" {...entrance(0.1, 16)} className={`${styles.titleLine} ${styles.titleWhite}`}>Make anything</motion.span>
               <br />
-              stand out.
+              <motion.span data-home-enter="" {...entrance(0.2, 16)} className={`${styles.titleLine} ${styles.titleAccent}`}>stand out</motion.span>
             </h1>
-            <p className="mt-5 max-w-[40ch] text-[15px] leading-7 text-muted-foreground">
-              Crea efectos de video imposibles con una sola frase.
-            </p>
-            <ol className="mt-8 hidden max-w-[44ch] flex-col gap-2.5 text-sm text-muted-foreground lg:flex">
-              {["Suelta un clip corto.", "Describe qué quieres destacar.", "Mira la transformación y exporta el MP4."].map((step, index) => (
-                <li key={step} className="flex gap-3">
-                  <span className="w-5 shrink-0 text-xs leading-5 text-foreground tabular-nums">{String(index + 1).padStart(2, "0")}</span>
-                  {step}
+            <motion.p data-home-enter="" {...entrance(0.28, 8)} className={styles.intro}>Your clip. Your words. A whole new look.<br /><span>Put the spotlight on what matters with AI.</span></motion.p>
+          </section>
+
+          <motion.section data-home-enter="" {...entrance(0.34)} ref={studioRef} id="studio" tabIndex={-1} className={styles.studio} aria-label="Video studio">
+            <ol className={styles.steps} aria-label="Editing steps">
+              <li data-complete={stage.kind === "ready"} aria-current={stage.kind !== "ready" ? "step" : undefined}>
+                <span className={styles.stepNumber}>{stage.kind === "ready" ? <HugeiconsIcon icon={Tick02Icon} size={12} strokeWidth={2} /> : "1"}</span>Add a clip
+              </li>
+              <li className={styles.stepArrow} aria-hidden="true"><HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.5} /></li>
+              <li aria-current={stage.kind === "ready" ? "step" : undefined}><span className={styles.stepNumber}>2</span>Make it yours</li>
+            </ol>
+            <p role="status" className="sr-only">{stage.kind === "ready" ? "Clip ready. Step 2 of 2: make it yours." : stage.kind === "uploading" ? "Uploading your clip. Your editing options will appear when it is ready." : "Step 1 of 2: add a clip to begin."}</p>
+            <motion.div className={styles.stageViewport} animate={{ height: contentHeight }} transition={{ duration: reducedMotion ? 0 : 0.3, ease: EASE_OUT }}>
+              <div ref={contentRef} className={styles.stageContent}>
+                <AnimatePresence mode="wait" initial={false}>
+                  <motion.div
+                    key={stage.kind === "ready" ? stage.video.id : stage.kind}
+                    data-studio-step={stage.kind}
+                    initial={reducedMotion ? false : { opacity: 0, y: 8, filter: "blur(4px)" }}
+                    animate={{ opacity: 1, y: 0, filter: "blur(0px)" }}
+                    exit={{ opacity: 0, y: reducedMotion ? 0 : -4, filter: reducedMotion ? "blur(0px)" : "blur(4px)", transition: { duration: reducedMotion ? 0 : 0.15 } }}
+                    transition={{ duration: reducedMotion ? 0 : 0.3, ease: EASE_OUT }}
+                  >
+                    {stage.kind === "ready" ? (
+                      <EditorView video={stage.video} effect={effect} onEffectChange={setEffect} prompt={prompt} onPromptChange={setPrompt} onReset={reset} />
+                    ) : (
+                      <>
+                        <StudioUpload item={stage.kind === "uploading" ? stage.item : undefined} phase={stage.kind === "uploading" ? stage.phase : undefined} onFile={(file) => void start(file)} onCancel={cancelUpload} />
+                      </>
+                    )}
+                  </motion.div>
+                </AnimatePresence>
+              </div>
+            </motion.div>
+          </motion.section>
+
+          <motion.footer data-home-enter="" {...entrance(0.42, 8)} id="how-it-works" className={styles.footer} aria-labelledby="how-title">
+            <h2 id="how-title" className={styles.footerTitle}>From a clip to<br />something different</h2>
+            <ol className={styles.footerSteps}>
+              {HOW_STEPS.map(({ n, copy, Icon }) => (
+                <li key={n} className={styles.footerStep}>
+                  <Icon className={styles.stepIcon} width={56} height={56} aria-hidden="true" />
+                  <span className={styles.stepIndex}>{n}</span>
+                  <p>{copy}</p>
                 </li>
               ))}
             </ol>
-          </div>
-
-          <div className="flex min-w-0 flex-col gap-4">
-            <FileUpload
-              variant="centered"
-              multiple={false}
-              maxFiles={1}
-              accept={ACCEPT_ATTRIBUTE}
-              disabled={stage.kind === "uploading"}
-              value={stage.kind === "uploading" ? [stage.item] : []}
-              onFilesAdded={(_items, files) => {
-                if (files[0]) void start(files[0]);
-              }}
-              onRemove={() => abortRef.current?.()}
-              title="Suelta tu video aquí"
-              description={`MP4 o MOV · hasta ${MAX_DURATION_SECONDS} s · ${formatBytes(MAX_UPLOAD_BYTES)} máximo`}
-              browseLabel="o busca un archivo"
-              classNames={{ dropzone: "min-h-52" }}
-            />
-            {stage.kind === "uploading" ? (
-              <p role="status" className="-mt-1 text-xs text-muted-foreground tabular-nums">
-                {stage.phase === "sending"
-                  ? `Subiendo · ${stage.item.progress ?? 0}%`
-                  : "Preparando el video: validación y normalización a 720p · 24 fps · H.264…"}
-              </p>
-            ) : null}
-            {failure ? (
-              <ErrorBanner message={failure.message} detail={failure.detail} onRetry={failure.retry} onDismiss={() => setFailure(null)} />
-            ) : null}
-
-            <section aria-label="Edición" className="rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-soft)]">
-              <Composer
-                effect={effect}
-                onEffectChange={setEffect}
-                prompt={prompt}
-                onPromptChange={setPrompt}
-                onSubmit={() => undefined}
-                canSubmit={false}
-                blockedReason="Sube un video para generar."
-                busy={false}
-              />
-            </section>
-          </div>
-        </motion.main>
-      )}
+            <div className={styles.footerBottom}>
+              <p>A little focus changes everything.</p>
+              <div className={styles.footerSocial}>
+                <span>Made to stand out.</span>
+                <a className={styles.footerSocialLink} href="https://github.com/Manuekle/focus" target="_blank" rel="noreferrer" aria-label="GitHub — Manuekle/focus">
+                  <GithubIcon />
+                </a>
+                <a className={styles.footerSocialLink} href="https://x.com/manu_jsx" target="_blank" rel="noreferrer" aria-label="X — @manu_jsx">
+                  <XIcon />
+                </a>
+              </div>
+            </div>
+          </motion.footer>
+        </main>
+      {failure ? <EditorNotice key={failure.id} title="Clip couldn’t be uploaded" description={[failure.message, failure.detail].filter(Boolean).join(" ")} action={failure.retry ? { label: "Retry", onClick: failure.retry } : undefined} /> : null}
     </div>
   );
 }

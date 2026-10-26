@@ -1,1 +1,0 @@
-Optimistic is a sans-serif font created by Meta/Facebook.

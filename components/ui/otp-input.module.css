@@ -4,10 +4,10 @@
 
 .slot {
   transition:
-    border-color 150ms ease-out,
-    background-color 150ms ease-out,
-    box-shadow 180ms ease-out,
-    transform 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    border-color var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out),
+    background-color var(--duration-quick, 150ms) var(--ease-smooth-out, ease-out),
+    box-shadow var(--duration-fast, 250ms) var(--ease-smooth-out, ease-out),
+    transform var(--duration-fast, 250ms) var(--ease-in-out, ease-in-out);
 }
 
 .active {
@@ -41,7 +41,7 @@
   }
 
   .digit {
-    animation: otp-pop 200ms cubic-bezier(0.2, 0.8, 0.2, 1);
+    animation: otp-pop var(--duration-quick, 150ms) var(--ease-in-out, ease-in-out);
   }
 
   .caret {
@@ -49,12 +49,12 @@
   }
 
   .shake {
-    animation: otp-shake 360ms cubic-bezier(0.36, 0.07, 0.19, 0.97);
+    animation: otp-shake var(--duration-micro, 80ms) var(--ease-in-out, ease-in-out);
   }
 
   .busy .slot {
-    animation: otp-busy 900ms ease-in-out infinite;
-    animation-delay: calc(var(--i) * 70ms);
+    animation: otp-busy 900ms var(--ease-in-out, ease-in-out) infinite;
+    animation-delay: calc(var(--i) * var(--duration-stagger, 40ms));
   }
 }
 

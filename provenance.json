@@ -818,7 +818,7 @@
   "transformations": [
     "Imports internos relativos; patrones movidos a components/patterns",
     "Identidad azul #325CFE/grafito en styles/focus-theme.css",
-    "Optimistic Display como única fuente, tracking -0.02em",
+    "Inter como fuente de interfaz, tracking -0.02em",
     "Densidad de controles 28/32/36/40 px",
     "Idioma independiente del router y vocabulario de UI extraído",
     "Sonido desactivado inicialmente",
@@ -828,14 +828,16 @@
     "OTP adaptado a móvil y medidor adaptado al acento del tema"
   ],
   "font": {
-    "source": "optimistic.ttf proporcionado por el usuario",
-    "family": "Optimistic Display",
+    "source": "InterVariable WOFF2 proporcionado en oruka/public/fonts/inter",
+    "family": "Inter",
     "tracking": "-0.02em",
     "variableWeightRange": [
-      300,
-      800
+      100,
+      900
     ],
-    "binaryModified": false
+    "binaryModified": false,
+    "license": "SIL Open Font License 1.1",
+    "licenseFile": "public/fonts/inter/LICENSE.txt"
   },
   "brand": {
     "source": "logo (1).svg proporcionado por el usuario",

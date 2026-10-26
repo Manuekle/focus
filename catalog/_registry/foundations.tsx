@@ -170,17 +170,17 @@ export function foundations(_locale?: string): Section {
           render: (
             <div className="flex w-full flex-col gap-4">
               <div>
-                <p className="mb-1 font-mono text-[11px] text-muted-foreground">font-heading — Optimistic Display</p>
+                <p className="mb-1 font-mono text-[11px] text-muted-foreground">font-heading — Inter</p>
                 <p className="font-heading text-2xl tracking-[-0.02em]">Espacio para la siguiente idea</p>
               </div>
               <div>
-                <p className="mb-1 font-mono text-[11px] text-muted-foreground">font-sans — Optimistic Display</p>
+                <p className="mb-1 font-mono text-[11px] text-muted-foreground">font-sans — Inter</p>
                 <p className="text-sm">
                   El cuerpo de la app. Tabular para cifras: <span className="tabular-nums">1.284 · 99,4 %</span>
                 </p>
               </div>
               <div>
-                <p className="mb-1 font-mono text-[11px] text-muted-foreground">font-mono — Optimistic Display</p>
+                <p className="mb-1 font-mono text-[11px] text-muted-foreground">font-mono — Inter</p>
                 <p className="font-mono text-xs">{'import { Button } from "@focus/ui/ui/button";'}</p>
               </div>
             </div>

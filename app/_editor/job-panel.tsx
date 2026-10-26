@@ -2,7 +2,6 @@
 
 import { Download04Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
-import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { ProgressMeter } from "../../components/ui/progress-meter";
 import { Spinner } from "../../components/ui/spinner";
@@ -13,10 +12,11 @@ import { cn } from "../../lib/utils";
 import type { RenderParams, RenderResult } from "../../shared/render";
 import type { EditJob, JobPhase, PlanEffect } from "../../shared/schemas";
 import { EffectControls } from "./effect-controls";
+import { EditorNotice } from "./editor-notice";
 
 export const PLAN_EFFECT_LABEL: Record<PlanEffect, string> = {
-  selective_color: "Color selectivo",
-  background_blur: "Fondo desenfocado",
+  selective_color: "Selective color",
+  background_blur: "Background blur",
   break_frame: "Break the Frame",
   motion_echo: "Motion Echo",
 };
@@ -43,11 +43,11 @@ function Step({ state, title, model }: { readonly state: "done" | "active" | "pe
 }
 
 const PHASES: readonly { readonly id: JobPhase; readonly title: string; readonly model: string }[] = [
-  { id: "understanding", title: "Entender la edición", model: "Muse Spark" },
-  { id: "finding", title: "Encontrar el sujeto", model: "SAM 3.1" },
-  { id: "tracking", title: "Seguir el movimiento", model: "SAM 3.1 · fotograma a fotograma" },
-  { id: "applying", title: "Aplicar el efecto", model: "Compositor Focus" },
-  { id: "encoding", title: "Codificar el MP4", model: "FFmpeg · H.264" },
+  { id: "understanding", title: "Understand your edit", model: "Muse Spark" },
+  { id: "finding", title: "Find your subject", model: "SAM 3.1" },
+  { id: "tracking", title: "Track the movement", model: "SAM 3.1 · frame by frame" },
+  { id: "applying", title: "Apply your effect", model: "Focus compositor" },
+  { id: "encoding", title: "Encode your MP4", model: "FFmpeg · H.264" },
 ];
 
 export function ProcessingPanel({ job, onCancel, canceling }: { readonly job: EditJob; readonly onCancel: () => void; readonly canceling: boolean }) {
@@ -57,9 +57,9 @@ export function ProcessingPanel({ job, onCancel, canceling }: { readonly job: Ed
   const rerender = job.status === "rendering" && job.render !== null;
   const percent = Math.round(job.progress * 100);
   return (
-    <section aria-label="Procesando" className="flex flex-col gap-5">
+    <section aria-label="Processing" className="flex flex-col gap-5">
       <div>
-        <h2 className="text-sm font-medium">{job.status === "rendering" ? "Renderizando el efecto" : "Procesando tu instrucción"}</h2>
+        <h2 className="text-sm font-medium">{job.status === "rendering" ? "Rendering your effect" : "Working on your instruction"}</h2>
         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">“{job.request.prompt}”</p>
       </div>
       <ol className="flex flex-col gap-3">
@@ -70,23 +70,23 @@ export function ProcessingPanel({ job, onCancel, canceling }: { readonly job: Ed
             title={phase.title}
             model={
               phase.id === "understanding" && job.plan
-                ? `Sujeto: ${job.plan.target.concept}`
+                ? `Subject: ${job.plan.target.concept}`
                 : rerender && index < 3
-                  ? "Guardado, sin nueva llamada"
+                  ? "Saved from your previous edit"
                   : phase.model
             }
           />
         ))}
       </ol>
       <div className="flex flex-col gap-2">
-        <ProgressMeter value={percent} aria-label="Progreso" aria-valuetext={`${percent}%`} />
+        <ProgressMeter value={percent} aria-label="Progress" aria-valuetext={`${percent}%`} />
         <p role="status" className="text-xs text-muted-foreground tabular-nums">
-          {job.detail ?? "Procesando…"}
+          {job.detail ?? "Processing…"}
         </p>
       </div>
       <Button variant="outline" onClick={onCancel} disabled={canceling} aria-busy={canceling}>
         {canceling ? <Spinner /> : null}
-        Cancelar
+        Cancel
       </Button>
     </section>
   );
@@ -115,45 +115,45 @@ export function SelectionPanel({
 }) {
   const chosen = new Set(pending);
   return (
-    <section aria-label="Elegir objeto" className="flex flex-col gap-4">
+    <section aria-label="Choose a subject" className="flex flex-col gap-4">
       <div>
-        <h2 className="text-sm font-medium">Elige qué destacar</h2>
+        <h2 className="text-sm font-medium">Choose what stands out</h2>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          {job.detail ?? "Haz clic sobre el sujeto en el video o elígelo en la lista."}
-          {job.plan?.target.description ? ` Pista: ${job.plan.target.description}.` : ""}
+          {job.detail ?? "Click your subject in the video or choose it from the list."}
+          {job.plan?.target.description ? ` Hint: ${job.plan.target.description}.` : ""}
         </p>
       </div>
-      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Objetos detectados">
+      <div className="flex flex-wrap gap-1.5" role="group" aria-label="Detected subjects">
         {job.objects.map((object, index) => (
           <ToggleChip
             key={object.id}
             size="xs"
             selected={chosen.has(object.id)}
             onClick={() => onToggle(object.id)}
-            title={`${object.framesPresent}/${frameCount} fotogramas${object.meanConfidence !== null ? ` · confianza ${object.meanConfidence.toFixed(2)}` : ""}`}
+            title={`${object.framesPresent}/${frameCount} frames${object.meanConfidence !== null ? ` · confidence ${object.meanConfidence.toFixed(2)}` : ""}`}
             className="tabular-nums"
           >
-            {object.source === "point" ? "Punto" : "Objeto"} {index + 1}
+            {object.source === "point" ? "Point" : "Subject"} {index + 1}
           </ToggleChip>
         ))}
       </div>
       {job.objects.length > 1 ? (
         <button type="button" onClick={onSelectAll} className="w-fit text-xs text-primary hover:underline">
-          Seleccionar los {job.objects.length}
+          Select all {job.objects.length}
         </button>
       ) : null}
       {unmatchedPoint ? (
         <div className="rounded-xl border border-border bg-muted p-3">
-          <p className="text-xs leading-5 text-foreground">Ningún objeto detectado cubre ese punto.</p>
+          <p className="text-xs leading-5 text-foreground">No detected subject covers that point.</p>
           <Button variant="outline" size="sm" className="mt-2" onClick={onSegmentPoint} disabled={busy}>
-            Segmentar este punto con SAM 3.1
+            Find the subject at this point
           </Button>
-          <p className="mt-1.5 text-[11px] text-muted-foreground">Hace una nueva llamada a Meta AI.</p>
+          <p className="mt-1.5 text-xs text-muted-foreground">Uses Meta AI to find another subject.</p>
         </div>
       ) : null}
       <Button onClick={onConfirm} disabled={pending.length === 0 || busy} aria-busy={busy}>
         {busy ? <Spinner /> : null}
-        {pending.length > 1 ? `Usar ${pending.length} objetos` : "Usar selección"}
+        {pending.length > 1 ? `Use ${pending.length} subjects` : "Use selection"}
       </Button>
     </section>
   );
@@ -176,50 +176,50 @@ export function ReadyPanel({
 }) {
   const selected = job.objects.filter((object) => job.selection.includes(object.id));
   const coverage = Math.max(0, ...selected.map((object) => object.framesPresent));
-  const reused = [job.reused.plan && "plan", job.reused.segmentation && "máscaras"].filter(Boolean).join(" y ");
+  const reused = [job.reused.plan && "plan", job.reused.segmentation && "masks"].filter(Boolean).join(" and ");
   return (
-    <section aria-label="Segmentación lista" className="flex flex-col gap-4">
+    <section aria-label="Subject ready" className="flex flex-col gap-4">
       <div className="flex items-center gap-2.5">
         <span className="grid size-7 place-items-center rounded-lg bg-accent text-accent-foreground">
           <HugeiconsIcon icon={Tick02Icon} size={14} strokeWidth={2} />
         </span>
-        <h2 className="text-sm font-medium">Sujeto identificado y seguido</h2>
+        <h2 className="text-sm font-medium">Your subject is ready</h2>
       </div>
       <dl className="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1.5 text-xs">
-        <dt className="text-muted-foreground">Sujeto</dt>
+        <dt className="text-muted-foreground">Subject</dt>
         <dd>{job.plan?.target.concept}</dd>
-        <dt className="text-muted-foreground">Efecto</dt>
+        <dt className="text-muted-foreground">Effect</dt>
         <dd>{job.plan ? PLAN_EFFECT_LABEL[job.plan.effect] : "—"}</dd>
-        <dt className="text-muted-foreground">Selección</dt>
+        <dt className="text-muted-foreground">Selection</dt>
         <dd>
-          {selected.length} {selected.length === 1 ? "objeto" : "objetos"} de {job.objects.length}
+          {selected.length} {selected.length === 1 ? "subject" : "subjects"} of {job.objects.length}
         </dd>
-        <dt className="text-muted-foreground">Seguimiento</dt>
+        <dt className="text-muted-foreground">Tracking</dt>
         <dd className="tabular-nums">
-          {coverage}/{frameCount} fotogramas
+          {coverage}/{frameCount} frames
         </dd>
         {reused ? (
           <>
-            <dt className="text-muted-foreground">Reutilizado</dt>
-            <dd>{reused}, sin coste</dd>
+            <dt className="text-muted-foreground">Reused</dt>
+            <dd>{reused}, no extra cost</dd>
           </>
         ) : null}
       </dl>
-      <p className="text-xs leading-5 text-muted-foreground">Las máscaras quedan guardadas para editar sin volver a llamar a Meta AI.</p>
+      <p className="text-xs leading-5 text-muted-foreground">Your selection is saved, so you can keep editing without repeating the AI step.</p>
       {onRender ? (
         <Button onClick={onRender} disabled={busy} aria-busy={busy}>
           {busy ? <Spinner /> : null}
-          Renderizar efecto
+          Render effect
         </Button>
       ) : null}
       <div className="flex flex-wrap gap-2">
         {job.objects.length > 1 ? (
           <Button variant="outline" size="sm" onClick={onChangeSelection}>
-            Cambiar selección
+            Change selection
           </Button>
         ) : null}
         <Button variant="ghost" size="sm" onClick={onNewInstruction}>
-          Nueva instrucción
+          New instruction
         </Button>
       </div>
     </section>
@@ -248,13 +248,13 @@ export function ResultPanel({
   const render = job.render;
   const dirty = JSON.stringify(draft) !== JSON.stringify(render.params);
   return (
-    <section aria-label="Resultado" className="flex flex-col gap-5">
+    <section aria-label="Result" className="flex flex-col gap-5">
       <div className="flex items-center gap-2.5">
         <span className="grid size-7 place-items-center rounded-lg bg-accent text-accent-foreground">
           <HugeiconsIcon icon={Tick02Icon} size={14} strokeWidth={2} />
         </span>
         <div className="min-w-0">
-          <h2 className="text-sm font-medium">{PLAN_EFFECT_LABEL[render.params.effect]} listo</h2>
+          <h2 className="text-sm font-medium">{PLAN_EFFECT_LABEL[render.params.effect]} ready</h2>
           <p className="text-xs text-muted-foreground tabular-nums">
             {render.width}×{render.height} · {render.fps} fps · {render.durationSeconds.toFixed(1)} s · {job.plan?.target.concept}
           </p>
@@ -265,41 +265,30 @@ export function ResultPanel({
       <DownloadButton url={render.urls.download} className="hidden lg:flex" />
 
       {render.warnings.length ? (
-        <Alert
-          tone="warning"
-          size="sm"
-          role={null}
-          action={
-            render.framesWithoutMask > 0 ? (
-              <div className="flex flex-col gap-1">
-                <Button variant="outline" size="sm" onClick={onFillGaps} disabled={busy}>
-                  Completar el seguimiento con SAM 3.1
-                </Button>
-                <span className="text-[11px] text-muted-foreground">Hace una nueva llamada a Meta AI, solo para los fotogramas que faltan.</span>
-              </div>
-            ) : undefined
-          }
-        >
-          {render.warnings.join(" ")}
-        </Alert>
+        <EditorNotice
+          status="warning"
+          title="Review your result"
+          description={[render.warnings.join(" "), render.framesWithoutMask > 0 ? "Uses Meta AI to complete only the missing frames." : ""].filter(Boolean).join(" ")}
+          action={render.framesWithoutMask > 0 && !busy ? { label: "Complete subject tracking", onClick: onFillGaps } : undefined}
+        />
       ) : null}
 
       <div className="h-px bg-border" />
       <EffectControls family={job.request.effect} value={draft} onChange={onDraftChange} />
       <Button variant="secondary" onClick={onApply} disabled={!dirty || busy} aria-busy={busy}>
         {busy ? <Spinner /> : null}
-        Aplicar ajustes
+        Apply adjustments
       </Button>
-      <p className="-mt-3 text-[11px] leading-4 text-muted-foreground">Reutiliza las máscaras guardadas: no vuelve a llamar a Meta AI.</p>
+      <p className="-mt-3 text-xs leading-4 text-muted-foreground">Uses your saved selection. No additional AI step.</p>
 
       <div className="flex flex-wrap gap-2">
         {job.objects.length > 1 ? (
           <Button variant="outline" size="sm" onClick={onChangeSelection}>
-            Cambiar selección
+            Change selection
           </Button>
         ) : null}
         <Button variant="ghost" size="sm" onClick={onNewInstruction}>
-          Nueva instrucción
+          New instruction
         </Button>
       </div>
     </section>
@@ -338,9 +327,9 @@ export function DownloadButton({ url, className }: { readonly url: string; reado
       link.click();
       setTimeout(() => URL.revokeObjectURL(href), 10_000);
       setState({ kind: "idle" });
-      toast({ title: "MP4 descargado", description: name, status: "success" });
+      toast({ title: "MP4 downloaded", description: name, status: "success" });
     } catch {
-      setState({ kind: "error", message: "No pudimos descargar el video. Revisa la conexión y vuelve a intentarlo." });
+      setState({ kind: "error", message: "We couldn’t download your video. Check your connection and try again." });
     }
   };
 
@@ -349,12 +338,10 @@ export function DownloadButton({ url, className }: { readonly url: string; reado
     <div className={cn("flex flex-col gap-2", className)}>
       <Button size="lg" onClick={() => void start()} disabled={downloading} aria-busy={downloading}>
         {downloading ? <Spinner /> : <HugeiconsIcon icon={Download04Icon} size={16} strokeWidth={1.75} />}
-        {downloading ? (state.fraction === null ? "Descargando…" : `Descargando · ${Math.round(state.fraction * 100)}%`) : "Descargar MP4"}
+        {downloading ? (state.fraction === null ? "Downloading…" : `Downloading · ${Math.round(state.fraction * 100)}%`) : "Download MP4"}
       </Button>
       {state.kind === "error" ? (
-        <p role="alert" className="text-xs text-destructive">
-          {state.message}
-        </p>
+        <EditorNotice title="Video couldn’t be downloaded" description={state.message} action={{ label: "Retry", onClick: () => void start() }} />
       ) : null}
     </div>
   );

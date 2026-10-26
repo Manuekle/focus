@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ACTIVE_JOB_STATUSES, ApiErrorBodySchema, EditJobSchema, type EditJob } from "../../shared/schemas";
 import type { RenderParams } from "../../shared/render";
 import { TrackingSchema, type Tracking } from "../../shared/tracking";
+import { editorErrorMessage } from "./messages";
 
 export class ApiRequestError extends Error {
   constructor(message: string, readonly code: string) {
@@ -16,12 +17,12 @@ async function call<T>(url: string, init: RequestInit | undefined, parse: (value
   try {
     response = await fetch(url, init);
   } catch {
-    throw new ApiRequestError("Sin conexión con el servidor. Revisa tu red y vuelve a intentarlo.", "network");
+    throw new ApiRequestError("We couldn’t reach the server. Check your connection and try again.", "network");
   }
   const body = await response.json().catch(() => null);
   if (!response.ok) {
     const error = ApiErrorBodySchema.safeParse(body);
-    throw new ApiRequestError(error.success ? error.data.error.message : "El servidor no pudo completar la solicitud.", error.success ? error.data.error.code : `http_${response.status}`);
+    throw new ApiRequestError(error.success ? editorErrorMessage(error.data.error.code) : "The server couldn’t complete your request. Try again.", error.success ? error.data.error.code : `http_${response.status}`);
   }
   return parse(body);
 }
@@ -65,7 +66,7 @@ export function useJob(initial: EditJob | null) {
         setJob(next);
       } catch (error) {
         failures++;
-        if (failures >= 3) setPollError(error instanceof Error ? error.message : "Se perdió el seguimiento del proceso.");
+        if (failures >= 3) setPollError(error instanceof Error ? error.message : "We lost the connection to your edit. Reconnect to see its progress.");
       }
       if (!stopped) timer = window.setTimeout(tick, 700);
     };
@@ -106,6 +107,6 @@ export function useJob(initial: EditJob | null) {
     loadedTracking.current = null;
   };
 
-  const connectionError = offline ? "Sin conexión a internet. El proceso sigue en el servidor; el progreso se actualizará al volver la conexión." : pollError;
+  const connectionError = offline ? "You’re offline. Your edit is still processing and its progress will update when you reconnect." : pollError;
   return { job, setJob, tracking, pollError: connectionError, reset };
 }

@@ -52,8 +52,8 @@ export interface ActionSwapIconProps {
 }
 
 const BLUR_TRANSITION = { duration: 0.15, ease: "easeInOut" } as const;
-const ROLL_TRANSITION = SPRING_SWAP;
-const ROLL_EXIT_TRANSITION = { duration: 0.14, ease: EASE_OUT } as const;
+const ROLL_TRANSITION = { duration: 0.15, ease: "easeInOut" } as const;
+const ROLL_EXIT_TRANSITION = { duration: 0.15, ease: EASE_OUT } as const;
 const SWAP_BLUR = "blur(8px)";
 const ROLL_BLUR = "blur(3px)";
 
@@ -87,13 +87,13 @@ const TEXT_VARIANTS: Record<CoreAnimation, Variants> = {
       scale: 1,
       y: 0,
       filter: "blur(0px)",
-      transition: BLUR_TRANSITION,
+      transition: { duration: 0.15, ease: "easeInOut" },
     },
     exit: {
       opacity: 0,
       y: -4,
       filter: SWAP_BLUR,
-      transition: BLUR_TRANSITION,
+      transition: { duration: 0.15, ease: "easeInOut" },
     },
   },
   roll: {
@@ -102,13 +102,13 @@ const TEXT_VARIANTS: Record<CoreAnimation, Variants> = {
       opacity: 1,
       y: "0%",
       filter: "blur(0px)",
-      transition: ROLL_TRANSITION,
+      transition: { duration: 0.15, ease: "easeInOut" },
     },
     exit: {
       opacity: 0,
       y: "-90%",
       filter: ROLL_BLUR,
-      transition: ROLL_EXIT_TRANSITION,
+      transition: { duration: 0.15, ease: EASE_OUT },
     },
   },
 };

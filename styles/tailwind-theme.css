@@ -39,7 +39,7 @@
   --font-heading: var(--app-font-heading);
   --font-numeral: var(--app-font-numeral);
 
-  /* All text roles share Optimistic Display at -0.02em. */
+  /* All text roles share Inter at -0.02em. */
   --text-xs--letter-spacing: var(--app-tracking-xs);
   --text-sm--letter-spacing: var(--app-tracking-sm);
   --text-base--letter-spacing: var(--app-tracking-base);

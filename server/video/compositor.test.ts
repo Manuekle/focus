@@ -153,6 +153,30 @@ describe("compositor", () => {
     await expect(verifyOutput(out.file, { width: W, height: H, fps: FPS, frameCount: FRAMES, hasAudio: true })).rejects.toMatchObject({ code: "export_invalid" });
   });
 
+  it("Square and portrait sources keep their geometry; Break the Frame always outputs 1080×1350", async () => {
+    for (const [w, h] of [[240, 240], [180, 320]] as const) {
+      const source = path.join(work, `src-${w}x${h}.mp4`);
+      await ffmpeg(["-f", "lavfi", "-i", `color=c=0x1e3cd2:s=${w}x${h}:r=${FPS}:d=1`, "-f", "lavfi", "-i", `color=c=0xdc1e28:s=40x40:r=${FPS}:d=1`, "-filter_complex", "[0:v][1:v]overlay=x=60:y=80,format=yuv420p[v]", "-map", "[v]", "-c:v", "libx264", source]);
+      const square: MaskSource = {
+        alphaAt: () => {
+          const data = new Uint8Array(w * h);
+          for (let y = 80; y < 120; y++) data.fill(255, y * w + 60, y * w + 100);
+          return { data, box: { left: 60, top: 80, right: 100, bottom: 120 } };
+        },
+        subjectMotion: () => subjectMotion([{ left: 60, top: 80, right: 100, bottom: 120 }]),
+      };
+      const mediaOf = { width: w, height: h, fps: FPS, frameCount: FPS, durationSeconds: 1, codec: "h264" as const, hasAudio: false };
+      for (const raw of [{ effect: "selective_color" }, { effect: "break_frame" }]) {
+        const outputDir = path.join(work, `geo-${w}-${raw.effect}`);
+        await (await import("node:fs/promises")).mkdir(outputDir, { recursive: true });
+        const out = await renderVideo({ normalizedPath: source, media: mediaOf, masks: square, params: RenderParamsSchema.parse(raw), outputDir });
+        const expected = raw.effect === "break_frame" ? BREAK_FRAME_CANVAS : { width: w, height: h };
+        expect([out.width, out.height]).toEqual([expected.width, expected.height]);
+        await verifyOutput(path.join(outputDir, "output.mp4"), { ...expected, fps: FPS, frameCount: FPS, hasAudio: false });
+      }
+    }
+  });
+
   it("Reports frames where the subject has no mask instead of inventing one", async () => {
     const gappy: MaskSource = {
       alphaAt: (index) => (index % 10 === 0 ? { data: new Uint8Array(W * H), box: null } : masks.alphaAt(index)),

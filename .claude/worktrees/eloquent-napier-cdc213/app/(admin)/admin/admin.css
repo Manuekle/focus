@@ -1,0 +1,11 @@
+@reference "../../tailwind-theme.css";
+@layer utilities {
+  @tailwind utilities source(none);
+}
+
+/* The operator's panel loads its own utilities, like the product routes do
+   with product.css: theme variables come from the root stylesheet. */
+@source ".";
+@source "../../_components";
+@source "../../../components";
+@source "../../../lib";

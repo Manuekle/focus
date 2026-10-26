@@ -1,0 +1,14 @@
+---
+# Install with: ansible-galaxy install -r requirements.yml
+collections:
+  # DigitalOcean droplet provisioning (digital_ocean_droplet, etc.)
+  - name: community.digitalocean
+    version: "1.27.0"
+  # General utilities (ufw is in community.general)
+  - name: community.general
+    version: "12.3.0"
+  - name: ansible.posix
+    version: "2.1.0"
+  # SSH keypair generation for the GitHub deploy key (openssh_keypair)
+  - name: community.crypto
+    version: "3.1.0"

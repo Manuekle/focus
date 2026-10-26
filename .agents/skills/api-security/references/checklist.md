@@ -1,0 +1,23 @@
+# API Security Review Checklist
+
+- route inventory complete
+- public/authenticated/admin/internal classification
+- authentication validation
+- token/session expiry and revocation
+- resource-level authorization
+- tenant/workspace isolation
+- RBAC/ABAC/capability enforcement
+- strict request schemas
+- safe identifier canonicalization
+- output/error redaction
+- IP/user/key/tenant/endpoint rate limits
+- brute-force protections where relevant
+- secure cookies
+- CSRF controls for cookie auth
+- CORS allowlist
+- idempotency behavior
+- API-key scope and rotation
+- service-to-service identity
+- audit correlation IDs
+- sensitive-operation logging
+- no secrets in public errors/logs

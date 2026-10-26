@@ -12,6 +12,7 @@ import {
   hasAcceptedExtension,
 } from "../shared/media";
 import { VideoAssetSchema, type NormalizedMedia, type VideoAsset, type VideoId } from "../shared/schemas";
+import { Limiter } from "./ai/meta";
 import { AppError } from "./errors";
 import { MediaToolError, ffmpeg, probe } from "./ffmpeg";
 import { describeSource, normalizedDimensions, parseRate } from "./media-validation";
@@ -22,6 +23,8 @@ export type IngestInput = {
   readonly fileName: string;
   readonly declaredBytes?: number;
 };
+
+const normalizeLimiter = ((globalThis as { __focusNormalize?: Limiter }).__focusNormalize ??= new Limiter(2));
 
 function cleanFileName(name: string): string {
   const base = path.basename(name).replace(/[\u0000-\u001f]/g, "").trim();
@@ -69,7 +72,8 @@ export async function ingestVideo({ body, fileName, declaredBytes }: IngestInput
     if (sizeBytes === 0) throw new AppError("empty_file", 400, "El archivo está vacío.");
 
     const source = describeSource(await probeOrReject(sourcePath), sizeBytes);
-    const normalized = await normalize(sourcePath, dir, source.width, source.height, source.hasAudio);
+    // FFmpeg normalization is CPU-heavy: at most two at a time per instance.
+    const normalized = await normalizeLimiter.run(() => normalize(sourcePath, dir, source.width, source.height, source.hasAudio));
 
     const asset: VideoAsset = {
       id,

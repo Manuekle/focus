@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# Managed by Ansible (backup role). Do not edit by hand.
+#
+# One scheduled dump of the Workflow/oruka database, verified, pruned, and —
+# when a destination is configured — copied somewhere that is not this host.
+#
+# The `app` role already takes a dump before every migration. That is a
+# pre-change safety net, not a backup policy: it only runs when someone
+# deploys, and it lands in {{ workflow_backup_dir }} on the same disk as the
+# database it came from. Losing the host lost both.
+set -euo pipefail
+
+DIR="{{ workflow_backup_dir }}"
+RETENTION={{ backup_retention }}
+STAMP="$(date -u +%Y%m%dT%H%M%SZ)"
+TARGET="${DIR}/oruka-${STAMP}.dump"
+PARTIAL="${TARGET}.partial"
+
+mkdir -p "$DIR"
+trap 'rm -f "$PARTIAL"' EXIT
+
+# --format=custom so pg_restore can read it selectively, and so the verify is a
+# real parse of the archive rather than a file-size check.
+#
+# Both the dump and the verify run inside the container. The host has no
+# postgresql-client — the hardening role installs git, curl, ufw, fail2ban and
+# not much else — so a `pg_restore --list` out here would fail every night on a
+# freshly provisioned droplet, which is the worst possible way to find out.
+docker exec {{ postgres_container }} sh -c \
+  'pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" --format=custom --file=/tmp/oruka-scheduled.dump \
+   && pg_restore --list /tmp/oruka-scheduled.dump >/dev/null'
+docker cp {{ postgres_container }}:/tmp/oruka-scheduled.dump "$PARTIAL"
+docker exec {{ postgres_container }} rm -f /tmp/oruka-scheduled.dump
+
+# Non-empty, and only then named something that looks finished.
+test -s "$PARTIAL"
+mv "$PARTIAL" "$TARGET"
+trap - EXIT
+chmod 0600 "$TARGET"
+echo "oruka-backup: wrote ${TARGET} ($(du -h "$TARGET" | cut -f1))"
+
+{% if backup_offsite_command | default('') | length > 0 %}
+# Offsite copy. The command is the operator's own — aws s3 cp, rclone copy,
+# restic backup, scp, whatever they already run — and receives the dump path
+# as $1. Deliberately not a hardcoded provider: this role should not decide
+# where someone's data lives or require credentials it has no business holding.
+echo "oruka-backup: copying offsite"
+{{ backup_offsite_command }} "$TARGET"
+echo "oruka-backup: offsite copy done"
+{% else %}
+# No `backup_offsite_command` set, so this dump stays on the same host as the
+# database. That is better than the nothing it replaces and it is NOT disaster
+# recovery — losing this droplet still loses everything. Set the variable in
+# deploy/group_vars/all.yml.
+echo "oruka-backup: WARNING — no offsite destination configured; backup is local only"
+{% endif %}
+
+# Prune by name, which sorts chronologically because the stamp is ISO basic.
+#
+# `sort -r | tail -n +N`, not `sort | head -n -N`: the negative-count form of
+# head is a GNU extension. On anything else it fails — and it fails *quietly*
+# here, because the failing pipeline only feeds the loop, so `set -e` never
+# sees it and retention silently stops happening. Verified against both.
+ls -1 "${DIR}"/oruka-*.dump 2>/dev/null | sort -r | tail -n "+$((RETENTION + 1))" | while read -r old; do
+  echo "oruka-backup: pruning ${old}"
+  rm -f "$old"
+done

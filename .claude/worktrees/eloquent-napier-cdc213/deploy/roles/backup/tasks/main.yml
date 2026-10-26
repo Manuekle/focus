@@ -1,0 +1,78 @@
+---
+# Scheduled database backups.
+#
+# What existed before this role: a `pg_dump` inside the `app` role that runs
+# immediately before a migration, keeps ten files, and writes them to
+# {{ workflow_backup_dir }} on the droplet's own disk. That is a rollback
+# aid for a deploy, and it was the only thing standing between this
+# installation and total data loss — no schedule, so a droplet that has not
+# been deployed to in a month has a month-old dump, and no copy anywhere
+# else, so losing the host loses the backups with it.
+#
+# This adds the schedule and the hook for getting the file off the box. It
+# does not provision storage or hold anyone's credentials: see
+# `backup_offsite_command` in group_vars/all.yml.
+
+- name: Create the backup directory
+  ansible.builtin.file:
+    path: "{{ workflow_backup_dir }}"
+    state: directory
+    owner: "{{ app_user }}"
+    group: "{{ app_user }}"
+    mode: "0700"
+  become: true
+
+- name: Install the backup script
+  ansible.builtin.template:
+    src: oruka-backup.sh.j2
+    dest: /usr/local/bin/oruka-backup
+    owner: root
+    group: root
+    mode: "0755"
+  become: true
+
+- name: Install the backup service unit
+  ansible.builtin.template:
+    src: oruka-backup.service.j2
+    dest: /etc/systemd/system/oruka-backup.service
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd for backup
+
+- name: Install the backup timer unit
+  ansible.builtin.template:
+    src: oruka-backup.timer.j2
+    dest: /etc/systemd/system/oruka-backup.timer
+    owner: root
+    group: root
+    mode: "0644"
+  become: true
+  notify: Reload systemd for backup
+
+- name: Apply pending unit changes before enabling the timer
+  ansible.builtin.meta: flush_handlers
+
+- name: Enable and start the backup timer
+  ansible.builtin.systemd:
+    name: oruka-backup.timer
+    enabled: "{{ backup_enabled | bool }}"
+    state: "{{ 'started' if (backup_enabled | bool) else 'stopped' }}"
+  become: true
+
+# Proves the script works now, rather than discovering at 03:00 that the
+# container name changed or pg_restore is not installed on the host.
+- name: Take one backup now, so the path is proven rather than assumed
+  when: backup_enabled | bool and backup_verify_on_deploy | bool
+  ansible.builtin.command:
+    cmd: /usr/local/bin/oruka-backup
+  become: true
+  become_user: "{{ app_user }}"
+  register: backup_probe
+  changed_when: true
+
+- name: Report the backup that was just taken
+  when: backup_probe is defined and backup_probe.stdout is defined
+  ansible.builtin.debug:
+    msg: "{{ backup_probe.stdout_lines }}"

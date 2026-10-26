@@ -39,9 +39,9 @@ for(const [name,target] of Object.entries(pkg.exports)){
 }
 const tokens=JSON.parse(fs.readFileSync(path.join(root,'tokens/tokens.json'),'utf8'));
 for(const theme of ['light','dark'])for(const name of ['--background','--foreground','--card','--primary','--ring','--status-success-fg','--app-font-sans'])if(!tokens.themes[theme][name])problems.push(`Missing ${theme} token ${name}`);
-if(tokens.themes.light['--primary']!=='#325cfe'||tokens.themes.dark['--primary']!=='#325cfe')problems.push('Focus identity is not reflected in tokens.json');
+if(tokens.themes.light['--primary']!=='#2853e9'||tokens.themes.dark['--primary']!=='#2853e9')problems.push('Focus identity is not reflected in tokens.json');
 for (const theme of ['light','dark']) {
- for (const role of ['sans','heading','numeral','mono']) if (tokens.themes[theme][`--app-font-${role}`] !== '"Optimistic Display", sans-serif') problems.push(`Unexpected ${theme} font role ${role}`);
+ for (const role of ['sans','heading','numeral','mono']) if (tokens.themes[theme][`--app-font-${role}`] !== '"Inter", sans-serif') problems.push(`Unexpected ${theme} font role ${role}`);
  if (tokens.themes[theme]['--app-tracking'] !== '-0.02em') problems.push(`Unexpected ${theme} tracking`);
 }
 const ids=[];const sources=[];

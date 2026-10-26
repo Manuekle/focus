@@ -42,7 +42,7 @@ Estados (`--status-*-bg/fg`): success verde, failed rosa, pending ámbar, progre
 
 ## 3. Tipografía
 
-- Familia única: **Optimistic Display** (variable, pesos 300–800, stretch 80–100 %), servida localmente desde `public/fonts/optimistic/optimistic.ttf` con su aviso de copyright. Declarada en `styles/typography.css`.
+- Familia de interfaz: **Inter** (variable, pesos 100–900, normal y cursiva), servida localmente en WOFF2 desde `public/fonts/inter/` con su licencia SIL Open Font License 1.1. Declarada en `styles/typography.css`. Porky’s conserva los títulos de marca de la home.
 - Todos los roles (`--app-font-sans`, `heading`, `numeral`, `mono`) apuntan a ella.
 - Tracking uniforme `-0.02em` en toda la UI.
 - Pesos: 400 texto, 500 controles, 550–600 títulos. Títulos de página 30–36 px; cuerpo 14 px; metadatos 10–12 px. `tabular-nums` en cifras.

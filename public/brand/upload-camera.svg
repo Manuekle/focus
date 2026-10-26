@@ -1,0 +1,190 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="112 96 456 384" fill="none" role="img" aria-labelledby="camera-title camera-desc">
+  <title id="camera-title">Focus — Glass video camera</title>
+  <desc id="camera-desc">Royal-blue glass video camera with a play symbol, soft highlights and a translucent lens.</desc>
+  <defs>
+    <filter id="oruka-soft-bloom" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="9"/>
+    </filter>
+    <filter id="oruka-border-softness" x="-15%" y="-15%" width="130%" height="130%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="1.65"/>
+    </filter>
+    <filter id="oruka-deep-frost" x="-40%" y="-40%" width="180%" height="180%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="21"/>
+    </filter>
+    <filter id="oruka-led-soft" x="-65%" y="-65%" width="230%" height="230%" color-interpolation-filters="sRGB">
+      <feGaussianBlur stdDeviation="3"/>
+    </filter>
+
+    <linearGradient id="oruka-rear-blue" x1="423" y1="157" x2="504" y2="417" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#4874ED"/>
+      <stop offset=".24" stop-color="#234CE2"/>
+      <stop offset=".65" stop-color="#193CE1"/>
+      <stop offset="1" stop-color="#1C42E2"/>
+    </linearGradient>
+    <linearGradient id="oruka-rear-side" x1="412" y1="288" x2="503" y2="288" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#ADC6FD" stop-opacity=".24"/>
+      <stop offset=".40" stop-color="#7DA1F8" stop-opacity=".06"/>
+      <stop offset="1" stop-color="#E3ECFF" stop-opacity=".09"/>
+    </linearGradient>
+    <linearGradient id="oruka-rear-rim" x1="437" y1="149" x2="506" y2="398" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F4F7FF" stop-opacity=".40"/>
+      <stop offset=".51" stop-color="#D8E4FF" stop-opacity=".04"/>
+      <stop offset="1" stop-color="#DEE9FF" stop-opacity=".35"/>
+    </linearGradient>
+
+    <linearGradient id="oruka-front-base" x1="156" y1="226" x2="441" y2="304" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#96B4FB"/>
+      <stop offset=".30" stop-color="#5C86F2"/>
+      <stop offset=".67" stop-color="#305DEE"/>
+      <stop offset="1" stop-color="#2853E9"/>
+    </linearGradient>
+    <linearGradient id="oruka-front-vertical" x1="302" y1="129" x2="303" y2="444" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D1DFFE" stop-opacity=".56"/>
+      <stop offset=".18" stop-color="#99B8FC" stop-opacity=".22"/>
+      <stop offset=".56" stop-color="#1D43E7" stop-opacity=".12"/>
+      <stop offset=".86" stop-color="#5A85F3" stop-opacity=".11"/>
+      <stop offset="1" stop-color="#ABC4FD" stop-opacity=".39"/>
+    </linearGradient>
+    <radialGradient id="oruka-front-blue-core" cx="0" cy="0" r="1" gradientTransform="translate(366 314) rotate(153) scale(214 173)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#1F46E8" stop-opacity=".27"/>
+      <stop offset=".63" stop-color="#1F46E8" stop-opacity=".16"/>
+      <stop offset="1" stop-color="#1A3CF4" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="oruka-front-top-light" cx="0" cy="0" r="1" gradientTransform="translate(277 154) rotate(90) scale(131 224)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#C9D9FE" stop-opacity=".72"/>
+      <stop offset=".6" stop-color="#D5E2FF" stop-opacity=".14"/>
+      <stop offset="1" stop-color="#C0D4FF" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="oruka-front-left-light" cx="0" cy="0" r="1" gradientTransform="translate(152 314) rotate(0) scale(128 221)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E0EAFF" stop-opacity=".59"/>
+      <stop offset=".39" stop-color="#D0DFFF" stop-opacity=".21"/>
+      <stop offset="1" stop-color="#C9DAFF" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="oruka-front-edge" x1="146" y1="242" x2="446" y2="345" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D3E1FF" stop-opacity=".25"/>
+      <stop offset=".23" stop-color="#C2D5FF" stop-opacity=".13"/>
+      <stop offset=".58" stop-color="#DEE9FF" stop-opacity=".12"/>
+      <stop offset="1" stop-color="#ECF2FF" stop-opacity=".23"/>
+    </linearGradient>
+    <linearGradient id="oruka-soft-interior" x1="242" y1="201" x2="389" y2="408" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#234DEC" stop-opacity=".18"/>
+      <stop offset="1" stop-color="#1322E5" stop-opacity=".15"/>
+    </linearGradient>
+    <linearGradient id="oruka-front-undershine" x1="291" y1="364" x2="293" y2="442" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#97B6FC" stop-opacity=".08"/>
+      <stop offset="1" stop-color="#CADAFE" stop-opacity=".29"/>
+    </linearGradient>
+
+    <linearGradient id="oruka-play-tint" x1="206" y1="279" x2="328" y2="285" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#E3ECFF" stop-opacity=".63"/>
+      <stop offset="1" stop-color="#DDE8FF" stop-opacity=".72"/>
+    </linearGradient>
+    <linearGradient id="oruka-play-border" x1="205" y1="224" x2="326" y2="333" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#F7FAFF" stop-opacity=".67"/>
+      <stop offset=".62" stop-color="#E1EBFF" stop-opacity=".63"/>
+      <stop offset="1" stop-color="#D4E1FE" stop-opacity=".43"/>
+    </linearGradient>
+    <radialGradient id="oruka-status-light" cx="0" cy="0" r="1" gradientTransform="translate(361 185) rotate(90) scale(20 18)" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B6CCFD" stop-opacity="1"/>
+      <stop offset=".69" stop-color="#A7C1FB" stop-opacity=".86"/>
+      <stop offset="1" stop-color="#BDD1FD" stop-opacity=".36"/>
+    </radialGradient>
+
+    <linearGradient id="oruka-cone-fill" x1="399" y1="286" x2="505" y2="286" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#CEDEFF" stop-opacity=".05"/>
+      <stop offset=".38" stop-color="#BED2FE" stop-opacity=".24"/>
+      <stop offset="1" stop-color="#C1D4FE" stop-opacity=".74"/>
+    </linearGradient>
+    <linearGradient id="oruka-cone-face" x1="420" y1="244" x2="504" y2="343" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#B0C8FD" stop-opacity=".08"/>
+      <stop offset=".72" stop-color="#85A8F9" stop-opacity=".27"/>
+      <stop offset="1" stop-color="#7BA1F9" stop-opacity=".34"/>
+    </linearGradient>
+    <linearGradient id="oruka-cone-mask-gradient" x1="390" y1="286" x2="493" y2="286" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#000000"/>
+      <stop offset=".65" stop-color="#FFFFFF"/>
+      <stop offset="1" stop-color="#FFFFFF"/>
+    </linearGradient>
+    <mask id="oruka-cone-mask" maskUnits="userSpaceOnUse" x="385" y="215" width="160" height="145">
+      <rect x="385" y="215" width="160" height="145" fill="url(#oruka-cone-mask-gradient)"/>
+    </mask>
+    <linearGradient id="oruka-lens-fill" x1="482" y1="283" x2="541" y2="286" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#93B2FB"/>
+      <stop offset=".14" stop-color="#4B78F4"/>
+      <stop offset=".56" stop-color="#2A56E8"/>
+      <stop offset="1" stop-color="#254EE2"/>
+    </linearGradient>
+    <linearGradient id="oruka-lens-light" x1="485" y1="259" x2="533" y2="319" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#D5E2FF" stop-opacity=".20"/>
+      <stop offset="1" stop-color="#193CE9" stop-opacity=".05"/>
+    </linearGradient>
+    <linearGradient id="oruka-lens-rim" x1="481" y1="285" x2="540" y2="289" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#EEF4FF" stop-opacity=".9"/>
+      <stop offset=".22" stop-color="#C5D7FF" stop-opacity=".93"/>
+      <stop offset=".85" stop-color="#D6E3FF" stop-opacity=".77"/>
+      <stop offset="1" stop-color="#DBE6FF" stop-opacity=".80"/>
+    </linearGradient>
+
+    <path id="oruka-front-outline" d="M146.5 215.9 C146.5 181.3 169.1 153.6 202.8 150.3 L360.6 127.2 C404.8 120.7 442.3 153.4 442.3 196.2 L442.3 373.6 C442.3 416.1 410.9 446.7 369 441.6 L196.8 419.3 C166.7 415.3 146.1 394.1 146.1 363.3 Z"/>
+    <clipPath id="oruka-front-clip">
+      <use href="#oruka-front-outline"/>
+    </clipPath>
+  </defs>
+
+  <g id="oruka-camera-illustration">
+    <g id="oruka-camera-rear">
+      <path d="M415 146.7 L448.7 146.7 C477.4 146.7 501.7 175.2 501.7 207.5 L501.7 360.5 C501.7 393.8 481.7 422 449.8 422.7 L417.2 422.7 Z" fill="#4F7BF4" opacity=".16" filter="url(#oruka-soft-bloom)"/>
+      <path d="M413.2 146.7 L448.7 146.7 C478.5 146.7 501.7 176.3 501.7 208.3 V360.1 C501.7 395.2 482.3 422.5 449.1 422.5 H413.2 Z" fill="url(#oruka-rear-blue)"/>
+      <path d="M413.2 146.7 L448.7 146.7 C478.5 146.7 501.7 176.3 501.7 208.3 V360.1 C501.7 395.2 482.3 422.5 449.1 422.5 H413.2 Z" fill="url(#oruka-rear-side)"/>
+      <path d="M434 148 H448.7 C478.5 148 500.4 176.3 500.4 208.3 V361 C500.4 393 482.3 421.3 449.1 421.3 H417" stroke="url(#oruka-rear-rim)" stroke-width=".7"/>
+    </g>
+
+    <g id="oruka-camera-face">
+      <use href="#oruka-front-outline" fill="#85A9FC" opacity=".14" filter="url(#oruka-soft-bloom)"/>
+      <use href="#oruka-front-outline" fill="url(#oruka-front-base)"/>
+      <g clip-path="url(#oruka-front-clip)">
+        <rect x="137" y="113" width="316" height="351" fill="url(#oruka-front-vertical)"/>
+        <rect x="137" y="113" width="316" height="351" fill="url(#oruka-front-blue-core)"/>
+        <rect x="137" y="113" width="316" height="351" fill="url(#oruka-front-top-light)"/>
+        <rect x="137" y="113" width="316" height="351" fill="url(#oruka-front-left-light)"/>
+        <path d="M280 185 C331 178 391 176 412 207 C436 242 431 334 419 364 C399 414 319 414 278 399 C244 387 214 321 220 272 C225 230 244 196 280 185Z" fill="url(#oruka-soft-interior)" filter="url(#oruka-soft-bloom)"/>
+        <rect x="137" y="113" width="316" height="351" fill="url(#oruka-front-undershine)"/>
+        <path d="M166 188 Q171 157 204 154 L359 131 Q389 126 411 146" stroke="#F6F9FF" stroke-opacity=".16" stroke-width="9" stroke-linecap="round" filter="url(#oruka-soft-bloom)"/>
+      </g>
+      <use href="#oruka-front-outline" fill="none" stroke="#BCD1FF" stroke-opacity=".13" stroke-width="2.8" filter="url(#oruka-border-softness)"/>
+      <use href="#oruka-front-outline" fill="none" stroke="url(#oruka-front-edge)" stroke-width=".7"/>
+    </g>
+
+    <g id="oruka-camera-symbol">
+      <g id="oruka-symbol-play">
+        <path d="M207.6 233.3 C207.6 225.7 215.6 220.6 222.5 224.2 L318.6 273 C328 277.9 327.6 286.9 318.6 292.1 L223.2 339 C215.4 342.9 207.6 338.8 207.6 331.1Z" fill="url(#oruka-play-tint)"/>
+        <path d="M207.6 233.3 C207.6 225.7 215.6 220.6 222.5 224.2 L318.6 273 C328 277.9 327.6 286.9 318.6 292.1 L223.2 339 C215.4 342.9 207.6 338.8 207.6 331.1Z" stroke="url(#oruka-play-border)" stroke-width="6.4" stroke-linejoin="round"/>
+      </g>
+      <g id="oruka-symbol-pause" opacity="0">
+        <rect x="243" y="251" width="15" height="67" rx="7.5" fill="#E9F0FF" fill-opacity=".73"/>
+        <rect x="275" y="251" width="15" height="67" rx="7.5" fill="#E9F0FF" fill-opacity=".73"/>
+      </g>
+    </g>
+
+    <g id="oruka-led">
+      <circle cx="361" cy="185" r="15" fill="#E9F0FF" opacity=".52" filter="url(#oruka-led-soft)"/>
+      <circle cx="361" cy="185" r="13.5" fill="url(#oruka-status-light)"/>
+    </g>
+
+    <g id="oruka-camera-cone" mask="url(#oruka-cone-mask)">
+      <path d="M396 284.8 C428.5 271.4 469.3 246.8 505.9 230.6 C520.7 246.7 523.8 330.5 507 344.5 C464 324 421 305.6 396 284.8Z" fill="url(#oruka-cone-fill)"/>
+      <path d="M396 284.8 C428.5 271.4 469.3 246.8 505.9 230.6 C520.7 246.7 523.8 330.5 507 344.5 C464 324 421 305.6 396 284.8Z" fill="url(#oruka-cone-face)"/>
+    </g>
+
+    <g id="oruka-camera-lens">
+      <ellipse cx="510.7" cy="286.9" rx="28" ry="57.2" fill="#BED2FF" opacity=".44" filter="url(#oruka-border-softness)"/>
+      <ellipse cx="510.2" cy="286.7" rx="26.5" ry="55.8" fill="url(#oruka-lens-fill)"/>
+      <ellipse cx="510.2" cy="286.7" rx="26.5" ry="55.8" fill="url(#oruka-lens-light)"/>
+      <ellipse cx="510.2" cy="286.7" rx="26.5" ry="55.8" stroke="url(#oruka-lens-rim)" stroke-width="3.0"/>
+    </g>
+
+    <g id="oruka-record-glow" opacity="0">
+      <circle cx="361" cy="185" r="22" fill="#E5EDFF" opacity=".36" filter="url(#oruka-soft-bloom)"/>
+    </g>
+  </g>
+</svg>

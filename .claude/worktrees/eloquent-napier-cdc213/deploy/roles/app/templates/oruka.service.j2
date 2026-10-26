@@ -1,0 +1,39 @@
+# Managed by Ansible (app role).
+# Long-running production Eve host. `eve build` runs before this unit starts;
+# Eve stops open sandboxes on SIGTERM and reattaches durable sessions on restart.
+[Unit]
+Description=oruka — self-hosted eve agent host
+After=network-online.target docker.service
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=simple
+User={{ app_user }}
+Group={{ app_user }}
+SupplementaryGroups=docker
+WorkingDirectory={{ app_dir }}
+EnvironmentFile={{ app_dir }}/.env
+Environment=HOME=/home/{{ app_user }}
+Environment=NODE_ENV=production
+Environment=PORT={{ app_port }}
+Environment=WORKFLOW_POSTGRES_WORKER_CONCURRENCY={{ workflow_worker_concurrency }}
+Environment=WORKFLOW_POSTGRES_MAX_POOL_SIZE={{ workflow_postgres_max_pool_size }}
+Environment=PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# Ensure the Postgres world container is up and accepting connections before
+# the agent starts. On reboot the agent would otherwise race the Docker
+# container and die with ECONNREFUSED to Postgres.
+ExecStartPre=/usr/bin/docker compose -f {{ app_dir }}/docker-compose.yml up -d postgres
+ExecStartPre=/bin/sh -c 'for i in $(seq 1 30); do docker exec oruka-postgres pg_isready && exit 0; sleep 2; done; echo "postgres not ready" >&2; exit 1'
+# Bind to localhost only; Caddy is the sole public entry point.
+ExecStart=/usr/bin/node {{ app_dir }}/node_modules/eve/bin/eve.js start --host 127.0.0.1 --port {{ app_port }}
+Restart=always
+RestartSec=1
+# Give the host time to pull the sandbox image on first boot.
+TimeoutStartSec=300
+TimeoutStopSec=120
+KillSignal=SIGTERM
+KillMode=control-group
+
+[Install]
+WantedBy=multi-user.target

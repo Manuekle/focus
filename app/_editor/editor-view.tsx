@@ -4,11 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { EASE_OUT } from "../../lib/ease";
 import { cn } from "../../lib/utils";
-import { Delete02Icon } from "@hugeicons/core-free-icons";
+import { ArrowLeftRightIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
-import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
-import { ErrorBanner } from "../../components/ui/error-banner";
 import { Switch } from "../../components/ui/switch";
 import { formatBytes } from "../../shared/media";
 import type { FlowStepId } from "../../shared/pipeline";
@@ -16,12 +14,16 @@ import type { RenderParams, RenderResult } from "../../shared/render";
 import { ACTIVE_JOB_STATUSES, type EditJob, type EffectId, type VideoAsset } from "../../shared/schemas";
 import { frameAt, hitTest } from "../../shared/tracking";
 import { Composer } from "./composer";
+import { EditorNotice } from "./editor-notice";
 import { FlowRail } from "./flow-rail";
 import { ApiRequestError, jobApi, useJob } from "./job-client";
 import { DownloadButton, ProcessingPanel, ReadyPanel, ResultPanel, SelectionPanel } from "./job-panel";
 import { CompareStage } from "./compare-stage";
 import { TrackingOverlay } from "./tracking-overlay";
 import { VideoStage } from "./video-stage";
+import { editorErrorMessage } from "./messages";
+import { prefersReducedMotion, useReducedMotion } from "../../lib/hooks/use-reduced-motion";
+import styles from "./editor-view.module.css";
 
 function flowStep(job: EditJob | null): FlowStepId {
   switch (job?.status) {
@@ -65,6 +67,17 @@ export function EditorView({
   const [pendingFor, setPendingFor] = useState<string | null>(null);
   const [draft, setDraft] = useState<RenderParams | null>(null);
   const [draftFor, setDraftFor] = useState<string | null>(null);
+  const editorRef = useRef<HTMLElement>(null);
+  const reducedMotion = useReducedMotion();
+
+  useEffect(() => {
+    editorRef.current?.focus({ preventScroll: true });
+    const studio = document.getElementById("studio");
+    const bounds = editorRef.current?.getBoundingClientRect();
+    if (studio && bounds && (bounds.top < 0 || bounds.bottom > window.innerHeight)) {
+      studio.scrollIntoView({ block: "start", behavior: prefersReducedMotion() ? "instant" : "smooth" });
+    }
+  }, []);
 
   // The effect controls start from the parameters of the render on screen.
   const renderKey = job?.render?.key ?? null;
@@ -87,7 +100,7 @@ export function EditorView({
     try {
       setJob(await task());
     } catch (error) {
-      setFailure(error instanceof ApiRequestError ? error.message : "No pudimos completar la acción. Vuelve a intentarlo.");
+      setFailure(error instanceof ApiRequestError ? error.message : "We couldn’t complete that action. Try again.");
     } finally {
       setBusy(false);
     }
@@ -124,13 +137,13 @@ export function EditorView({
   const currentFrame = tracking ? frameAt(tracking, frameIndex) : undefined;
 
   return (
-    <main className={cn("mx-auto grid w-full max-w-[1440px] flex-1 gap-6 px-4 py-6 sm:px-8 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start", result && "pb-28 lg:pb-6")}>
-      <section aria-label="Video" className="flex min-w-0 flex-col gap-3">
+    <section id="editor" ref={editorRef} tabIndex={-1} aria-label="Clip editor" className={cn(styles.editor, result && "pb-28 lg:pb-0")}>
+      <section aria-label="Video" className={styles.preview}>
         {stageRender && !diagnostic ? (
           <CompareStage
             key={stageRender.key}
             render={stageRender}
-            updating={job?.status === "rendering" ? { progress: job.progress, label: job.detail ?? "Actualizando" } : null}
+            updating={job?.status === "rendering" ? { progress: job.progress, label: job.detail ?? "Updating" } : null}
           />
         ) : (
           <VideoStage
@@ -163,51 +176,44 @@ export function EditorView({
             hud={
               diagnostic && tracking ? (
                 <>
-                  Fotograma {frameIndex + 1}/{tracking.frameCount} · {currentFrame ? `${currentFrame.objects.length} máscara${currentFrame.objects.length === 1 ? "" : "s"}` : "sin máscara"}
+                  Frame {frameIndex + 1}/{tracking.frameCount} · {currentFrame ? `${currentFrame.objects.length} mask${currentFrame.objects.length === 1 ? "" : "s"}` : "no mask"}
                   <br />
-                  SAM {tracking.outcome.status === "completed" ? "completo" : `incompleto (${tracking.outcome.reason})`} · {tracking.frames.length} fotogramas con datos
-                  {tracking.missingFrames.length ? ` · ${tracking.missingFrames.length} sin detección` : ""}
+                  SAM {tracking.outcome.status === "completed" ? "complete" : `incomplete (${tracking.outcome.reason})`} · {tracking.frames.length} frames with data
+                  {tracking.missingFrames.length ? ` · ${tracking.missingFrames.length} undetected` : ""}
                 </>
               ) : null
             }
           />
         )}
+        <div className={styles.fileRow}>
+          <div className={styles.fileDetails}>
+            <p className={styles.fileName} title={video.originalName}>{video.originalName}</p>
+            <p className={styles.fileMeta}>{video.source.width}×{video.source.height} · {video.source.durationSeconds.toFixed(1)}s · {formatBytes(video.source.sizeBytes)}</p>
+          </div>
+          <Button variant="ghost" size="sm" onClick={onReset} disabled={active} aria-label="Change clip">
+            <HugeiconsIcon icon={ArrowLeftRightIcon} size={14} strokeWidth={1.5} />Change clip
+          </Button>
+        </div>
         <div className="flex flex-wrap items-center justify-between gap-3">
-          <FlowRail current={flowStep(job)} />
+          {job ? <FlowRail current={flowStep(job)} /> : null}
           {tracking && job && !active ? (
             <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-              <Switch checked={diagnostic} onCheckedChange={setDiagnostic} label="Ver tracking" />
-              <span aria-hidden>Ver tracking</span>
+              <Switch checked={diagnostic} onCheckedChange={setDiagnostic} label="Show tracking" />
+              <span aria-hidden>Show tracking</span>
             </span>
           ) : null}
         </div>
       </section>
 
-      <aside className="flex flex-col gap-5 rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-soft)] lg:sticky lg:top-22">
-        <div className="flex items-start justify-between gap-3">
-          <div className="min-w-0">
-            <h1 className="truncate text-sm font-medium" title={video.originalName}>
-              {video.originalName}
-            </h1>
-            <p className="mt-1 text-xs leading-5 text-muted-foreground tabular-nums">
-              {video.source.container.toUpperCase()} · {video.source.codec} · {formatBytes(video.source.sizeBytes)}
-              <br />
-              Original {video.source.width}×{video.source.height} · {video.source.fps} fps · {video.source.durationSeconds.toFixed(1)} s
-            </p>
-          </div>
-          <Button variant="ghost" size="icon-sm" onClick={onReset} disabled={active} aria-label="Quitar video y subir otro">
-            <HugeiconsIcon icon={Delete02Icon} size={16} strokeWidth={1.75} />
-          </Button>
-        </div>
-        <div className="h-px bg-border" />
-
+      <aside className={styles.controls}>
+        <h2 className={styles.heading}>Make it your own.</h2>
         <motion.div
           key={panelKey}
           ref={panelRef}
           tabIndex={-1}
-          initial={{ opacity: 0, y: 6 }}
+          initial={reducedMotion ? false : { opacity: 0, y: 6 }}
           animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.22, ease: EASE_OUT }}
+          transition={{ duration: reducedMotion ? 0 : 0.22, ease: EASE_OUT }}
           className="flex flex-col gap-5 outline-none"
         >
           {job && active ? (
@@ -257,17 +263,13 @@ export function EditorView({
           {showComposer ? (
             <>
               {job?.status === "failed" && job.error ? (
-                <ErrorBanner message={job.error.message} onRetry={() => void submit()} onDismiss={reset} />
+                <EditorNotice title="Edit couldn’t be completed" description={editorErrorMessage(job.error.code)} action={{ label: "Retry", onClick: () => void submit() }} />
               ) : null}
               {job?.status === "awaiting_clarification" ? (
-                <Alert tone="info" title="Necesitamos un detalle más">
-                  {job.detail} Escríbelo en la instrucción y vuelve a generar.
-                </Alert>
+                <EditorNotice status="info" title="Add one more detail" description={`${job.detail ?? ""} Add it to your instruction and generate again.`.trim()} />
               ) : null}
               {job?.status === "canceled" ? (
-                <Alert tone="info" size="sm">
-                  Proceso cancelado. Lo ya calculado queda guardado: ajusta la instrucción y vuelve a generar.
-                </Alert>
+                <EditorNotice status="info" title="Editing canceled" description="Your progress is saved. Adjust your instruction and generate again." duration={4200} />
               ) : null}
               <Composer
                 effect={effect}
@@ -282,7 +284,8 @@ export function EditorView({
           ) : null}
         </motion.div>
 
-        {failure || pollError ? <ErrorBanner message={failure ?? pollError} onDismiss={() => setFailure(null)} /> : null}
+        {failure ? <EditorNotice title="Action couldn’t be completed" description={failure} /> : null}
+        {pollError ? <EditorNotice title="Connection interrupted" description={pollError} /> : null}
       </aside>
 
       {result ? (
@@ -291,6 +294,6 @@ export function EditorView({
           <DownloadButton url={result.render.urls.download} />
         </div>
       ) : null}
-    </main>
+    </section>
   );
 }

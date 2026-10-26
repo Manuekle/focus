@@ -52,3 +52,15 @@ export async function usageSummary() {
     recent: entries.slice(-20).reverse(),
   };
 }
+
+/** SAM frames billed since a moment (cache hits excluded): the processing budget. */
+export async function samFramesSince(since: Date): Promise<number> {
+  const raw = await readFile(usageFile(), "utf8").catch(() => "");
+  let total = 0;
+  for (const line of raw.split("\n")) {
+    if (!line) continue;
+    const entry = JSON.parse(line) as UsageEntry;
+    if (entry.kind === "segment" && !entry.cached && new Date(entry.at) >= since) total += entry.videoFramesProcessed ?? 0;
+  }
+  return total;
+}
