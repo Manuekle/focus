@@ -13,6 +13,8 @@ pnpm dev
 - http://localhost:3200 — **editor de video Focus** ("Make anything stand out."). Requiere `ffmpeg` y `ffprobe` en el `PATH` (o `FFMPEG_PATH` / `FFPROBE_PATH`). Los videos subidos se guardan en `.focus-data/` (ignorado por git; cambia la ruta con `FOCUS_DATA_DIR`).
 - http://localhost:3200/system — catálogo del design system. No requiere cuentas ni backend; sus ejemplos conservan datos solo en memoria. El sonido está desactivado inicialmente; puedes activarlo desde la barra del catálogo.
 
+IA (Meta Model API, solo en servidor): define `MODEL_API_KEY` en `.env` (también se acepta `META_API_KEY`; ver `.env.example`). Muse Spark 1.3 convierte la instrucción en un plan validado con Zod; SAM 3.1 segmenta y sigue el sujeto sobre el video normalizado. Planes y máscaras se guardan por video en `.focus-data/` y se reutilizan; `GET /api/usage` muestra llamadas, aciertos de caché, tokens y fotogramas de SAM. `pnpm test` no hace llamadas pagas; `pnpm test:live` sí (una llamada a Muse Spark y una pasada de SAM de ~50 fotogramas).
+
 Arquitectura del editor: `app/_editor` (UI del workspace), `app/api` (rutas), `server/` (FFmpeg, almacenamiento, contratos de Meta AI y del compositor), `shared/` (límites de media y esquemas Zod). Identidad aplicada: [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md). `pnpm test` ejecuta Vitest, incluida una prueba de ingesta real con FFmpeg.
 
 ## Qué incluye

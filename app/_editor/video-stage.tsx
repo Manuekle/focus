@@ -1,13 +1,26 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { PauseIcon, PlayIcon, VolumeHighIcon, VolumeMute01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { formatSeconds } from "../../shared/media";
 import type { VideoAsset } from "../../shared/schemas";
 
 /** The centerpiece: the normalized video exactly as the pipeline will read it. */
-export function VideoStage({ video }: { readonly video: VideoAsset }) {
+export function VideoStage({
+  video,
+  overlay,
+  hud,
+  tools,
+}: {
+  readonly video: VideoAsset;
+  /** Drawn exactly over the video frame (same box), e.g. the tracking overlay. */
+  readonly overlay?: (videoRef: RefObject<HTMLVideoElement | null>) => ReactNode;
+  /** Small status line pinned to the top-left of the frame. */
+  readonly hud?: ReactNode;
+  /** Extra controls in the caption bar. */
+  readonly tools?: ReactNode;
+}) {
   const ref = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
   const [muted, setMuted] = useState(true);
@@ -48,6 +61,7 @@ export function VideoStage({ video }: { readonly video: VideoAsset }) {
   return (
     <figure className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-soft)]">
       <div className="relative grid place-items-center bg-[var(--editor-stage)]">
+        <div className="relative max-w-full">
         <video
           ref={ref}
           src={video.urls.preview}
@@ -70,6 +84,13 @@ export function VideoStage({ video }: { readonly video: VideoAsset }) {
           className="block h-auto max-h-[min(68dvh,720px)] w-auto max-w-full cursor-pointer"
           aria-label={`Vista previa de ${video.originalName}`}
         />
+        {overlay?.(ref)}
+        {hud ? (
+          <div className="pointer-events-none absolute top-2 left-2 rounded-md bg-[rgb(20_22_30/0.82)] px-2 py-1 text-[11px] leading-4 text-white tabular-nums">
+            {hud}
+          </div>
+        ) : null}
+        </div>
         {failed ? (
           <p className="absolute inset-x-6 bottom-6 rounded-lg bg-card px-4 py-3 text-sm text-foreground shadow-[var(--shadow-elevated)]">
             El navegador no pudo reproducir la vista previa. Recarga la página o vuelve a subir el video.
@@ -112,7 +133,8 @@ export function VideoStage({ video }: { readonly video: VideoAsset }) {
             <HugeiconsIcon icon={muted ? VolumeMute01Icon : VolumeHighIcon} size={17} strokeWidth={1.75} />
           </button>
         ) : null}
-        <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground sm:inline">
+        {tools}
+        <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground xl:inline">
           {width}×{height} · {fps} fps
         </span>
       </figcaption>

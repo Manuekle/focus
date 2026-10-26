@@ -1,13 +1,10 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useRef, useState } from "react";
-import { Delete02Icon } from "@hugeicons/core-free-icons";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { FocusMark } from "../../components/icons/focus-mark";
-import { HugeiconsIcon } from "../../components/icons/icon";
 import { FileUpload, type FileUploadItem } from "../../components/motion/file-upload";
 import { ThemeToggle } from "../../components/motion/theme-toggle";
-import { Button } from "../../components/ui/button";
 import { ErrorBanner } from "../../components/ui/error-banner";
 import { useToast } from "../../components/toast-provider";
 import {
@@ -17,11 +14,10 @@ import {
   formatBytes,
   formatSeconds,
 } from "../../shared/media";
-import { ApiErrorBodySchema, type EffectId, type VideoAsset } from "../../shared/schemas";
+import { VideoAssetSchema, type EffectId, type VideoAsset } from "../../shared/schemas";
 import { Composer } from "./composer";
-import { FlowRail } from "./flow-rail";
+import { EditorView } from "./editor-view";
 import { UploadError, checkFileLocally, uploadVideo } from "./upload";
-import { VideoStage } from "./video-stage";
 
 type Failure = { readonly message: string; readonly detail?: string; readonly retry?: () => void };
 
@@ -35,9 +31,28 @@ export function Workspace() {
   const [failure, setFailure] = useState<Failure | null>(null);
   const [effect, setEffect] = useState<EffectId>("reality-shift");
   const [prompt, setPrompt] = useState("");
-  const [submitting, setSubmitting] = useState(false);
   const abortRef = useRef<(() => void) | null>(null);
   const { toast } = useToast();
+
+  // The current video lives in the URL (?v=id), so a reload keeps the clip
+  // and every cached plan and mask that belongs to it.
+  useEffect(() => {
+    const id = new URLSearchParams(window.location.search).get("v");
+    if (!id) return;
+    fetch(`/api/videos/${encodeURIComponent(id)}`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => {
+        const parsed = VideoAssetSchema.safeParse(body);
+        if (parsed.success) setStage({ kind: "ready", video: parsed.data });
+        else window.history.replaceState(null, "", window.location.pathname);
+      })
+      .catch(() => undefined);
+  }, []);
+
+  useEffect(() => {
+    const url = stage.kind === "ready" ? `${window.location.pathname}?v=${stage.video.id}` : window.location.pathname;
+    if (stage.kind !== "uploading" && `${window.location.pathname}${window.location.search}` !== url) window.history.replaceState(null, "", url);
+  }, [stage]);
 
   const start = useCallback(async (file: File) => {
     setFailure(null);
@@ -78,27 +93,6 @@ export function Workspace() {
     setFailure(null);
   }, [stage]);
 
-  const submit = useCallback(async () => {
-    if (stage.kind !== "ready") return;
-    setSubmitting(true);
-    setFailure(null);
-    try {
-      const response = await fetch("/api/edits", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ videoId: stage.video.id, effect, prompt }),
-      });
-      if (!response.ok) {
-        const body = ApiErrorBodySchema.safeParse(await response.json().catch(() => null));
-        setFailure({ message: body.success ? body.data.error.message : "No pudimos iniciar la edición. Vuelve a intentarlo." });
-      }
-    } catch {
-      setFailure({ message: "Sin conexión con el servidor. Revisa tu red y vuelve a intentarlo." });
-    } finally {
-      setSubmitting(false);
-    }
-  }, [effect, prompt, stage]);
-
   return (
     <div className="flex min-h-dvh flex-col bg-background text-foreground">
       <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-border bg-[color-mix(in_srgb,var(--background)_94%,transparent)] px-4 backdrop-blur-[10px] sm:px-8">
@@ -112,40 +106,15 @@ export function Workspace() {
       </header>
 
       {stage.kind === "ready" ? (
-        <main className="mx-auto grid w-full max-w-[1440px] flex-1 gap-6 px-4 py-6 sm:px-8 lg:grid-cols-[minmax(0,1fr)_380px] lg:items-start">
-          <section aria-label="Video" className="flex min-w-0 flex-col gap-3">
-            <VideoStage key={stage.video.id} video={stage.video} />
-            <FlowRail current="describe" />
-          </section>
-          <aside className="flex flex-col gap-5 rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-soft)] lg:sticky lg:top-22">
-            <div className="flex items-start justify-between gap-3">
-              <div className="min-w-0">
-                <h1 className="truncate text-sm font-medium" title={stage.video.originalName}>
-                  {stage.video.originalName}
-                </h1>
-                <p className="mt-1 text-xs leading-5 text-muted-foreground tabular-nums">
-                  {stage.video.source.container.toUpperCase()} · {stage.video.source.codec} · {formatBytes(stage.video.source.sizeBytes)}
-                  <br />
-                  Original {stage.video.source.width}×{stage.video.source.height} · {stage.video.source.fps} fps · {stage.video.source.durationSeconds.toFixed(1)} s
-                </p>
-              </div>
-              <Button variant="ghost" size="icon-sm" onClick={() => void reset()} aria-label="Quitar video y subir otro">
-                <HugeiconsIcon icon={Delete02Icon} size={16} strokeWidth={1.75} />
-              </Button>
-            </div>
-            <div className="h-px bg-border" />
-            <Composer
-              effect={effect}
-              onEffectChange={setEffect}
-              prompt={prompt}
-              onPromptChange={setPrompt}
-              onSubmit={() => void submit()}
-              disabled={false}
-              busy={submitting}
-            />
-            {failure ? <ErrorBanner message={failure.message} detail={failure.detail} onDismiss={() => setFailure(null)} /> : null}
-          </aside>
-        </main>
+        <EditorView
+          key={stage.video.id}
+          video={stage.video}
+          effect={effect}
+          onEffectChange={setEffect}
+          prompt={prompt}
+          onPromptChange={setPrompt}
+          onReset={() => void reset()}
+        />
       ) : (
         <main className="mx-auto flex w-full max-w-[720px] flex-1 flex-col px-4 pt-14 pb-16 sm:px-6 sm:pt-20">
           <p className="flex items-center gap-2 text-xs text-muted-foreground">

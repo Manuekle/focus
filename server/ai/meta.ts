@@ -1,15 +1,14 @@
-import type { EditPlan, EditRequest, NormalizedMedia } from "../../shared/schemas";
+import OpenAI from "openai";
 import { AppError } from "../errors";
 
-// Service boundaries for Meta AI. Phase 1 defines the contracts only; the
-// real clients (Muse Spark for planning, SAM 3.1 for segmentation) land in
-// Phase 2. Nothing here returns placeholder results.
+// Meta Model API access. Server-only: the key never leaves this process.
 //
 // Responsibility split:
-//   Planner   — understands the instruction, returns a validated EditPlan.
-//   Segmenter — receives a concrete concept and the normalized video, returns
-//               per-frame masks aligned to the normalized frame indexing.
-//   Renderer  — deterministic compositing (server/video/renderer.ts).
+//   Planner   (planner.ts) — Muse Spark understands the instruction and returns
+//                            a validated EditPlan.
+//   Segmenter (sam.ts)     — SAM 3.1 receives a concrete concept or point
+//                            prompt and returns tracked masks.
+//   Renderer  (../video)   — deterministic compositing.
 
 export type MetaConfig = {
   readonly apiKey: string;
@@ -24,8 +23,8 @@ export const META_DEFAULTS = {
   segmentationModel: "sam-3.1",
 } as const;
 
-/** Server-only. Returns null when no key is configured. */
-export function readMetaConfig(env: NodeJS.ProcessEnv = process.env): MetaConfig | null {
+/** Returns null when no key is configured. */
+export function readMetaConfig(env: Readonly<Record<string, string | undefined>> = process.env): MetaConfig | null {
   // MODEL_API_KEY is the documented name; META_API_KEY is what the existing
   // local .env uses.
   const apiKey = env.MODEL_API_KEY ?? env.META_API_KEY;
@@ -46,33 +45,85 @@ export function requireMetaConfig(): MetaConfig {
   return config;
 }
 
-export interface EditPlanner {
-  /** Interprets a natural-language instruction. Output is parsed with EditPlanSchema. */
-  plan(request: EditRequest, context: { readonly posterPath: string; readonly media: NormalizedMedia }): Promise<EditPlan>;
+let cached: { key: string; client: OpenAI } | null = null;
+
+export function metaClient(config: MetaConfig = requireMetaConfig()): OpenAI {
+  if (cached?.key === config.apiKey) return cached.client;
+  // Retries are ours (withRetry), so they stay bounded and visible in usage.
+  const client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseUrl, maxRetries: 0, timeout: 180_000 });
+  cached = { key: config.apiKey, client };
+  return client;
 }
 
-/** One mask per normalized frame, same width/height as NormalizedMedia. */
-export type MaskFrame = {
-  readonly frameIndex: number;
-  /** Path to a single-channel PNG on local disk. */
-  readonly maskPath: string;
-  readonly score: number;
-};
-
-export type SegmentationResult = {
-  readonly concept: string;
-  readonly objectCount: number;
-  readonly frames: readonly MaskFrame[];
-};
-
-export interface VideoSegmenter {
-  segment(input: {
-    readonly normalizedVideoPath: string;
-    readonly media: NormalizedMedia;
-    readonly concept: string;
-    readonly selection: EditPlan["target"]["selection"];
-    readonly outputDir: string;
-    readonly signal?: AbortSignal;
-    readonly onProgress?: (fraction: number) => void;
-  }): Promise<SegmentationResult>;
+/** Translates SDK errors into messages the editor can show. */
+export function metaError(error: unknown, what: string): AppError {
+  if (error instanceof AppError) return error;
+  if (error instanceof OpenAI.APIUserAbortError || (error instanceof Error && error.name === "AbortError")) {
+    return new AppError("canceled", 499, "Proceso cancelado.");
+  }
+  if (error instanceof OpenAI.APIError) {
+    const status = error.status ?? 502;
+    if (status === 401) return new AppError("meta_unauthorized", 502, "Meta AI rechazó la clave de API. Revisa MODEL_API_KEY.");
+    if (status === 402 || status === 403) return new AppError("meta_forbidden", 502, "La cuenta de Meta AI no tiene acceso o créditos para esta operación.");
+    if (status === 404) return new AppError("meta_model_not_found", 502, "El modelo de Meta AI no está disponible para esta cuenta.");
+    if (status === 429) return new AppError("meta_rate_limited", 429, "Meta AI está limitando las solicitudes. Espera un momento y vuelve a intentarlo.");
+    if (status === 400) return new AppError("meta_bad_request", 502, `Meta AI no aceptó la solicitud de ${what}.`, error.message);
+    return new AppError("meta_unavailable", 502, `Meta AI no respondió correctamente durante ${what}. Vuelve a intentarlo.`, error.message);
+  }
+  if (error instanceof OpenAI.APIConnectionError) {
+    return new AppError("meta_unreachable", 502, "No pudimos conectar con Meta AI. Revisa la conexión del servidor.");
+  }
+  return new AppError("meta_failed", 502, `Falló ${what}.`, error instanceof Error ? error.message : undefined);
 }
+
+function retryable(error: unknown): boolean {
+  if (error instanceof OpenAI.APIUserAbortError) return false;
+  if (error instanceof OpenAI.APIConnectionError) return true;
+  if (error instanceof OpenAI.APIError) return error.status === 429 || (error.status ?? 0) >= 500;
+  return false;
+}
+
+/** At most `attempts` tries, exponential backoff, only for transient failures. */
+export async function withRetry<T>(
+  run: () => Promise<T>,
+  { attempts = 3, baseDelayMs = 800, signal }: { attempts?: number; baseDelayMs?: number; signal?: AbortSignal } = {},
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt < attempts; attempt++) {
+    if (signal?.aborted) throw new OpenAI.APIUserAbortError();
+    try {
+      return await run();
+    } catch (error) {
+      lastError = error;
+      if (!retryable(error) || attempt === attempts - 1) throw error;
+      await new Promise((resolve) => setTimeout(resolve, baseDelayMs * 2 ** attempt));
+    }
+  }
+  throw lastError;
+}
+
+/** A tiny FIFO semaphore: expensive calls queue instead of piling onto the API. */
+export class Limiter {
+  private active = 0;
+  private readonly queue: (() => void)[] = [];
+  constructor(private readonly max: number) {}
+
+  async run<T>(task: () => Promise<T>): Promise<T> {
+    if (this.active >= this.max) await new Promise<void>((resolve) => this.queue.push(resolve));
+    this.active++;
+    try {
+      return await task();
+    } finally {
+      this.active--;
+      this.queue.shift()?.();
+    }
+  }
+}
+
+// Shared across route bundles for the same reason as the job runtime.
+const limiters = ((globalThis as { __focusLimiters?: { planner: Limiter; segmentation: Limiter } }).__focusLimiters ??= {
+  planner: new Limiter(2),
+  segmentation: new Limiter(1),
+});
+export const plannerLimiter = limiters.planner;
+export const segmentationLimiter = limiters.segmentation;

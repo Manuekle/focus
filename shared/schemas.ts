@@ -62,16 +62,41 @@ export const EditRequestSchema = z.object({
 export type EditRequest = z.infer<typeof EditRequestSchema>;
 
 /**
+ * A SAM concept prompt: one short noun phrase, never an instruction. Letters,
+ * digits, spaces, hyphens and apostrophes only, at most six words.
+ */
+export const ConceptSchema = z
+  .string()
+  .trim()
+  .toLowerCase()
+  .min(1)
+  .max(60)
+  .regex(/^[\p{L}\p{N}][\p{L}\p{N} '\-]*$/u, "Concept must be a plain noun phrase")
+  .refine((value) => value.split(/\s+/).length <= 6, "Concept must be at most six words");
+
+export const PlanEffectSchema = z.enum(["selective_color", "background_blur", "break_frame", "motion_echo"]);
+export type PlanEffect = z.infer<typeof PlanEffectSchema>;
+
+/** Which plan effects each editor effect may resolve to. */
+export const EFFECT_PLAN_EFFECTS: Record<EffectId, readonly PlanEffect[]> = {
+  "reality-shift": ["selective_color", "background_blur"],
+  "break-the-frame": ["break_frame"],
+  "motion-echo": ["motion_echo"],
+};
+
+/**
  * What the planner model may return. Constrained to supported operations; the
  * compositor never receives free-form arguments from a model.
  */
 export const EditPlanSchema = z.object({
+  supported: z.boolean(),
+  unsupportedReason: z.string().max(240).optional(),
   target: z.object({
-    concept: z.string().trim().min(1).max(80),
+    concept: ConceptSchema,
     selection: z.enum(["single", "all"]),
     description: z.string().max(240).optional(),
   }),
-  effect: z.enum(["selective_color", "background_blur", "break_frame", "motion_echo"]),
+  effect: PlanEffectSchema,
   parameters: z.object({
     intensity: z.number().min(0).max(1).optional(),
     trailCount: z.number().int().min(2).max(8).optional(),
@@ -82,28 +107,66 @@ export const EditPlanSchema = z.object({
 });
 export type EditPlan = z.infer<typeof EditPlanSchema>;
 
-/** Pipeline stages after upload, in order. Upload and Describe happen in the client. */
-export const PipelineStageSchema = z.enum(["identify", "track", "transform", "preview", "export"]);
-export type PipelineStage = z.infer<typeof PipelineStageSchema>;
-
-export const JobStatusSchema = z.enum(["queued", "running", "completed", "failed", "cancelled"]);
+export const JobStatusSchema = z.enum([
+  "uploaded",
+  "validating",
+  "preparing",
+  "interpreting",
+  "segmenting",
+  "awaiting_clarification",
+  "awaiting_selection",
+  "ready_to_render",
+  "rendering",
+  "completed",
+  "failed",
+  "canceled",
+]);
 export type JobStatus = z.infer<typeof JobStatusSchema>;
+
+export const ACTIVE_JOB_STATUSES: readonly JobStatus[] = ["uploaded", "validating", "preparing", "interpreting", "segmenting", "rendering"];
+
+export const TrackedObjectSummarySchema = z.object({
+  id: z.string(),
+  framesPresent: z.number().int().nonnegative(),
+  firstFrame: z.number().int().nonnegative(),
+  lastFrame: z.number().int().nonnegative(),
+  meanConfidence: z.number().min(0).max(1).nullable(),
+  meanArea: z.number().nonnegative(),
+  source: z.enum(["concept", "point"]),
+});
+export type TrackedObjectSummary = z.infer<typeof TrackedObjectSummarySchema>;
 
 export const EditJobSchema = z.object({
   id: z.uuid(),
   videoId: VideoIdSchema,
   request: EditRequestSchema,
   status: JobStatusSchema,
-  stage: PipelineStageSchema.nullable(),
+  /** Human-readable step currently running, for the processing panel. */
+  detail: z.string().nullable(),
   /** 0–1 across the whole job. */
   progress: z.number().min(0).max(1),
   plan: EditPlanSchema.nullable(),
+  segmentationId: z.string().nullable(),
+  objects: z.array(TrackedObjectSummarySchema),
+  selection: z.array(z.string()),
+  /** True when plan and/or masks came from cache instead of a new API call. */
+  reused: z.object({ plan: z.boolean(), segmentation: z.boolean() }),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
   resultUrl: z.string().nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
 });
 export type EditJob = z.infer<typeof EditJobSchema>;
+
+export const SelectionRequestSchema = z.object({
+  objectIds: z.array(z.string().max(16)).min(1).max(16),
+});
+
+export const RefineRequestSchema = z.object({
+  frameIndex: z.number().int().nonnegative(),
+  point: z.object({ x: z.number().int().nonnegative(), y: z.number().int().nonnegative() }),
+});
+export type RefineRequest = z.infer<typeof RefineRequestSchema>;
 
 export const ApiErrorBodySchema = z.object({
   error: z.object({
