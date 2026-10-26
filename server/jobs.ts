@@ -97,7 +97,9 @@ async function readJob(id: string): Promise<EditJob> {
 }
 
 async function saveJob(job: EditJob): Promise<EditJob> {
-  const next = { ...job, updatedAt: new Date().toISOString() };
+  // A phase only describes running work.
+  const phase = ACTIVE_JOB_STATUSES.includes(job.status) ? job.phase : null;
+  const next = { ...job, phase, updatedAt: new Date().toISOString() };
   await writeJson(jobPath(job.id), next);
   return next;
 }
@@ -120,7 +122,7 @@ function patchJob(id: string, patch: Partial<EditJob>): Promise<EditJob> {
 }
 
 /** A progress-only update: dropped once the job has left its active state. */
-function patchProgress(id: string, patch: Pick<EditJob, "progress"> & Partial<Pick<EditJob, "detail">>): Promise<unknown> {
+function patchProgress(id: string, patch: Pick<EditJob, "progress"> & Partial<Pick<EditJob, "detail" | "phase">>): Promise<unknown> {
   return withJobLock(id, async () => {
     const current = await readJob(id);
     if (current.status !== "segmenting") return current;
@@ -177,6 +179,7 @@ export async function createJob(request: EditRequest): Promise<EditJob> {
     request,
     status: "interpreting",
     detail: "Interpretando la instrucción con Muse Spark",
+    phase: "understanding",
     progress: 0.05,
     plan: null,
     segmentationId: null,
@@ -323,7 +326,8 @@ async function runJob(id: string, video: VideoAsset, request: EditRequest, key: 
   await patchJob(id, {
     plan,
     status: "segmenting",
-    detail: `Buscando y siguiendo «${plan.target.concept}» con SAM 3.1`,
+    detail: `Buscando «${plan.target.concept}» con SAM 3.1`,
+    phase: "finding",
     progress: 0.15,
     reused: { plan: planReused, segmentation: false },
   });
@@ -339,7 +343,7 @@ async function runJob(id: string, video: VideoAsset, request: EditRequest, key: 
       // Throttled: progress is written at most every 400 ms.
       if (Date.now() - lastWrite < 400) return;
       lastWrite = Date.now();
-      void patchProgress(id, { progress: 0.15 + fraction * 0.8, detail: `Siguiendo «${plan.target.concept}» · ${Math.round(fraction * video.normalized.frameCount)}/${video.normalized.frameCount} fotogramas` });
+      void patchProgress(id, { progress: 0.15 + fraction * 0.8, phase: "tracking", detail: `Siguiendo «${plan.target.concept}» · ${Math.round(fraction * video.normalized.frameCount)}/${video.normalized.frameCount} fotogramas` });
     },
   );
   if (signal.aborted) return;
@@ -362,6 +366,7 @@ async function runJob(id: string, video: VideoAsset, request: EditRequest, key: 
     // ready_to_render a poller could mistake for a resting state.
     status: autoSelect.length ? "rendering" : "awaiting_selection",
     detail: autoSelect.length ? "Preparando el render" : `Encontramos ${ids.length} coincidencias. Elige cuál destacar.`,
+    phase: autoSelect.length ? "applying" : null,
     progress: autoSelect.length ? 0 : 1,
     segmentationId,
     objects: tracking.objects,
@@ -394,7 +399,7 @@ async function renderJob(id: string, video: VideoAsset, requested: RenderParams 
   const segmentationId = job.segmentationId;
   const selection = job.selection;
   const key = renderKey(segmentationId, selection, params);
-  await patchJob(id, { status: "rendering", detail: "Preparando el render", progress: 0, params, error: null });
+  await patchJob(id, { status: "rendering", detail: "Preparando el render", phase: "applying", progress: 0, params, error: null });
 
   const dir = path.join(videoDir(video.id), "renders", key);
   const cached = await readFile(path.join(dir, "meta.json"), "utf8").then((raw) => RenderResultSchema.safeParse(JSON.parse(raw)), () => null);
@@ -421,15 +426,18 @@ async function renderJob(id: string, video: VideoAsset, requested: RenderParams 
               outputDir: temp,
               signal,
               onProgress: (fraction) => {
-                if (Date.now() - lastWrite < 300) return;
+                const done = fraction >= 1;
+                // Throttled, except the last frame: that is the encoding signal.
+                if (!done && Date.now() - lastWrite < 300) return;
                 lastWrite = Date.now();
                 void patchRender(id, {
                   progress: fraction * 0.9,
-                  detail: `Renderizando · ${Math.round(fraction * video.normalized.frameCount)}/${video.normalized.frameCount} fotogramas`,
+                  phase: done ? "encoding" : "applying",
+                  detail: done ? "Cerrando el MP4" : `Aplicando el efecto · ${Math.round(fraction * video.normalized.frameCount)}/${video.normalized.frameCount} fotogramas`,
                 });
               },
             });
-            void patchRender(id, { progress: 0.92, detail: "Verificando la exportación" });
+            void patchRender(id, { progress: 0.92, phase: "encoding", detail: "Verificando el MP4" });
             const verified = await verifyOutput(path.join(temp, "output.mp4"), {
               width: output.width,
               height: output.height,
@@ -437,7 +445,7 @@ async function renderJob(id: string, video: VideoAsset, requested: RenderParams 
               frameCount: video.normalized.frameCount,
               hasAudio: video.normalized.hasAudio,
             });
-            void patchRender(id, { progress: 0.95, detail: "Preparando la comparación" });
+            void patchRender(id, { progress: 0.95, phase: "encoding", detail: "Preparando la comparación" });
             await renderComparison({
               normalizedPath: path.join(videoDir(video.id), VIDEO_FILES.normalized),
               outputPath: path.join(temp, "output.mp4"),
@@ -489,7 +497,7 @@ async function renderJob(id: string, video: VideoAsset, requested: RenderParams 
 }
 
 /** A render progress update: dropped once the job left the rendering state. */
-function patchRender(id: string, patch: Pick<EditJob, "progress"> & Partial<Pick<EditJob, "detail">>): Promise<unknown> {
+function patchRender(id: string, patch: Pick<EditJob, "progress"> & Partial<Pick<EditJob, "detail" | "phase">>): Promise<unknown> {
   return withJobLock(id, async () => {
     const current = await readJob(id);
     if (current.status !== "rendering") return current;
@@ -511,7 +519,7 @@ export async function startRender(id: string, requested?: RenderParams): Promise
     }
   }
   const video = await getVideo(job.videoId);
-  const updated = await withJobLock(id, () => saveJob({ ...job, status: "rendering", detail: "Preparando el render", progress: 0, error: null }));
+  const updated = await withJobLock(id, () => saveJob({ ...job, status: "rendering", detail: "Preparando el render", phase: "applying", progress: 0, error: null }));
   start(id, (signal) => renderJob(id, video, params, signal));
   return updated;
 }
@@ -576,7 +584,7 @@ export async function refineWithPoint(id: string, refine: RefineRequest): Promis
   const objectId = 100 + pointObjects;
   const pointId = `p-${hash(`${refine.frameIndex}:${refine.point.x}:${refine.point.y}`)}`;
   const previous = job.segmentationId;
-  const updated = await saveJob({ ...job, status: "segmenting", detail: "Segmentando el punto elegido con SAM 3.1", progress: 0.2 });
+  const updated = await saveJob({ ...job, status: "segmenting", detail: "Segmentando el punto elegido con SAM 3.1", phase: "finding", progress: 0.2 });
 
   start(id, async (signal) => {
     const { tracking: extra } = await trackingFor(
@@ -584,7 +592,7 @@ export async function refineWithPoint(id: string, refine: RefineRequest): Promis
       pointId,
       { kind: "point", objectId, frameIndex: refine.frameIndex, point: refine.point },
       signal,
-      (fraction) => void patchProgress(id, { progress: 0.2 + fraction * 0.75 }),
+      (fraction) => void patchProgress(id, { progress: 0.2 + fraction * 0.75, phase: "tracking" }),
     );
     if (signal.aborted) return;
     if (extra.objects.length === 0) {
@@ -635,7 +643,7 @@ export async function fillGaps(id: string): Promise<EditJob> {
   const previousStatus = job.status;
   const extraId = `g-${hash(`${job.segmentationId}|${JSON.stringify(targets)}`)}`;
   const mergedId = `${job.segmentationId.split("+")[0]}+${extraId}`;
-  const updated = await withJobLock(id, () => saveJob({ ...job, status: "segmenting", detail: "Completando el seguimiento con SAM 3.1", progress: 0.15, error: null }));
+  const updated = await withJobLock(id, () => saveJob({ ...job, status: "segmenting", detail: "Completando el seguimiento con SAM 3.1", phase: "finding", progress: 0.15, error: null }));
 
   start(id, async (signal) => {
     const { tracking: extra } = await trackingFor(
@@ -643,7 +651,7 @@ export async function fillGaps(id: string): Promise<EditJob> {
       extraId,
       { kind: "box", objects: targets },
       signal,
-      (fraction) => void patchProgress(id, { progress: 0.15 + fraction * 0.8, detail: `Completando el seguimiento · ${Math.round(fraction * frameCount)}/${frameCount} fotogramas` }),
+      (fraction) => void patchProgress(id, { progress: 0.15 + fraction * 0.8, phase: "tracking", detail: `Completando el seguimiento · ${Math.round(fraction * frameCount)}/${frameCount} fotogramas` }),
     );
     if (signal.aborted) return;
     const merged = fillTracking(base, extra, targets.map((target) => String(target.id)));
@@ -651,6 +659,7 @@ export async function fillGaps(id: string): Promise<EditJob> {
     await patchJob(id, {
       status: wasCompleted ? "rendering" : previousStatus,
       detail: wasCompleted ? "Preparando el render" : null,
+      phase: wasCompleted ? "applying" : null,
       progress: wasCompleted ? 0 : 1,
       segmentationId: mergedId,
       objects: merged.objects,

@@ -76,6 +76,19 @@ export function useJob(initial: EditJob | null) {
     };
   }, [jobId, active]);
 
+  // Tell the person when the browser itself is offline, before polls fail.
+  const [offline, setOffline] = useState(false);
+  useEffect(() => {
+    const update = () => setOffline(!navigator.onLine);
+    update();
+    window.addEventListener("online", update);
+    window.addEventListener("offline", update);
+    return () => {
+      window.removeEventListener("online", update);
+      window.removeEventListener("offline", update);
+    };
+  }, []);
+
   const segmentationId = job?.segmentationId ?? null;
   const ready = job && segmentationId && !active && job.objects.length > 0;
   useEffect(() => {
@@ -93,5 +106,6 @@ export function useJob(initial: EditJob | null) {
     loadedTracking.current = null;
   };
 
-  return { job, setJob, tracking, pollError, reset };
+  const connectionError = offline ? "Sin conexión a internet. El proceso sigue en el servidor; el progreso se actualizará al volver la conexión." : pollError;
+  return { job, setJob, tracking, pollError: connectionError, reset };
 }

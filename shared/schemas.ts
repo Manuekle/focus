@@ -124,6 +124,16 @@ export const JobStatusSchema = z.enum([
 ]);
 export type JobStatus = z.infer<typeof JobStatusSchema>;
 
+/**
+ * understanding: Muse Spark is reading the instruction.
+ * finding:       SAM request sent, no frame back yet.
+ * tracking:      SAM is streaming tracked frames.
+ * applying:      frames are being composited.
+ * encoding:      all frames written; encoder flush, verification, comparison.
+ */
+export const JobPhaseSchema = z.enum(["understanding", "finding", "tracking", "applying", "encoding"]);
+export type JobPhase = z.infer<typeof JobPhaseSchema>;
+
 export const ACTIVE_JOB_STATUSES: readonly JobStatus[] = ["uploaded", "validating", "preparing", "interpreting", "segmenting", "rendering"];
 
 export const TrackedObjectSummarySchema = z.object({
@@ -144,6 +154,8 @@ export const EditJobSchema = z.object({
   status: JobStatusSchema,
   /** Human-readable step currently running, for the processing panel. */
   detail: z.string().nullable(),
+  /** Which real stage is running, from actual processing signals. */
+  phase: JobPhaseSchema.nullable().default(null),
   /** 0–1 across the whole job. */
   progress: z.number().min(0).max(1),
   plan: EditPlanSchema.nullable(),

@@ -103,7 +103,7 @@ export function VideoStage({
           type="button"
           onClick={toggle}
           aria-label={playing ? "Pausar" : "Reproducir"}
-          className="grid size-8 shrink-0 place-items-center rounded-lg text-foreground transition-colors hover:bg-muted"
+          className="grid size-8 shrink-0 place-items-center rounded-lg text-foreground transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring"
         >
           <HugeiconsIcon icon={playing ? PauseIcon : PlayIcon} size={18} strokeWidth={1.75} />
         </button>
@@ -128,7 +128,7 @@ export function VideoStage({
             onClick={() => setMuted((value) => !value)}
             aria-label={muted ? "Activar sonido" : "Silenciar"}
             aria-pressed={!muted}
-            className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             <HugeiconsIcon icon={muted ? VolumeMute01Icon : VolumeHighIcon} size={17} strokeWidth={1.75} />
           </button>

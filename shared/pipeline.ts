@@ -16,24 +16,25 @@ export const EFFECTS: readonly {
   readonly id: EffectId;
   readonly name: string;
   readonly summary: string;
-  readonly example: string;
+  /** Short, real instructions this effect handles well. */
+  readonly examples: readonly string[];
 }[] = [
   {
     id: "reality-shift",
     name: "Reality Shift",
-    summary: "Mantiene el sujeto en color y desenfoca o desatura el resto.",
-    example: "Deja al skater en color y el fondo en blanco y negro",
+    summary: "El sujeto conserva su color o su nitidez; el resto pasa a gris o se desenfoca.",
+    examples: ["Deja al skater en color y el resto en gris", "Desenfoca todo menos el perro"],
   },
   {
     id: "break-the-frame",
     name: "Break the Frame",
-    summary: "El sujeto sale del marco interior del video, con profundidad.",
-    example: "Haz que la bailarina salga del cuadro",
+    summary: "El video queda dentro de un marco y el sujeto sale por encima de su borde.",
+    examples: ["Haz que la bailarina salga del cuadro", "Que el corredor rompa el marco"],
   },
   {
     id: "motion-echo",
     name: "Motion Echo",
-    summary: "Siluetas temporales del sujeto en movimiento, como una estela.",
-    example: "Añade estelas de movimiento al corredor",
+    summary: "Copias del sujeto en instantes anteriores dibujan su recorrido. Mejor con cámara fija.",
+    examples: ["Añade estelas al ciclista", "Dale una estela cinematográfica al bailarín"],
   },
 ];

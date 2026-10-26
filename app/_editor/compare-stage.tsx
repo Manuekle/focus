@@ -15,7 +15,14 @@ type Mode = "compare" | "edited";
  * sides can never drift apart. "Editado" plays the exported MP4 itself, with
  * its audio — exactly the file the download button delivers.
  */
-export function CompareStage({ render }: { readonly render: RenderResult }) {
+export function CompareStage({
+  render,
+  updating,
+}: {
+  readonly render: RenderResult;
+  /** A new render is being computed; this one stays visible meanwhile. */
+  readonly updating?: { readonly progress: number; readonly label: string } | null;
+}) {
   const [mode, setMode] = useState<Mode>("compare");
   const [split, setSplit] = useState(50);
   const [playing, setPlaying] = useState(false);
@@ -129,6 +136,16 @@ export function CompareStage({ render }: { readonly render: RenderResult }) {
   return (
     <figure className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-soft)]">
       <div className="relative grid place-items-center bg-[var(--editor-stage)]">
+        {updating ? (
+          <div role="status" className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
+            <span className="flex items-center gap-2 rounded-full bg-[rgb(20_22_30/0.82)] px-3 py-1.5 text-xs text-white tabular-nums shadow-[var(--shadow-elevated)]">
+              <span aria-hidden className="h-1 w-16 overflow-hidden rounded-full bg-white/20">
+                <span className="block h-full rounded-full bg-primary transition-[width] duration-300 ease-out motion-reduce:transition-none" style={{ width: `${Math.round(updating.progress * 100)}%` }} />
+              </span>
+              {updating.label}
+            </span>
+          </div>
+        ) : null}
         <video ref={compareRef} src={render.urls.compare} muted playsInline loop preload="auto" className="hidden" {...mediaEvents} />
         {mode === "compare" ? (
           <div
@@ -184,7 +201,7 @@ export function CompareStage({ render }: { readonly render: RenderResult }) {
       </div>
 
       <figcaption className="flex flex-wrap items-center gap-3 border-t border-border px-3 py-2.5 sm:px-4">
-        <button type="button" onClick={toggle} aria-label={playing ? "Pausar" : "Reproducir"} className="grid size-8 shrink-0 place-items-center rounded-lg text-foreground transition-colors hover:bg-muted">
+        <button type="button" onClick={toggle} aria-label={playing ? "Pausar" : "Reproducir"} className="grid size-8 shrink-0 place-items-center rounded-lg text-foreground transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring">
           <HugeiconsIcon icon={playing ? PauseIcon : PlayIcon} size={18} strokeWidth={1.75} />
         </button>
         <span className="w-[72px] shrink-0 text-xs tabular-nums text-muted-foreground">
@@ -207,7 +224,7 @@ export function CompareStage({ render }: { readonly render: RenderResult }) {
             onClick={() => setMuted((value) => !value)}
             aria-label={muted ? "Activar sonido" : "Silenciar"}
             aria-pressed={!muted}
-            className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
             <HugeiconsIcon icon={muted ? VolumeMute01Icon : VolumeHighIcon} size={17} strokeWidth={1.75} />
           </button>

@@ -114,6 +114,7 @@ describe("Meta client helpers", () => {
     expect(metaError(new OpenAI.AuthenticationError(401, undefined, "no", new Headers()), "x").code).toBe("meta_unauthorized");
     expect(metaError(rateLimited(), "x").code).toBe("meta_rate_limited");
     expect(metaError(new OpenAI.APIUserAbortError(), "x").code).toBe("canceled");
+    expect(metaError(new OpenAI.APIConnectionTimeoutError(), "x").code).toBe("meta_timeout");
   });
 
   it("limits concurrency", async () => {

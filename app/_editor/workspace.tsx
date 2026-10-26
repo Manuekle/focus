@@ -2,6 +2,8 @@
 
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { motion } from "motion/react";
+import { EASE_OUT } from "../../lib/ease";
 import { FocusMark } from "../../components/icons/focus-mark";
 import { FileUpload, type FileUploadItem } from "../../components/motion/file-upload";
 import { ThemeToggle } from "../../components/motion/theme-toggle";
@@ -106,6 +108,7 @@ export function Workspace() {
       </header>
 
       {stage.kind === "ready" ? (
+        <motion.div key={stage.video.id} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ duration: 0.22, ease: EASE_OUT }} className="flex flex-1 flex-col">
         <EditorView
           key={stage.video.id}
           video={stage.video}
@@ -115,22 +118,39 @@ export function Workspace() {
           onPromptChange={setPrompt}
           onReset={() => void reset()}
         />
+        </motion.div>
       ) : (
-        <main className="mx-auto flex w-full max-w-[720px] flex-1 flex-col px-4 pt-14 pb-16 sm:px-6 sm:pt-20">
-          <p className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span aria-hidden className="size-1.5 rounded-full bg-primary" />
-            Editor de video con IA
-          </p>
-          <h1 className="mt-5 text-[clamp(40px,7vw,68px)] leading-[1.04] font-[550]">
-            Make anything
-            <br />
-            stand out.
-          </h1>
-          <p className="mt-5 max-w-[46ch] text-[15px] leading-7 text-muted-foreground">
-            Sube un clip corto, describe qué quieres destacar y Focus aplica el efecto sobre el sujeto, fotograma a fotograma.
-          </p>
+        <motion.main
+          key="empty"
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.2, ease: EASE_OUT }}
+          className="mx-auto grid w-full max-w-[1180px] flex-1 content-start gap-x-14 gap-y-8 px-4 pt-12 pb-16 sm:px-8 lg:grid-cols-[minmax(0,1fr)_minmax(0,520px)] lg:items-start lg:pt-20"
+        >
+          <div className="lg:sticky lg:top-28">
+            <p className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span aria-hidden className="size-1.5 rounded-full bg-primary" />
+              Editor de video con IA · Meta AI
+            </p>
+            <h1 className="mt-5 text-[clamp(40px,6vw,68px)] leading-[1.04] font-[550]">
+              Make anything
+              <br />
+              stand out.
+            </h1>
+            <p className="mt-5 max-w-[40ch] text-[15px] leading-7 text-muted-foreground">
+              Crea efectos de video imposibles con una sola frase.
+            </p>
+            <ol className="mt-8 hidden max-w-[44ch] flex-col gap-2.5 text-sm text-muted-foreground lg:flex">
+              {["Suelta un clip corto.", "Describe qué quieres destacar.", "Mira la transformación y exporta el MP4."].map((step, index) => (
+                <li key={step} className="flex gap-3">
+                  <span className="w-5 shrink-0 text-xs leading-5 text-foreground tabular-nums">{String(index + 1).padStart(2, "0")}</span>
+                  {step}
+                </li>
+              ))}
+            </ol>
+          </div>
 
-          <div className="mt-10">
+          <div className="flex min-w-0 flex-col gap-4">
             <FileUpload
               variant="centered"
               multiple={false}
@@ -144,39 +164,34 @@ export function Workspace() {
               onRemove={() => abortRef.current?.()}
               title="Suelta tu video aquí"
               description={`MP4 o MOV · hasta ${MAX_DURATION_SECONDS} s · ${formatBytes(MAX_UPLOAD_BYTES)} máximo`}
-              browseLabel="Elegir archivo"
-              classNames={{ dropzone: "min-h-64" }}
+              browseLabel="o busca un archivo"
+              classNames={{ dropzone: "min-h-52" }}
             />
             {stage.kind === "uploading" ? (
-              <p role="status" className="mt-3 text-xs text-muted-foreground">
+              <p role="status" className="-mt-1 text-xs text-muted-foreground tabular-nums">
                 {stage.phase === "sending"
-                  ? `Subiendo… ${stage.item.progress ?? 0}%`
-                  : "Validando y normalizando el video (720p · 24 fps · H.264)…"}
+                  ? `Subiendo · ${stage.item.progress ?? 0}%`
+                  : "Preparando el video: validación y normalización a 720p · 24 fps · H.264…"}
               </p>
             ) : null}
             {failure ? (
-              <ErrorBanner
-                className="mt-4"
-                message={failure.message}
-                detail={failure.detail}
-                onRetry={failure.retry}
-                onDismiss={() => setFailure(null)}
-              />
+              <ErrorBanner message={failure.message} detail={failure.detail} onRetry={failure.retry} onDismiss={() => setFailure(null)} />
             ) : null}
-          </div>
 
-          <section aria-label="Edición" className="mt-8 rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-soft)]">
-            <Composer
-              effect={effect}
-              onEffectChange={setEffect}
-              prompt={prompt}
-              onPromptChange={setPrompt}
-              onSubmit={() => undefined}
-              disabled
-              busy={false}
-            />
-          </section>
-        </main>
+            <section aria-label="Edición" className="rounded-2xl border border-border bg-card p-5 shadow-[var(--shadow-soft)]">
+              <Composer
+                effect={effect}
+                onEffectChange={setEffect}
+                prompt={prompt}
+                onPromptChange={setPrompt}
+                onSubmit={() => undefined}
+                canSubmit={false}
+                blockedReason="Sube un video para generar."
+                busy={false}
+              />
+            </section>
+          </div>
+        </motion.main>
       )}
     </div>
   );

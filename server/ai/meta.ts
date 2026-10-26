@@ -61,6 +61,13 @@ export function metaError(error: unknown, what: string): AppError {
   if (error instanceof OpenAI.APIUserAbortError || (error instanceof Error && error.name === "AbortError")) {
     return new AppError("canceled", 499, "Proceso cancelado.");
   }
+  // Connection errors subclass APIError: check them first.
+  if (error instanceof OpenAI.APIConnectionTimeoutError) {
+    return new AppError("meta_timeout", 504, `Meta AI tardó demasiado durante ${what}. Vuelve a intentarlo: lo ya calculado se reutiliza.`);
+  }
+  if (error instanceof OpenAI.APIConnectionError) {
+    return new AppError("meta_unreachable", 502, "No pudimos conectar con Meta AI. Revisa la conexión del servidor.");
+  }
   if (error instanceof OpenAI.APIError) {
     const status = error.status ?? 502;
     if (status === 401) return new AppError("meta_unauthorized", 502, "Meta AI rechazó la clave de API. Revisa MODEL_API_KEY.");
@@ -69,9 +76,6 @@ export function metaError(error: unknown, what: string): AppError {
     if (status === 429) return new AppError("meta_rate_limited", 429, "Meta AI está limitando las solicitudes. Espera un momento y vuelve a intentarlo.");
     if (status === 400) return new AppError("meta_bad_request", 502, `Meta AI no aceptó la solicitud de ${what}.`, error.message);
     return new AppError("meta_unavailable", 502, `Meta AI no respondió correctamente durante ${what}. Vuelve a intentarlo.`, error.message);
-  }
-  if (error instanceof OpenAI.APIConnectionError) {
-    return new AppError("meta_unreachable", 502, "No pudimos conectar con Meta AI. Revisa la conexión del servidor.");
   }
   return new AppError("meta_failed", 502, `Falló ${what}.`, error instanceof Error ? error.message : undefined);
 }

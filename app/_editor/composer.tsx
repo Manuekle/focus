@@ -2,22 +2,27 @@
 
 import { useId } from "react";
 import { MagicWand01Icon } from "@hugeicons/core-free-icons";
+import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
 import { Button } from "../../components/ui/button";
 import { Spinner } from "../../components/ui/spinner";
 import { SuggestionChip } from "../../components/ui/suggestion-chip";
 import { Textarea } from "../../components/ui/textarea";
 import { HugeiconsIcon } from "../../components/icons/icon";
-import { cn } from "../../lib/utils";
 import { EFFECTS } from "../../shared/pipeline";
 import { PROMPT_MAX_LENGTH, PROMPT_MIN_LENGTH, type EffectId } from "../../shared/schemas";
 
+/**
+ * Effect + instruction. The text can be written before a video exists; only
+ * the submit waits for one (`canSubmit`).
+ */
 export function Composer({
   effect,
   onEffectChange,
   prompt,
   onPromptChange,
   onSubmit,
-  disabled,
+  canSubmit,
+  blockedReason,
   busy,
 }: {
   readonly effect: EffectId;
@@ -25,47 +30,36 @@ export function Composer({
   readonly prompt: string;
   readonly onPromptChange: (prompt: string) => void;
   readonly onSubmit: () => void;
-  readonly disabled: boolean;
+  readonly canSubmit: boolean;
+  /** Shown under the button when it cannot submit for a reason other than the text. */
+  readonly blockedReason?: string;
   readonly busy: boolean;
 }) {
   const promptId = useId();
   const hintId = useId();
   const selected = EFFECTS.find((entry) => entry.id === effect) ?? EFFECTS[0];
   const ready = prompt.trim().length >= PROMPT_MIN_LENGTH;
+  const submittable = canSubmit && ready && !busy;
 
   return (
     <form
-      className="flex flex-col gap-5"
+      className="flex flex-col gap-4"
       onSubmit={(event) => {
         event.preventDefault();
-        if (!disabled && ready && !busy) onSubmit();
+        if (submittable) onSubmit();
       }}
     >
-      <fieldset disabled={disabled} className="flex flex-col gap-2">
+      <fieldset className="flex min-w-0 flex-col gap-2">
         <legend className="mb-2 text-xs font-medium text-muted-foreground">Efecto</legend>
-        {EFFECTS.map((entry) => {
-          const active = entry.id === effect;
-          return (
-            <button
-              key={entry.id}
-              type="button"
-              aria-pressed={active}
-              onClick={() => onEffectChange(entry.id)}
-              className={cn(
-                "rounded-xl border px-3.5 py-3 text-left transition-[background-color,border-color] duration-150",
-                "outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-55",
-                active
-                  ? "border-[color-mix(in_srgb,var(--primary)_45%,var(--border))] bg-accent"
-                  : "border-border bg-card hover:bg-muted",
-              )}
-            >
-              <span className={cn("block text-sm font-medium", active ? "text-accent-foreground" : "text-foreground")}>
-                {entry.name}
-              </span>
-              <span className="mt-0.5 block text-xs leading-5 text-muted-foreground">{entry.summary}</span>
-            </button>
-          );
-        })}
+        <SlidingTabs
+          className="flex w-full [&>.t-tab]:flex-1 [&>.t-tab]:px-2"
+          tabs={EFFECTS.map((entry) => ({ id: entry.id, label: entry.name }))}
+          value={effect}
+          onValueChange={(id) => onEffectChange(id as EffectId)}
+        />
+        <p className="min-h-10 text-xs leading-5 text-muted-foreground" aria-live="polite">
+          {selected.summary}
+        </p>
       </fieldset>
 
       <div className="flex flex-col gap-2">
@@ -76,34 +70,47 @@ export function Composer({
           id={promptId}
           value={prompt}
           onChange={(event) => onPromptChange(event.target.value)}
-          disabled={disabled}
           maxLength={PROMPT_MAX_LENGTH}
           rows={3}
           aria-describedby={hintId}
-          placeholder={disabled ? "Sube un video para empezar" : selected.example}
+          placeholder="¿Qué quieres cambiar?"
           className="min-h-24"
           onKeyDown={(event) => {
-            if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) event.currentTarget.form?.requestSubmit();
+            // Enter submits; Shift+Enter is a new line; never while an IME is composing.
+            if (event.key === "Enter" && !event.shiftKey && !event.nativeEvent.isComposing) {
+              event.preventDefault();
+              event.currentTarget.form?.requestSubmit();
+            }
           }}
         />
-        <div id={hintId} className="flex items-center justify-between gap-3">
-          {!disabled && !prompt ? (
-            <SuggestionChip size="xs" onClick={() => onPromptChange(selected.example)}>
-              Usar ejemplo
-            </SuggestionChip>
-          ) : (
-            <span className="text-xs text-muted-foreground">Nombra el sujeto con claridad.</span>
-          )}
-          <span className="text-xs tabular-nums text-muted-foreground">
+        <div id={hintId} className="flex items-center justify-between gap-3 text-xs text-muted-foreground">
+          <span>Enter para generar · Shift+Enter, nueva línea</span>
+          <span className="tabular-nums">
             {prompt.length}/{PROMPT_MAX_LENGTH}
           </span>
         </div>
+        {!prompt ? (
+          <div className="flex flex-wrap gap-1.5" aria-label="Ejemplos">
+            {selected.examples.map((example) => (
+              <SuggestionChip key={example} size="xs" onClick={() => onPromptChange(example)}>
+                {example}
+              </SuggestionChip>
+            ))}
+          </div>
+        ) : null}
       </div>
 
-      <Button type="submit" variant="ai" size="lg" disabled={disabled || !ready || busy} aria-busy={busy}>
-        {busy ? <Spinner /> : <HugeiconsIcon icon={MagicWand01Icon} size={16} strokeWidth={1.75} />}
-        Generar edición
-      </Button>
+      <div className="flex flex-col gap-1.5">
+        <Button type="submit" variant="ai" size="lg" disabled={!submittable} aria-busy={busy} aria-describedby={blockedReason ? `${hintId}-blocked` : undefined}>
+          {busy ? <Spinner /> : <HugeiconsIcon icon={MagicWand01Icon} size={16} strokeWidth={1.75} />}
+          Generar
+        </Button>
+        {blockedReason ? (
+          <p id={`${hintId}-blocked`} className="text-center text-xs text-muted-foreground">
+            {blockedReason}
+          </p>
+        ) : null}
+      </div>
     </form>
   );
 }
