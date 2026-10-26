@@ -1,13 +1,16 @@
 "use client";
 
-import { Tick02Icon } from "@hugeicons/core-free-icons";
+import { Download04Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
+import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { ProgressMeter } from "../../components/ui/progress-meter";
 import { Spinner } from "../../components/ui/spinner";
 import { ToggleChip } from "../../components/ui/toggle-chip";
 import { cn } from "../../lib/utils";
+import type { RenderParams, RenderResult } from "../../shared/render";
 import type { EditJob, PlanEffect } from "../../shared/schemas";
+import { EffectControls } from "./effect-controls";
 
 export const PLAN_EFFECT_LABEL: Record<PlanEffect, string> = {
   selective_color: "Color selectivo",
@@ -38,20 +41,23 @@ function Step({ state, title, model }: { readonly state: "done" | "active" | "pe
 }
 
 export function ProcessingPanel({ job, onCancel, canceling }: { readonly job: EditJob; readonly onCancel: () => void; readonly canceling: boolean }) {
-  const interpreting = job.status === "interpreting";
+  const order = ["interpreting", "segmenting", "rendering"] as const;
+  const current = order.indexOf(job.status as (typeof order)[number]);
+  const state = (step: number) => (step < current ? "done" : step === current ? "active" : "pending");
   const percent = Math.round(job.progress * 100);
   return (
     <section aria-label="Procesando" className="flex flex-col gap-5">
       <div>
-        <h2 className="text-sm font-medium">Procesando tu instrucción</h2>
+        <h2 className="text-sm font-medium">{job.status === "rendering" ? "Renderizando el efecto" : "Procesando tu instrucción"}</h2>
         <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">“{job.request.prompt}”</p>
       </div>
       <ol className="flex flex-col gap-3">
-        <Step state={interpreting ? "active" : "done"} title="Interpretar la instrucción" model={job.plan ? `Sujeto: ${job.plan.target.concept}` : "Muse Spark"} />
-        <Step state={interpreting ? "pending" : "active"} title="Encontrar y seguir el sujeto" model="SAM 3.1 · fotograma a fotograma" />
+        <Step state={state(0)} title="Interpretar la instrucción" model={job.plan ? `Sujeto: ${job.plan.target.concept}` : "Muse Spark"} />
+        <Step state={state(1)} title="Encontrar y seguir el sujeto" model="SAM 3.1 · fotograma a fotograma" />
+        <Step state={state(2)} title="Componer y exportar" model={job.params ? `${PLAN_EFFECT_LABEL[job.params.effect]} · FFmpeg` : "FFmpeg · H.264"} />
       </ol>
       <div className="flex flex-col gap-2">
-        <ProgressMeter value={percent} aria-label="Progreso del proceso" aria-valuetext={`${percent}%`} />
+        <ProgressMeter value={percent} aria-label="Progreso del paso actual" aria-valuetext={`${percent}%`} />
         <p role="status" className="text-xs text-muted-foreground tabular-nums">
           {job.detail ?? "Procesando…"}
         </p>
@@ -136,11 +142,15 @@ export function ReadyPanel({
   frameCount,
   onChangeSelection,
   onNewInstruction,
+  onRender,
+  busy = false,
 }: {
   readonly job: EditJob;
   readonly frameCount: number;
   readonly onChangeSelection: () => void;
   readonly onNewInstruction: () => void;
+  readonly onRender?: () => void;
+  readonly busy?: boolean;
 }) {
   const selected = job.objects.filter((object) => job.selection.includes(object.id));
   const coverage = Math.max(0, ...selected.map((object) => object.framesPresent));
@@ -173,9 +183,81 @@ export function ReadyPanel({
           </>
         ) : null}
       </dl>
-      <p className="text-xs leading-5 text-muted-foreground">
-        Las máscaras quedan guardadas para editar sin volver a llamar a Meta AI. El render del efecto llega en la siguiente fase.
-      </p>
+      <p className="text-xs leading-5 text-muted-foreground">Las máscaras quedan guardadas para editar sin volver a llamar a Meta AI.</p>
+      {onRender ? (
+        <Button onClick={onRender} disabled={busy} aria-busy={busy}>
+          {busy ? <Spinner /> : null}
+          Renderizar efecto
+        </Button>
+      ) : null}
+      <div className="flex flex-wrap gap-2">
+        {job.objects.length > 1 ? (
+          <Button variant="outline" size="sm" onClick={onChangeSelection}>
+            Cambiar selección
+          </Button>
+        ) : null}
+        <Button variant="ghost" size="sm" onClick={onNewInstruction}>
+          Nueva instrucción
+        </Button>
+      </div>
+    </section>
+  );
+}
+
+export function ResultPanel({
+  job,
+  draft,
+  onDraftChange,
+  onApply,
+  busy,
+  onChangeSelection,
+  onNewInstruction,
+}: {
+  readonly job: EditJob & { readonly render: RenderResult };
+  readonly draft: RenderParams;
+  readonly onDraftChange: (next: RenderParams) => void;
+  readonly onApply: () => void;
+  readonly busy: boolean;
+  readonly onChangeSelection: () => void;
+  readonly onNewInstruction: () => void;
+}) {
+  const render = job.render;
+  const dirty = JSON.stringify(draft) !== JSON.stringify(render.params);
+  return (
+    <section aria-label="Resultado" className="flex flex-col gap-5">
+      <div className="flex items-center gap-2.5">
+        <span className="grid size-7 place-items-center rounded-lg bg-accent text-accent-foreground">
+          <HugeiconsIcon icon={Tick02Icon} size={14} strokeWidth={2} />
+        </span>
+        <div className="min-w-0">
+          <h2 className="text-sm font-medium">{PLAN_EFFECT_LABEL[render.params.effect]} listo</h2>
+          <p className="text-xs text-muted-foreground tabular-nums">
+            {render.width}×{render.height} · {render.fps} fps · {render.durationSeconds.toFixed(1)} s · {job.plan?.target.concept}
+          </p>
+        </div>
+      </div>
+
+      <Button asChild size="lg">
+        <a href={render.urls.download} download>
+          <HugeiconsIcon icon={Download04Icon} size={16} strokeWidth={1.75} />
+          Descargar MP4
+        </a>
+      </Button>
+
+      {render.warnings.length ? (
+        <Alert tone="warning" size="sm" role={null}>
+          {render.warnings.join(" ")}
+        </Alert>
+      ) : null}
+
+      <div className="h-px bg-border" />
+      <EffectControls family={job.request.effect} value={draft} onChange={onDraftChange} />
+      <Button variant="secondary" onClick={onApply} disabled={!dirty || busy} aria-busy={busy}>
+        {busy ? <Spinner /> : null}
+        Aplicar ajustes
+      </Button>
+      <p className="-mt-3 text-[11px] leading-4 text-muted-foreground">Reutiliza las máscaras guardadas: no vuelve a llamar a Meta AI.</p>
+
       <div className="flex flex-wrap gap-2">
         {job.objects.length > 1 ? (
           <Button variant="outline" size="sm" onClick={onChangeSelection}>

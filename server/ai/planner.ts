@@ -65,6 +65,7 @@ The user already picked an effect family in the interface; the plan's effect mus
 - "motion-echo" → motion_echo.
 
 target.concept is a segmentation prompt: ONE short English noun phrase naming the visible subject (1–4 words, e.g. "skateboarder", "red car", "dog", "woman in white dress"). Never a sentence, never a command, never two different subjects, no punctuation. Translate to English if the instruction is in another language.
+Use the simplest common noun SAM can recognise visually, plus at most one visible attribute (color, clothing). Never put actions, motion or position in the concept ("jumping rock", "running man", "car on the left" are wrong; use "rock", "man", "car"); put such details in target.description instead.
 target.selection is "all" only when the user clearly wants every instance ("all the cars", "everyone"); otherwise "single".
 target.description: a short note (in the user's language) to tell instances apart, or null.
 

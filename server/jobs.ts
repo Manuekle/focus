@@ -3,6 +3,7 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import {
   ACTIVE_JOB_STATUSES,
+  EFFECT_PLAN_EFFECTS,
   EditJobSchema,
   EditPlanSchema,
   type EditJob,
@@ -11,11 +12,14 @@ import {
   type RefineRequest,
   type VideoAsset,
 } from "../shared/schemas";
+import { RENDERER_VERSION, RenderParamsSchema, RenderResultSchema, defaultParams, type RenderParams, type RenderResult } from "../shared/render";
 import { TrackingSchema, frameAt, hitTest, mergeTracking, type Tracking } from "../shared/tracking";
 import { interpretInstruction } from "./ai/planner";
 import { segmentVideo, type SamPrompt } from "./ai/sam";
 import { recordUsage } from "./ai/usage";
+import { Limiter } from "./ai/meta";
 import { AppError } from "./errors";
+import { renderComparison, renderVideo, trackingMaskSource, verifyOutput } from "./video/compositor";
 import { VIDEO_FILES, dataRoot, videoDir } from "./storage";
 import { getVideo } from "./videos";
 
@@ -33,14 +37,22 @@ type JobRuntime = {
   readonly inflightSegmentations: Map<string, Promise<Tracking>>;
   readonly inflightPlans: Map<string, Promise<EditPlan>>;
   readonly locks: Map<string, Promise<unknown>>;
+  readonly inflightRenders: Map<string, Promise<RenderResult>>;
+  /** Local CPU work: one render at a time keeps the machine responsive. */
+  readonly renderLimiter: Limiter;
 };
-const runtime: JobRuntime = ((globalThis as { __focusJobs?: JobRuntime }).__focusJobs ??= {
-  running: new Map(),
-  inflightSegmentations: new Map(),
-  inflightPlans: new Map(),
-  locks: new Map(),
-});
-const { running, inflightSegmentations, inflightPlans, locks } = runtime;
+// Each field is initialized on its own: a dev reload may find a runtime
+// object created by an older version of this module.
+const shared = ((globalThis as { __focusJobs?: { -readonly [K in keyof JobRuntime]?: JobRuntime[K] } }).__focusJobs ??= {});
+const runtime: JobRuntime = {
+  running: (shared.running ??= new Map()),
+  inflightSegmentations: (shared.inflightSegmentations ??= new Map()),
+  inflightPlans: (shared.inflightPlans ??= new Map()),
+  locks: (shared.locks ??= new Map()),
+  inflightRenders: (shared.inflightRenders ??= new Map()),
+  renderLimiter: (shared.renderLimiter ??= new Limiter(1)),
+};
+const { running, inflightSegmentations, inflightPlans, locks, inflightRenders, renderLimiter } = runtime;
 
 /** Replaceable in tests so no paid request ever runs there. */
 export const services = {
@@ -172,6 +184,8 @@ export async function createJob(request: EditRequest): Promise<EditJob> {
     selection: [],
     reused: { plan: false, segmentation: false },
     error: null,
+    params: null,
+    render: null,
     resultUrl: null,
     createdAt: now,
     updatedAt: now,
@@ -343,14 +357,171 @@ async function runJob(id: string, video: VideoAsset, request: EditRequest, key: 
   const ids = tracking.objects.map((object) => object.id);
   const autoSelect = plan.target.selection === "all" ? ids : ids.length === 1 ? ids : [];
   await patchJob(id, {
-    status: autoSelect.length ? "ready_to_render" : "awaiting_selection",
-    detail: autoSelect.length ? null : `Encontramos ${ids.length} coincidencias. Elige cuál destacar.`,
-    progress: 1,
+    // Straight to rendering when nothing needs choosing: no transient
+    // ready_to_render a poller could mistake for a resting state.
+    status: autoSelect.length ? "rendering" : "awaiting_selection",
+    detail: autoSelect.length ? "Preparando el render" : `Encontramos ${ids.length} coincidencias. Elige cuál destacar.`,
+    progress: autoSelect.length ? 0 : 1,
     segmentationId,
     objects: tracking.objects,
     selection: autoSelect,
     reused: { plan: planReused, segmentation: reused },
   });
+  if (autoSelect.length) await renderJob(id, video, null, signal);
+}
+
+export function renderKey(segmentationId: string, selection: readonly string[], params: RenderParams): string {
+  return `r-${hash(JSON.stringify({ v: RENDERER_VERSION, segmentationId, selection: [...selection].sort(), params }))}`;
+}
+
+/** The render key is in each URL so a re-render never hits a cached earlier result. */
+function renderUrls(jobId: string, key: string): RenderResult["urls"] {
+  return {
+    video: `/api/jobs/${jobId}/result?kind=output&r=${key}`,
+    compare: `/api/jobs/${jobId}/result?kind=compare&r=${key}`,
+    download: `/api/jobs/${jobId}/result?kind=output&download=1&r=${key}`,
+  };
+}
+
+/** Renders (or reuses) the effect for a job's current selection. Runs inside a job worker. */
+async function renderJob(id: string, video: VideoAsset, requested: RenderParams | null, signal: AbortSignal): Promise<void> {
+  const job = await readJob(id);
+  if (!job.plan || !job.segmentationId || job.selection.length === 0) {
+    throw new AppError("render_not_ready", 409, "Falta elegir el sujeto antes de renderizar.");
+  }
+  const params = requested ?? job.params ?? defaultParams(job.plan);
+  const segmentationId = job.segmentationId;
+  const selection = job.selection;
+  const key = renderKey(segmentationId, selection, params);
+  await patchJob(id, { status: "rendering", detail: "Preparando el render", progress: 0, params, error: null });
+
+  const dir = path.join(videoDir(video.id), "renders", key);
+  const cached = await readFile(path.join(dir, "meta.json"), "utf8").then((raw) => RenderResultSchema.safeParse(JSON.parse(raw)), () => null);
+  let result: RenderResult;
+  if (cached?.success) {
+    result = cached.data;
+  } else {
+    let pending = inflightRenders.get(key);
+    if (!pending) {
+      pending = renderLimiter
+        .run(async () => {
+          const tracking = await readTracking(video, segmentationId);
+          if (!tracking) throw new AppError("tracking_not_found", 404, "La segmentación ya no está disponible.");
+          const temp = `${dir}.tmp-${process.pid}-${Date.now()}`;
+          await mkdir(temp, { recursive: true });
+          try {
+            const started = Date.now();
+            let lastWrite = 0;
+            const output = await renderVideo({
+              normalizedPath: path.join(videoDir(video.id), VIDEO_FILES.normalized),
+              media: video.normalized,
+              masks: trackingMaskSource(tracking, selection, video.normalized),
+              params,
+              outputDir: temp,
+              signal,
+              onProgress: (fraction) => {
+                if (Date.now() - lastWrite < 300) return;
+                lastWrite = Date.now();
+                void patchRender(id, {
+                  progress: fraction * 0.9,
+                  detail: `Renderizando · ${Math.round(fraction * video.normalized.frameCount)}/${video.normalized.frameCount} fotogramas`,
+                });
+              },
+            });
+            void patchRender(id, { progress: 0.92, detail: "Verificando la exportación" });
+            const verified = await verifyOutput(path.join(temp, "output.mp4"), {
+              width: output.width,
+              height: output.height,
+              fps: video.normalized.fps,
+              frameCount: video.normalized.frameCount,
+              hasAudio: video.normalized.hasAudio,
+            });
+            void patchRender(id, { progress: 0.95, detail: "Preparando la comparación" });
+            await renderComparison({
+              normalizedPath: path.join(videoDir(video.id), VIDEO_FILES.normalized),
+              outputPath: path.join(temp, "output.mp4"),
+              comparePath: path.join(temp, "compare.mp4"),
+              width: output.width,
+              height: output.height,
+              background: params.effect === "break_frame" ? params.background : "dark",
+              signal,
+            });
+            const meta: RenderResult = {
+              key,
+              params,
+              width: output.width,
+              height: output.height,
+              fps: video.normalized.fps,
+              frameCount: output.frameCount,
+              durationSeconds: verified.durationSeconds,
+              hasAudio: video.normalized.hasAudio,
+              framesWithoutMask: output.framesWithoutMask,
+              breakoutFrameRatio: output.breakoutFrameRatio,
+              warnings: output.warnings,
+              renderMs: Date.now() - started,
+              createdAt: new Date().toISOString(),
+              urls: renderUrls(id, key),
+            };
+            await writeFile(path.join(temp, "meta.json"), JSON.stringify(meta));
+            await rm(dir, { recursive: true, force: true });
+            await rename(temp, dir);
+            return meta;
+          } catch (error) {
+            await rm(temp, { recursive: true, force: true });
+            throw error;
+          }
+        })
+        .finally(() => inflightRenders.delete(key));
+      inflightRenders.set(key, pending);
+    }
+    result = await pending;
+  }
+  if (signal.aborted) return;
+  await patchJob(id, {
+    status: "completed",
+    detail: null,
+    progress: 1,
+    params,
+    render: { ...result, urls: renderUrls(id, key) },
+    resultUrl: renderUrls(id, key).video,
+  });
+}
+
+/** A render progress update: dropped once the job left the rendering state. */
+function patchRender(id: string, patch: Pick<EditJob, "progress"> & Partial<Pick<EditJob, "detail">>): Promise<unknown> {
+  return withJobLock(id, async () => {
+    const current = await readJob(id);
+    if (current.status !== "rendering") return current;
+    return saveJob({ ...current, ...patch });
+  }).catch(() => undefined);
+}
+
+/** User-triggered (re)render with new parameters. Masks are reused; no AI call. */
+export async function startRender(id: string, requested?: RenderParams): Promise<EditJob> {
+  const job = await getJob(id);
+  if (!["ready_to_render", "completed", "failed"].includes(job.status) || !job.plan || job.selection.length === 0) {
+    throw new AppError("render_not_allowed", 409, "Este proceso no puede renderizarse ahora.");
+  }
+  let params: RenderParams | null = null;
+  if (requested) {
+    params = RenderParamsSchema.parse(requested);
+    if (!EFFECT_PLAN_EFFECTS[job.request.effect].includes(params.effect)) {
+      throw new AppError("effect_mismatch", 400, "Ese ajuste no pertenece al efecto elegido.");
+    }
+  }
+  const video = await getVideo(job.videoId);
+  const updated = await withJobLock(id, () => saveJob({ ...job, status: "rendering", detail: "Preparando el render", progress: 0, error: null }));
+  start(id, (signal) => renderJob(id, video, params, signal));
+  return updated;
+}
+
+export async function resultFile(id: string, kind: "output" | "compare"): Promise<{ path: string; downloadName: string }> {
+  const job = await getJob(id);
+  if (job.status !== "completed" || !job.render) throw new AppError("result_not_ready", 409, "El video editado todavía no está listo.");
+  const file = path.join(videoDir(job.videoId), "renders", job.render.key, `${kind}.mp4`);
+  const base = (await getVideo(job.videoId)).originalName.replace(/\.[^.]+$/, "").replace(/[^\p{L}\p{N}_-]+/gu, "-").slice(0, 60) || "video";
+  const effect = job.render.params.effect.replace(/_/g, "-");
+  return { path: file, downloadName: `focus-${effect}-${base}.mp4` };
 }
 
 export async function cancelJob(id: string): Promise<EditJob> {
@@ -363,19 +534,20 @@ export async function cancelJob(id: string): Promise<EditJob> {
 
 export async function setSelection(id: string, objectIds: readonly string[]): Promise<EditJob> {
   const job = await getJob(id);
-  if (!["awaiting_selection", "ready_to_render"].includes(job.status)) {
+  if (!["awaiting_selection", "ready_to_render", "completed"].includes(job.status)) {
     throw new AppError("selection_not_allowed", 409, "Este proceso no está esperando una selección.");
   }
   const known = new Set(job.objects.map((object) => object.id));
   const unique = [...new Set(objectIds)];
   if (unique.some((objectId) => !known.has(objectId))) throw new AppError("unknown_object", 400, "Ese objeto no existe en la segmentación.");
-  return saveJob({ ...job, selection: unique, status: "ready_to_render", detail: null });
+  await withJobLock(id, () => saveJob({ ...job, selection: unique, status: "ready_to_render", detail: null }));
+  return startRender(id);
 }
 
 /** Re-opens selection without any API call. */
 export async function reopenSelection(id: string): Promise<EditJob> {
   const job = await getJob(id);
-  if (job.status !== "ready_to_render") throw new AppError("selection_not_allowed", 409, "La selección no se puede cambiar ahora.");
+  if (!["ready_to_render", "completed"].includes(job.status)) throw new AppError("selection_not_allowed", 409, "La selección no se puede cambiar ahora.");
   return saveJob({ ...job, status: "awaiting_selection", detail: "Elige qué destacar." });
 }
 
@@ -385,7 +557,7 @@ export async function reopenSelection(id: string): Promise<EditJob> {
  */
 export async function refineWithPoint(id: string, refine: RefineRequest): Promise<EditJob> {
   const job = await getJob(id);
-  if (!["awaiting_selection", "ready_to_render"].includes(job.status) || !job.segmentationId) {
+  if (!["awaiting_selection", "ready_to_render", "completed"].includes(job.status) || !job.segmentationId) {
     throw new AppError("refine_not_allowed", 409, "Este proceso no admite una selección por punto ahora.");
   }
   const video = await getVideo(job.videoId);
@@ -433,8 +605,33 @@ export async function refineWithPoint(id: string, refine: RefineRequest): Promis
   return updated;
 }
 
+/** Removes videos (with their masks and renders) untouched for a day, and orphaned render temp dirs. */
+export async function cleanupVideos(): Promise<void> {
+  const root = path.join(dataRoot(), "videos");
+  const ids = await readdir(root).catch(() => [] as string[]);
+  const busy = new Set<string>();
+  for (const jobId of running.keys()) {
+    const job = await readJob(jobId).catch(() => null);
+    if (job) busy.add(job.videoId);
+  }
+  for (const id of ids) {
+    if (busy.has(id)) continue;
+    const dir = path.join(root, id);
+    const info = await stat(path.join(dir, VIDEO_FILES.asset)).catch(() => null);
+    if (!info || Date.now() - info.mtimeMs > JOB_TTL_MS) {
+      await rm(dir, { recursive: true, force: true });
+      continue;
+    }
+    const renders = await readdir(path.join(dir, "renders")).catch(() => [] as string[]);
+    for (const name of renders.filter((entry) => entry.includes(".tmp-"))) {
+      if (inflightRenders.size === 0) await rm(path.join(dir, "renders", name), { recursive: true, force: true });
+    }
+  }
+}
+
 /** Removes jobs older than a day, and jobs whose video is gone. */
 export async function cleanupJobs(): Promise<void> {
+  await cleanupVideos();
   const names = await readdir(jobsDir()).catch(() => [] as string[]);
   const now = Date.now();
   for (const name of names) {

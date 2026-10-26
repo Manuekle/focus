@@ -15,6 +15,8 @@ pnpm dev
 
 IA (Meta Model API, solo en servidor): define `MODEL_API_KEY` en `.env` (también se acepta `META_API_KEY`; ver `.env.example`). Muse Spark 1.3 convierte la instrucción en un plan validado con Zod; SAM 3.1 segmenta y sigue el sujeto sobre el video normalizado. Planes y máscaras se guardan por video en `.focus-data/` y se reutilizan; `GET /api/usage` muestra llamadas, aciertos de caché, tokens y fotogramas de SAM. `pnpm test` no hace llamadas pagas; `pnpm test:live` sí (una llamada a Muse Spark y una pasada de SAM de ~50 fotogramas).
 
+Efectos (`server/video/`): un solo compositor determinista decodifica el video normalizado fotograma a fotograma por pipe de FFmpeg, aplica las máscaras SAM de ese mismo fotograma y codifica H.264/yuv420p (con el audio original si existe). Reality Shift (color selectivo y fondo desenfocado), Break the Frame (lienzo 1080×1350, video recortado al marco interior y sujeto sin recortar) y Motion Echo (estelas del sujeto, pensado para cámara fija). Cada exportación se verifica con FFprobe; los renders se guardan por parámetros y cambiar un ajuste no vuelve a llamar a Meta AI.
+
 Arquitectura del editor: `app/_editor` (UI del workspace), `app/api` (rutas), `server/` (FFmpeg, almacenamiento, contratos de Meta AI y del compositor), `shared/` (límites de media y esquemas Zod). Identidad aplicada: [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md). `pnpm test` ejecuta Vitest, incluida una prueba de ingesta real con FFmpeg.
 
 ## Qué incluye

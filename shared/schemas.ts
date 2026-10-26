@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { RenderParamsSchema, RenderResultSchema } from "./render";
 
 // Contracts shared by the editor, the API routes and the processing services.
 // Everything that crosses the network or comes back from a model is parsed
@@ -152,6 +153,9 @@ export const EditJobSchema = z.object({
   /** True when plan and/or masks came from cache instead of a new API call. */
   reused: z.object({ plan: z.boolean(), segmentation: z.boolean() }),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
+  /** Effect parameters of the current or last render. */
+  params: RenderParamsSchema.nullable().default(null),
+  render: RenderResultSchema.nullable().default(null),
   resultUrl: z.string().nullable(),
   createdAt: z.iso.datetime(),
   updatedAt: z.iso.datetime(),
@@ -161,6 +165,8 @@ export type EditJob = z.infer<typeof EditJobSchema>;
 export const SelectionRequestSchema = z.object({
   objectIds: z.array(z.string().max(16)).min(1).max(16),
 });
+
+export const RenderRequestSchema = z.object({ params: RenderParamsSchema.optional() });
 
 export const RefineRequestSchema = z.object({
   frameIndex: z.number().int().nonnegative(),

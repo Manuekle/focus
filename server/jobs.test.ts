@@ -9,7 +9,7 @@ import type { EditJob, EditPlan, VideoAsset } from "../shared/schemas";
 import { buildTracking, type Tracking } from "../shared/tracking";
 import { AppError } from "./errors";
 import { ffmpeg } from "./ffmpeg";
-import { cancelJob, createJob, getJob, refineWithPoint, reopenSelection, services, setSelection } from "./jobs";
+import { cancelJob, createJob, getJob, refineWithPoint, reopenSelection, resultFile, services, setSelection, startRender } from "./jobs";
 import { ingestVideo } from "./videos";
 
 // The job lifecycle with the two paid services replaced by fakes: no network,
@@ -89,9 +89,10 @@ beforeEach(() => {
 });
 
 async function settle(id: string): Promise<EditJob> {
-  for (let attempt = 0; attempt < 200; attempt++) {
+  // Renders are real FFmpeg work (a few seconds for this clip).
+  for (let attempt = 0; attempt < 3000; attempt++) {
     const job = await getJob(id);
-    if (!["interpreting", "segmenting"].includes(job.status)) return job;
+    if (!["interpreting", "segmenting", "rendering"].includes(job.status)) return job;
     await new Promise((resolve) => setTimeout(resolve, 10));
   }
   throw new Error("job did not settle");
@@ -104,9 +105,11 @@ describe("job lifecycle", () => {
   it("auto-selects a single tracked object and becomes ready to render", async () => {
     const job = await settle((await createJob({ videoId: video.id, effect: "reality-shift", prompt: prompt() })).id);
     expect(job.error).toBeNull();
-    expect(job.status).toBe("ready_to_render");
+    expect(job.status).toBe("completed");
     expect(job.selection).toEqual(["0"]);
     expect(job.objects[0].framesPresent).toBe(96);
+    // Rendered with the plan's defaults and verified.
+    expect(job.render).toMatchObject({ width: 1280, height: 674, frameCount: 96, params: { effect: "selective_color" } });
   });
 
   it("waits for the user when several objects match", async () => {
@@ -118,7 +121,8 @@ describe("job lifecycle", () => {
     expect(job.objects.length).toBeGreaterThan(1);
 
     const chosen = await setSelection(job.id, [job.objects[2].id]);
-    expect(chosen).toMatchObject({ status: "ready_to_render", selection: [job.objects[2].id] });
+    expect(chosen).toMatchObject({ status: "rendering", selection: [job.objects[2].id] });
+    expect((await settle(job.id)).status).toBe("completed");
     await expect(setSelection(job.id, ["999"])).rejects.toMatchObject({ code: "unknown_object" });
     expect((await reopenSelection(job.id)).status).toBe("awaiting_selection");
   });
@@ -127,7 +131,7 @@ describe("job lifecycle", () => {
     objectCount = 16;
     nextPlan = { target: { concept: "stone", selection: "all" } };
     const job = await settle((await createJob({ videoId: video.id, effect: "reality-shift", prompt: prompt("all the stones") })).id);
-    expect(job.status).toBe("ready_to_render");
+    expect(job.status).toBe("completed");
     expect(job.selection).toHaveLength(job.objects.length);
   });
 
@@ -202,6 +206,40 @@ describe("cost protection", () => {
   });
 });
 
+describe("render reuse", () => {
+  it("re-renders new parameters from cached masks and reuses identical renders", async () => {
+    nextPlan = { target: { concept: "pier", selection: "single" }, effect: "background_blur" };
+    const job = await settle((await createJob({ videoId: video.id, effect: "reality-shift", prompt: prompt("blur all but the pier") })).id);
+    expect(job.render?.params).toMatchObject({ effect: "background_blur", level: "high" });
+    const segmentCalls = calls.segment;
+
+    const low = await settle((await startRender(job.id, { effect: "background_blur", level: "low", feather: 1.5 })).id);
+    expect(low.render?.params).toMatchObject({ level: "low" });
+    expect(low.render?.key).not.toBe(job.render?.key);
+    expect(low.render?.urls.video).toContain(low.render!.key);
+
+    const started = Date.now();
+    const again = await settle((await startRender(job.id, { effect: "background_blur", level: "low", feather: 1.5 })).id);
+    expect(again.render?.key).toBe(low.render?.key);
+    expect(Date.now() - started).toBeLessThan(1000);
+    expect(calls.segment).toBe(segmentCalls);
+  });
+
+  it("rejects parameters from another effect family", async () => {
+    nextPlan = { target: { concept: "lamp", selection: "single" } };
+    const job = await settle((await createJob({ videoId: video.id, effect: "reality-shift", prompt: prompt("the lamp") })).id);
+    await expect(startRender(job.id, { effect: "motion_echo", trailCount: 3, trailSpacingMs: 120, intensity: 0.6, feather: 1 })).rejects.toMatchObject({ code: "effect_mismatch" });
+  });
+
+  it("serves the edited file, never the source", async () => {
+    nextPlan = { target: { concept: "boat", selection: "single" } };
+    const job = await settle((await createJob({ videoId: video.id, effect: "reality-shift", prompt: prompt("the boat") })).id);
+    const file = await resultFile(job.id, "output");
+    expect(file.path).toContain(path.join("renders", job.render!.key));
+    expect(file.downloadName).toBe("focus-selective-color-clip.mp4");
+  });
+});
+
 describe("cancellation and recovery", () => {
   it("cancels a running segmentation and keeps the canceled state", async () => {
     segmentDelayMs = 2000;
@@ -225,7 +263,7 @@ describe("cancellation and recovery", () => {
     segmentDelayMs = 0;
     const retry = await createJob({ videoId: video.id, effect: "reality-shift", prompt: text });
     expect(retry.id).not.toBe(job.id);
-    expect((await settle(retry.id)).status).toBe("ready_to_render");
+    expect((await settle(retry.id)).status).toBe("completed");
   });
 
   it("marks a job interrupted by a restart as failed", async () => {
