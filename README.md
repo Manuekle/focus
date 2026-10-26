@@ -10,7 +10,10 @@ pnpm install
 pnpm dev
 ```
 
-Abre http://localhost:3200. No requiere cuentas, variables de entorno ni backend. Las acciones de los ejemplos conservan datos solo en memoria. El sonido está desactivado inicialmente; puedes activarlo desde la barra del catálogo.
+- http://localhost:3200 — **editor de video Focus** ("Make anything stand out."). Requiere `ffmpeg` y `ffprobe` en el `PATH` (o `FFMPEG_PATH` / `FFPROBE_PATH`). Los videos subidos se guardan en `.focus-data/` (ignorado por git; cambia la ruta con `FOCUS_DATA_DIR`).
+- http://localhost:3200/system — catálogo del design system. No requiere cuentas ni backend; sus ejemplos conservan datos solo en memoria. El sonido está desactivado inicialmente; puedes activarlo desde la barra del catálogo.
+
+Arquitectura del editor: `app/_editor` (UI del workspace), `app/api` (rutas), `server/` (FFmpeg, almacenamiento, contratos de Meta AI y del compositor), `shared/` (límites de media y esquemas Zod). Identidad aplicada: [docs/DESIGN_SYSTEM.md](docs/DESIGN_SYSTEM.md). `pnpm test` ejecuta Vitest, incluida una prueba de ingesta real con FFmpeg.
 
 ## Qué incluye
 

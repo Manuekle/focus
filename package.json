@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Sistema de dise\u00f1o de Oruka extra\u00eddo para Focus. Componentes React, tokens y cat\u00e1logo independiente.",
+  "description": "Sistema de diseño de Oruka extraído para Focus. Componentes React, tokens y catálogo independiente.",
   "sideEffects": [
     "**/*.css"
   ],
@@ -30,10 +30,11 @@
     "start": "next start --hostname 127.0.0.1 --port 3200",
     "typecheck": "tsc --noEmit",
     "lint": "eslint .",
-    "check": "pnpm tokens && pnpm inventory && pnpm typecheck && pnpm lint && pnpm verify",
+    "check": "pnpm tokens && pnpm inventory && pnpm typecheck && pnpm lint && pnpm verify && pnpm test",
     "verify": "node scripts/verify.mjs",
     "tokens": "node scripts/export-tokens.mjs",
-    "inventory": "node scripts/inventory.mjs"
+    "inventory": "node scripts/inventory.mjs",
+    "test": "vitest run"
   },
   "peerDependencies": {
     "react": "^19.0.0",
@@ -64,18 +65,20 @@
     "tailwind-merge": "3.6.0",
     "tailwindcss": "4.3.0",
     "thinking-orbs": "0.3.1",
-    "voice-glow": "0.2.0"
+    "voice-glow": "0.2.0",
+    "zod": "4.1.12"
   },
   "devDependencies": {
-    "react": "19.2.6",
-    "react-dom": "19.2.6",
+    "@types/node": "24.13.2",
     "@types/react": "19.2.15",
     "@types/react-dom": "19.2.3",
-    "@types/node": "24.13.2",
-    "typescript": "6.0.3",
     "eslint": "9.39.5",
     "eslint-config-next": "16.4.1",
-    "next": "16.4.1"
+    "next": "16.4.1",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "typescript": "6.0.3",
+    "vitest": "4.0.8"
   },
   "packageManager": "pnpm@12.11.2",
   "files": [

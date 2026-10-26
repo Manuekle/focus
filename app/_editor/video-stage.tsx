@@ -1,0 +1,121 @@
+"use client";
+
+import { useEffect, useRef, useState, type CSSProperties } from "react";
+import { PauseIcon, PlayIcon, VolumeHighIcon, VolumeMute01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "../../components/icons/icon";
+import { formatSeconds } from "../../shared/media";
+import type { VideoAsset } from "../../shared/schemas";
+
+/** The centerpiece: the normalized video exactly as the pipeline will read it. */
+export function VideoStage({ video }: { readonly video: VideoAsset }) {
+  const ref = useRef<HTMLVideoElement>(null);
+  const [playing, setPlaying] = useState(false);
+  const [muted, setMuted] = useState(true);
+  const [time, setTime] = useState(0);
+  const [duration, setDuration] = useState(video.normalized.durationSeconds);
+  const [failed, setFailed] = useState(false);
+  const { width, height, fps, hasAudio } = video.normalized;
+
+  useEffect(() => {
+    const element = ref.current;
+    if (!element) return;
+    let frame = 0;
+    // rAF while playing so the scrubber moves smoothly; timeupdate fires ~4×/s.
+    const tick = () => {
+      setTime(element.currentTime);
+      frame = requestAnimationFrame(tick);
+    };
+    if (playing) frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [playing]);
+
+  const toggle = () => {
+    const element = ref.current;
+    if (!element) return;
+    if (element.paused) void element.play().catch(() => setPlaying(false));
+    else element.pause();
+  };
+
+  const seek = (value: number) => {
+    const element = ref.current;
+    if (!element) return;
+    element.currentTime = value;
+    setTime(value);
+  };
+
+  const progress = duration > 0 ? (time / duration) * 100 : 0;
+
+  return (
+    <figure className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-soft)]">
+      <div className="relative grid place-items-center bg-[var(--editor-stage)]">
+        <video
+          ref={ref}
+          src={video.urls.preview}
+          poster={video.urls.poster}
+          width={width}
+          height={height}
+          muted={muted}
+          playsInline
+          loop
+          preload="auto"
+          onClick={toggle}
+          onPlay={() => setPlaying(true)}
+          onPause={() => setPlaying(false)}
+          onLoadedMetadata={(event) => {
+            const value = event.currentTarget.duration;
+            if (Number.isFinite(value)) setDuration(value);
+          }}
+          onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
+          onError={() => setFailed(true)}
+          className="block h-auto max-h-[min(68dvh,720px)] w-auto max-w-full cursor-pointer"
+          aria-label={`Vista previa de ${video.originalName}`}
+        />
+        {failed ? (
+          <p className="absolute inset-x-6 bottom-6 rounded-lg bg-card px-4 py-3 text-sm text-foreground shadow-[var(--shadow-elevated)]">
+            El navegador no pudo reproducir la vista previa. Recarga la página o vuelve a subir el video.
+          </p>
+        ) : null}
+      </div>
+
+      <figcaption className="flex items-center gap-3 border-t border-border px-3 py-2.5 sm:px-4">
+        <button
+          type="button"
+          onClick={toggle}
+          aria-label={playing ? "Pausar" : "Reproducir"}
+          className="grid size-8 shrink-0 place-items-center rounded-lg text-foreground transition-colors hover:bg-muted"
+        >
+          <HugeiconsIcon icon={playing ? PauseIcon : PlayIcon} size={18} strokeWidth={1.75} />
+        </button>
+        <span className="w-[72px] shrink-0 text-xs tabular-nums text-muted-foreground">
+          {formatSeconds(time)} / {formatSeconds(duration)}
+        </span>
+        <input
+          type="range"
+          min={0}
+          max={duration || 0}
+          step={1 / fps}
+          value={Math.min(time, duration)}
+          onChange={(event) => seek(Number(event.currentTarget.value))}
+          aria-label="Posición en el video"
+          aria-valuetext={`${formatSeconds(time)} de ${formatSeconds(duration)}`}
+          className="editor-scrubber min-w-0 flex-1"
+          style={{ "--scrub": `${progress}%` } as CSSProperties}
+        />
+        {hasAudio ? (
+          <button
+            type="button"
+            onClick={() => setMuted((value) => !value)}
+            aria-label={muted ? "Activar sonido" : "Silenciar"}
+            aria-pressed={!muted}
+            className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+          >
+            <HugeiconsIcon icon={muted ? VolumeMute01Icon : VolumeHighIcon} size={17} strokeWidth={1.75} />
+          </button>
+        ) : null}
+        <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground sm:inline">
+          {width}×{height} · {fps} fps
+        </span>
+      </figcaption>
+    </figure>
+  );
+}

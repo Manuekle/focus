@@ -1,0 +1,39 @@
+/* Editor chrome. Colors come from the Focus theme; the stage uses the
+   dark paper (#14161E) in both themes so footage reads the same everywhere. */
+:root { --editor-stage: #14161e; }
+.dark { --editor-stage: #0f1117; }
+
+.editor-scrubber {
+  height: 20px;
+  appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.editor-scrubber::-webkit-slider-runnable-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--primary) var(--scrub, 0%), var(--muted) var(--scrub, 0%));
+}
+.editor-scrubber::-moz-range-track {
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(to right, var(--primary) var(--scrub, 0%), var(--muted) var(--scrub, 0%));
+}
+.editor-scrubber::-webkit-slider-thumb {
+  appearance: none;
+  width: 12px;
+  height: 12px;
+  margin-top: -4px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 0 0 1.5px var(--primary), var(--shadow-soft);
+}
+.editor-scrubber::-moz-range-thumb {
+  width: 12px;
+  height: 12px;
+  border: 0;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: 0 0 0 1.5px var(--primary), var(--shadow-soft);
+}
+.editor-scrubber:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 4px; }
