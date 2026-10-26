@@ -13,7 +13,7 @@ import {
   type VideoAsset,
 } from "../shared/schemas";
 import { RENDERER_VERSION, RenderParamsSchema, RenderResultSchema, defaultParams, type RenderParams, type RenderResult } from "../shared/render";
-import { TrackingSchema, frameAt, hitTest, mergeTracking, type Tracking } from "../shared/tracking";
+import { TrackingSchema, fillTracking, frameAt, hitTest, mergeTracking, type Tracking } from "../shared/tracking";
 import { interpretInstruction } from "./ai/planner";
 import { segmentVideo, type SamPrompt } from "./ai/sam";
 import { recordUsage } from "./ai/usage";
@@ -213,6 +213,7 @@ function start(id: string, work: (signal: AbortSignal) => Promise<void>): void {
       if (controller.signal.aborted) return;
       const failure = error instanceof AppError ? error : new AppError("internal_error", 500, "Algo falló durante el proceso.");
       if (!(error instanceof AppError)) console.error("[focus] job failed", error);
+      else if (failure.detail) console.warn(`[focus] job ${id} failed: ${failure.code} — ${failure.detail}`);
       await patchJob(id, { status: "failed", detail: null, error: { code: failure.code, message: failure.message } }).catch(() => undefined);
     })
     .finally(() => running.delete(id));
@@ -601,6 +602,60 @@ export async function refineWithPoint(id: string, refine: RefineRequest): Promis
       objects: merged.objects,
       selection: extra.objects.map((object) => object.id),
     });
+  });
+  return updated;
+}
+
+/**
+ * Completes tracking for the selected objects on frames the concept pass
+ * missed: one SAM 3.1 pass prompted with each object's own box on its first
+ * tracked frame, propagated both ways. Only missing frames are filled; it is a
+ * paid call, so it only runs when the user asks.
+ */
+export async function fillGaps(id: string): Promise<EditJob> {
+  const job = await getJob(id);
+  if (!["awaiting_selection", "ready_to_render", "completed"].includes(job.status) || !job.segmentationId || job.selection.length === 0) {
+    throw new AppError("fill_not_allowed", 409, "Elige primero el sujeto.");
+  }
+  const video = await getVideo(job.videoId);
+  const base = await readTracking(video, job.segmentationId);
+  if (!base) throw new AppError("tracking_not_found", 404, "La segmentación ya no está disponible.");
+  const { frameCount } = video.normalized;
+  const targets = job.selection
+    .map((objectId) => base.objects.find((object) => object.id === objectId))
+    .filter((object): object is NonNullable<typeof object> => Boolean(object) && object!.framesPresent < frameCount && /^\d+$/.test(object!.id))
+    .map((object) => {
+      const frame = frameAt(base, object.firstFrame)!;
+      const box = frame.objects.find((entry) => entry.objectId === object.id)!.box;
+      return { id: Number(object.id), frameIndex: object.firstFrame, box };
+    });
+  if (targets.length === 0) throw new AppError("nothing_to_fill", 409, "El sujeto ya está seguido en todos los fotogramas.");
+
+  const wasCompleted = job.status === "completed";
+  const previousStatus = job.status;
+  const extraId = `g-${hash(`${job.segmentationId}|${JSON.stringify(targets)}`)}`;
+  const mergedId = `${job.segmentationId.split("+")[0]}+${extraId}`;
+  const updated = await withJobLock(id, () => saveJob({ ...job, status: "segmenting", detail: "Completando el seguimiento con SAM 3.1", progress: 0.15, error: null }));
+
+  start(id, async (signal) => {
+    const { tracking: extra } = await trackingFor(
+      video,
+      extraId,
+      { kind: "box", objects: targets },
+      signal,
+      (fraction) => void patchProgress(id, { progress: 0.15 + fraction * 0.8, detail: `Completando el seguimiento · ${Math.round(fraction * frameCount)}/${frameCount} fotogramas` }),
+    );
+    if (signal.aborted) return;
+    const merged = fillTracking(base, extra, targets.map((target) => String(target.id)));
+    await writeJson(segmentationFile(video, mergedId), { ...merged, id: mergedId });
+    await patchJob(id, {
+      status: wasCompleted ? "rendering" : previousStatus,
+      detail: wasCompleted ? "Preparando el render" : null,
+      progress: wasCompleted ? 0 : 1,
+      segmentationId: mergedId,
+      objects: merged.objects,
+    });
+    if (wasCompleted) await renderJob(id, video, null, signal);
   });
   return updated;
 }

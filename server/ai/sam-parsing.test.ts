@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
 import { parseVideoStream, type ResponsesEvent } from "@meta-sam/parser";
-import { buildTracking, frameAt, hitTest, mergeTracking } from "../../shared/tracking";
+import { buildTracking, fillTracking, frameAt, hitTest, mergeTracking } from "../../shared/tracking";
 import { promptText } from "./sam";
 
 // Fixtures are real SAM 3.1 output recorded from the Meta API on a 4 s,
@@ -132,9 +132,37 @@ describe("hit testing", () => {
   });
 });
 
+describe("filling tracking gaps", () => {
+  it("adds a second pass only on frames the first one missed", async () => {
+    const lines = BRIDGE.split("\n").filter(Boolean);
+    const gapped = await track(lines.slice(43).join("\n") + "\n");
+    expect(gapped.objects[0]).toMatchObject({ framesPresent: 53, firstFrame: 43 });
+    const full = await track(BRIDGE);
+    const filled = fillTracking(gapped, full, ["0"]);
+    expect(filled.objects[0]).toMatchObject({ id: "0", framesPresent: 96, firstFrame: 0 });
+    expect(filled.missingFrames).toEqual([]);
+    // Frames the first pass already had are kept as they were.
+    expect(frameAt(filled, 60)).toEqual(frameAt(gapped, 60));
+  });
+
+  it("ignores objects that were not asked for", async () => {
+    const gapped = await track(BRIDGE.split("\n").filter(Boolean).slice(50).join("\n") + "\n");
+    const filled = fillTracking(gapped, await track(BRIDGE), ["7"]);
+    expect(filled.frames).toHaveLength(gapped.frames.length);
+  });
+});
+
 describe("SAM prompts", () => {
   it("sends concepts as bare noun phrases", () => {
     expect(promptText({ kind: "concept", concept: "red car" }, { ...MEDIA, durationSeconds: 4, codec: "h264", hasAudio: false })).toBe("red car");
+  });
+
+  it("re-prompts a known object with its own box on its first tracked frame", () => {
+    const text = promptText(
+      { kind: "box", objects: [{ id: 0, frameIndex: 43, box: { left: 10, top: 20, right: 110, bottom: 220 } }] },
+      { ...MEDIA, durationSeconds: 4, codec: "h264", hasAudio: false },
+    );
+    expect(text).toBe("<43f>0<|box;x1=10;y1=20;x2=109;y2=219;w=1280;h=674|>");
   });
 
   it("builds a documented point prompt in normalized pixels", () => {

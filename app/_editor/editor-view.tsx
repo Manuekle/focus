@@ -213,6 +213,7 @@ export function EditorView({
             busy={busy}
             onChangeSelection={() => void run(() => jobApi.reopen(result.id))}
             onNewInstruction={reset}
+            onFillGaps={() => void run(() => jobApi.fill(result.id))}
           />
         ) : null}
 

@@ -85,8 +85,9 @@ export function writeFrames(options: {
     // so colors outside the effect round-trip unchanged.
     "-pix_fmt", "yuv420p",
     "-fps_mode", "cfr", "-r", String(fps),
-    // Audio may be a few ms longer than the video track; never pad video for it.
-    ...(audioFrom ? ["-shortest"] : []),
+    // The video track sets the length. -shortest would cut the last frames
+    // when the audio ends a few ms early; -t only trims audio that runs long.
+    ...(audioFrom ? ["-t", (frameCount / fps).toFixed(6)] : []),
     "-movflags", "+faststart",
     output,
   ];

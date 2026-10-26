@@ -138,35 +138,7 @@ export function buildTracking(input: BuildTrackingInput): Tracking {
       objects: [...objects.values()].sort((a, b) => compareIds(a.objectId, b.objectId)),
     }));
 
-  const stats = new Map<string, { frames: number[]; confidence: number[]; area: number[] }>();
-  for (const frame of frames) {
-    for (const object of frame.objects) {
-      let stat = stats.get(object.objectId);
-      if (!stat) stats.set(object.objectId, (stat = { frames: [], confidence: [], area: [] }));
-      stat.frames.push(frame.frameIndex);
-      if (object.confidence !== null) stat.confidence.push(object.confidence);
-      stat.area.push(Math.max(0, object.box.right - object.box.left) * Math.max(0, object.box.bottom - object.box.top));
-    }
-  }
-  const objects: TrackedObjectSummary[] = [...stats.entries()]
-    .sort(([a], [b]) => compareIds(a, b))
-    .map(([id, stat]) => ({
-      id,
-      framesPresent: stat.frames.length,
-      firstFrame: stat.frames[0],
-      lastFrame: stat.frames[stat.frames.length - 1],
-      meanConfidence: stat.confidence.length ? mean(stat.confidence) : null,
-      meanArea: mean(stat.area),
-      source: input.source,
-    }));
-
-  const present = new Set(frames.map((frame) => frame.frameIndex));
-  const missingFrames: number[] = [];
-  if (frames.length > 0) {
-    for (let index = frames[0].frameIndex; index <= frames[frames.length - 1].frameIndex; index++) {
-      if (!present.has(index)) missingFrames.push(index);
-    }
-  }
+  const { objects, missingFrames } = summarize(frames, input.source);
 
   return {
     id: input.id,
@@ -258,4 +230,68 @@ function compareIds(a: string, b: string): number {
 
 function mean(values: readonly number[]): number {
   return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+/** Per-object statistics and gap list for a set of frames. */
+function summarize(frames: readonly TrackingFrame[], source: "concept" | "point") {
+  const stats = new Map<string, { frames: number[]; confidence: number[]; area: number[] }>();
+  for (const frame of frames) {
+    for (const object of frame.objects) {
+      let stat = stats.get(object.objectId);
+      if (!stat) stats.set(object.objectId, (stat = { frames: [], confidence: [], area: [] }));
+      stat.frames.push(frame.frameIndex);
+      if (object.confidence !== null) stat.confidence.push(object.confidence);
+      stat.area.push(Math.max(0, object.box.right - object.box.left) * Math.max(0, object.box.bottom - object.box.top));
+    }
+  }
+  const objects: TrackedObjectSummary[] = [...stats.entries()]
+    .sort(([a], [b]) => compareIds(a, b))
+    .map(([id, stat]) => ({
+      id,
+      framesPresent: stat.frames.length,
+      firstFrame: stat.frames[0],
+      lastFrame: stat.frames[stat.frames.length - 1],
+      meanConfidence: stat.confidence.length ? mean(stat.confidence) : null,
+      meanArea: mean(stat.area),
+      source,
+    }));
+
+  const present = new Set(frames.map((frame) => frame.frameIndex));
+  const missingFrames: number[] = [];
+  if (frames.length > 0) {
+    for (let index = frames[0].frameIndex; index <= frames[frames.length - 1].frameIndex; index++) {
+      if (!present.has(index)) missingFrames.push(index);
+    }
+  }
+
+  return { objects, missingFrames };
+}
+
+/**
+ * Adds a second pass's masks for `objectIds` only on frames where the base
+ * tracking has no entry for that object. Frames SAM already tracked are kept
+ * untouched; nothing is interpolated or invented.
+ */
+export function fillTracking(base: Tracking, extra: Tracking, objectIds: readonly string[]): Tracking {
+  const wanted = new Set(objectIds);
+  const frames = new Map(base.frames.map((frame) => [frame.frameIndex, { ...frame, objects: [...frame.objects] }]));
+  for (const frame of extra.frames) {
+    for (const object of frame.objects) {
+      if (!wanted.has(object.objectId)) continue;
+      let target = frames.get(frame.frameIndex);
+      if (!target) frames.set(frame.frameIndex, (target = { frameIndex: frame.frameIndex, timestamp: frame.timestamp, objects: [] }));
+      if (!target.objects.some((existing) => existing.objectId === object.objectId)) target.objects.push(object);
+    }
+  }
+  const sorted = [...frames.values()].sort((a, b) => a.frameIndex - b.frameIndex);
+  const sources = new Map(base.objects.map((object) => [object.id, object.source]));
+  const { objects, missingFrames } = summarize(sorted, "concept");
+  return {
+    ...base,
+    frames: sorted,
+    objects: objects.map((object) => ({ ...object, source: sources.get(object.id) ?? object.source })),
+    missingFrames,
+    diagnostics: [...base.diagnostics, ...extra.diagnostics],
+    videoFramesProcessed: (base.videoFramesProcessed ?? 0) + (extra.videoFramesProcessed ?? 0),
+  };
 }

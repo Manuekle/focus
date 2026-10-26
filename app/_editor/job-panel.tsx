@@ -212,8 +212,10 @@ export function ResultPanel({
   busy,
   onChangeSelection,
   onNewInstruction,
+  onFillGaps,
 }: {
   readonly job: EditJob & { readonly render: RenderResult };
+  readonly onFillGaps: () => void;
   readonly draft: RenderParams;
   readonly onDraftChange: (next: RenderParams) => void;
   readonly onApply: () => void;
@@ -245,7 +247,21 @@ export function ResultPanel({
       </Button>
 
       {render.warnings.length ? (
-        <Alert tone="warning" size="sm" role={null}>
+        <Alert
+          tone="warning"
+          size="sm"
+          role={null}
+          action={
+            render.framesWithoutMask > 0 ? (
+              <div className="flex flex-col gap-1">
+                <Button variant="outline" size="sm" onClick={onFillGaps} disabled={busy}>
+                  Completar el seguimiento con SAM 3.1
+                </Button>
+                <span className="text-[11px] text-muted-foreground">Hace una nueva llamada a Meta AI, solo para los fotogramas que faltan.</span>
+              </div>
+            ) : undefined
+          }
+        >
           {render.warnings.join(" ")}
         </Alert>
       ) : null}

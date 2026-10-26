@@ -1,6 +1,27 @@
 {
   "version": "0.0.1",
   "configurations": [
-    { "name": "focus", "runtimeExecutable": "pnpm", "runtimeArgs": ["dev"], "port": 3200 }
+    {
+      "name": "focus",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "dev"
+      ],
+      "port": 3200
+    },
+    {
+      "name": "focus-prod",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "exec",
+        "next",
+        "start",
+        "--hostname",
+        "127.0.0.1",
+        "--port",
+        "3201"
+      ],
+      "port": 3201
+    }
   ]
 }

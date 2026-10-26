@@ -4,7 +4,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import { toFile } from "openai";
 import { buildObjectPrompt, frameIndexOf, parseVideoStream, recordsOfKind, type ResponsesEvent } from "@meta-sam/parser";
 import type { NormalizedMedia } from "../../shared/schemas";
-import { buildTracking, type Tracking } from "../../shared/tracking";
+import { buildTracking, type Box, type Tracking } from "../../shared/tracking";
 import { AppError } from "../errors";
 import { metaClient, metaError, requireMetaConfig, segmentationLimiter, withRetry } from "./meta";
 import { recordUsage } from "./usage";
@@ -14,7 +14,9 @@ import { recordUsage } from "./usage";
 
 export type SamPrompt =
   | { readonly kind: "concept"; readonly concept: string }
-  | { readonly kind: "point"; readonly objectId: number; readonly frameIndex: number; readonly point: { readonly x: number; readonly y: number } };
+  | { readonly kind: "point"; readonly objectId: number; readonly frameIndex: number; readonly point: { readonly x: number; readonly y: number } }
+  /** Re-prompts known objects with their own boxes, to track them on frames the concept pass missed. */
+  | { readonly kind: "box"; readonly objects: readonly { readonly id: number; readonly frameIndex: number; readonly box: Box }[] };
 
 type SegmentInput = {
   readonly id: string;
@@ -52,6 +54,12 @@ async function fileIdFor(input: SegmentInput, force = false): Promise<string> {
 
 export function promptText(prompt: SamPrompt, media: NormalizedMedia): string {
   if (prompt.kind === "concept") return prompt.concept;
+  if (prompt.kind === "box") {
+    return buildObjectPrompt({
+      size: { width: media.width, height: media.height },
+      objects: prompt.objects.map((object) => ({ id: object.id, prompts: [{ frame: object.frameIndex, box: object.box }] })),
+    });
+  }
   return buildObjectPrompt({
     size: { width: media.width, height: media.height },
     objects: [{ id: prompt.objectId, prompts: [{ frame: prompt.frameIndex, points: [prompt.point] }] }],
@@ -130,8 +138,13 @@ export async function segmentVideo(input: SegmentInput): Promise<Tracking> {
     return buildTracking({
       id: input.id,
       videoId: input.videoId,
-      source: input.prompt.kind,
-      prompt: input.prompt.kind === "concept" ? input.prompt.concept : `point ${input.prompt.point.x},${input.prompt.point.y} @ frame ${input.prompt.frameIndex}`,
+      source: input.prompt.kind === "point" ? "point" : "concept",
+      prompt:
+        input.prompt.kind === "concept"
+          ? input.prompt.concept
+          : input.prompt.kind === "box"
+            ? `box ${input.prompt.objects.map((object) => `#${object.id}@${object.frameIndex}`).join(" ")}`
+            : `point ${input.prompt.point.x},${input.prompt.point.y} @ frame ${input.prompt.frameIndex}`,
       width: input.media.width,
       height: input.media.height,
       fps: input.media.fps,

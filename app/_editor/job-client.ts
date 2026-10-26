@@ -37,6 +37,7 @@ export const jobApi = {
   reopen: (id: string) => call(`/api/jobs/${id}/selection`, { method: "DELETE" }, parseJob),
   refine: (id: string, frameIndex: number, point: { x: number; y: number }) =>
     call(`/api/jobs/${id}/refine`, json({ frameIndex, point }), parseJob),
+  fill: (id: string) => call(`/api/jobs/${id}/fill`, { method: "POST" }, parseJob),
   render: (id: string, params?: RenderParams) => call(`/api/jobs/${id}/render`, json({ params }), parseJob),
   tracking: (id: string) => call(`/api/jobs/${id}/tracking`, undefined, (value) => TrackingSchema.parse(value)),
 };
