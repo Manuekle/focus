@@ -6,7 +6,7 @@ import {
   hasAcceptedExtension,
   isAcceptedVideoType,
 } from "../../shared/media";
-import { ApiErrorBodySchema, VideoAssetSchema, type VideoAsset } from "../../shared/schemas";
+import type { VideoAsset } from "../../shared/schemas";
 import { editorErrorMessage } from "./messages";
 
 export class UploadError extends Error {
@@ -73,6 +73,8 @@ export type UploadHandle = {
 /** XHR rather than fetch: it is the only browser API that reports upload progress. */
 export function uploadVideo(file: File, onProgress: (fraction: number) => void): UploadHandle {
   const xhr = new XMLHttpRequest();
+  // Loaded while the bytes go up, so zod stays out of the first page load.
+  const schemas = import("../../shared/schemas");
   const promise = new Promise<VideoAsset>((resolve, reject) => {
     xhr.open("POST", "/api/videos");
     xhr.setRequestHeader("Content-Type", file.type || "application/octet-stream");
@@ -82,18 +84,20 @@ export function uploadVideo(file: File, onProgress: (fraction: number) => void):
       if (event.lengthComputable) onProgress(event.loaded / event.total);
     };
     xhr.onload = () => {
-      if (xhr.status === 201) {
-        const parsed = VideoAssetSchema.safeParse(xhr.response);
-        if (parsed.success) resolve(parsed.data);
-        else reject(new UploadError("We couldn’t read the server’s response. Try again.", "invalid_response"));
-        return;
-      }
-      const body = ApiErrorBodySchema.safeParse(xhr.response);
-      reject(
-        body.success
-          ? new UploadError(editorErrorMessage(body.data.error.code), body.data.error.code, body.data.error.detail)
-          : new UploadError("We couldn’t upload your video. Try again.", `http_${xhr.status}`),
-      );
+      schemas.then(({ ApiErrorBodySchema, VideoAssetSchema }) => {
+        if (xhr.status === 201) {
+          const parsed = VideoAssetSchema.safeParse(xhr.response);
+          if (parsed.success) resolve(parsed.data);
+          else reject(new UploadError("We couldn’t read the server’s response. Try again.", "invalid_response"));
+          return;
+        }
+        const body = ApiErrorBodySchema.safeParse(xhr.response);
+        reject(
+          body.success
+            ? new UploadError(editorErrorMessage(body.data.error.code), body.data.error.code, body.data.error.detail)
+            : new UploadError("We couldn’t upload your video. Try again.", `http_${xhr.status}`),
+        );
+      }, () => reject(new UploadError("The connection was lost during upload. Check your network and try again.", "network")));
     };
     xhr.onerror = () => reject(new UploadError("The connection was lost during upload. Check your network and try again.", "network"));
     xhr.onabort = () => reject(new UploadError("Upload canceled.", "aborted"));

@@ -107,6 +107,34 @@ describe("compositor", () => {
     expect(near(rgb(first, W, 5, 5), [30, 60, 210])).toBe(true);
   });
 
+  it("Spotlight: subject untouched, background darker away from the subject than beside it", async () => {
+    const out = await render("spotlight", { effect: "spotlight", darkness: 0.9, feather: 0 });
+    await verifyOutput(out.file, { width: W, height: H, fps: FPS, frameCount: FRAMES, hasAudio: false });
+    const index = 24;
+    const frame = await frameAt(out.file, W, H, index);
+    expect(near(rgb(frame, W, xAt(index) + SIZE / 2, Y + SIZE / 2), [220, 30, 40])).toBe(true);
+    const beside = rgb(frame, W, xAt(index) + SIZE + 6, Y + SIZE / 2);
+    const far = rgb(frame, W, W - 4, H - 4);
+    expect(beside[2]).toBeGreaterThan(far[2] + 20);
+    expect(far[2]).toBeLessThan(60);
+  });
+
+  it("Finish: subject glow lights the background next to the subject, letterbox bars are black", async () => {
+    const out = await render("finish", { effect: "selective_color", feather: 0, finish: { subject: "glow", accent: "gold", accentStrength: 1, letterbox: true, vignette: 0.6 } });
+    await verifyOutput(out.file, { width: W, height: H, fps: FPS, frameCount: FRAMES, hasAudio: false });
+    const plain = await render("finish-plain", { effect: "selective_color", feather: 0 });
+    const index = 24;
+    const [lit, base] = await Promise.all([frameAt(out.file, W, H, index), frameAt(plain.file, W, H, index)]);
+    const beside = (frame: Buffer) => rgb(frame, W, xAt(index) + SIZE + 3, Y + SIZE / 2);
+    // Gold glow: warmer and brighter than the plain gray background right there.
+    expect(beside(lit)[0]).toBeGreaterThan(beside(base)[0] + 25);
+    // The subject keeps its own color under the glow.
+    expect(near(rgb(lit, W, xAt(index) + SIZE / 2, Y + SIZE / 2), [220, 30, 40])).toBe(true);
+    // 320×180 cropped to 2.39:1 leaves bars of round((180 − 320/2.39) / 2) = 23 px.
+    expect(near(rgb(lit, W, W / 2, 4), [0, 0, 0], 6)).toBe(true);
+    expect(near(rgb(lit, W, W / 2, H - 4), [0, 0, 0], 6)).toBe(true);
+  });
+
   it("Break the Frame: clipped background, unclipped subject past the frame edge", async () => {
     const out = await render("break", { effect: "break_frame", background: "dark", frameSize: "balanced", feather: 0 });
     const { width, height } = BREAK_FRAME_CANVAS;

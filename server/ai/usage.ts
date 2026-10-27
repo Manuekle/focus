@@ -7,7 +7,7 @@ import { dataRoot } from "../storage";
 export type UsageEntry = {
   readonly at: string;
   readonly model: string;
-  readonly kind: "plan" | "segment" | "file_upload";
+  readonly kind: "plan" | "suggest" | "assist" | "segment" | "file_upload";
   readonly cached: boolean;
   readonly ok: boolean;
   readonly videoId?: string;
@@ -45,6 +45,7 @@ export async function usageSummary() {
     failedCalls: calls.filter((entry) => !entry.ok).length,
     cacheHits: entries.filter((entry) => entry.cached).length,
     planCalls: calls.filter((entry) => entry.kind === "plan").length,
+    assistCalls: calls.filter((entry) => entry.kind === "assist").length,
     segmentCalls: calls.filter((entry) => entry.kind === "segment").length,
     inputTokens: sum((entry) => entry.inputTokens),
     outputTokens: sum((entry) => entry.outputTokens),

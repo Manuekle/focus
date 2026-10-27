@@ -11,7 +11,7 @@ import { Switch } from "../../components/ui/switch";
 import { formatBytes } from "../../shared/media";
 import type { FlowStepId } from "../../shared/pipeline";
 import type { RenderParams, RenderResult } from "../../shared/render";
-import { ACTIVE_JOB_STATUSES, type EditJob, type EffectId, type VideoAsset } from "../../shared/schemas";
+import { ACTIVE_JOB_STATUSES, SuggestionsSchema, type EditJob, type EffectId, type Suggestions, type VideoAsset } from "../../shared/schemas";
 import { frameAt, hitTest } from "../../shared/tracking";
 import { Composer } from "./composer";
 import { EditorNotice } from "./editor-notice";
@@ -22,6 +22,8 @@ import { CompareStage } from "./compare-stage";
 import { TrackingOverlay } from "./tracking-overlay";
 import { VideoStage } from "./video-stage";
 import { editorErrorMessage } from "./messages";
+import { EffectControls } from "./effect-controls";
+import { temporalEffectsEnabled } from "../../shared/features";
 import { prefersReducedMotion, useReducedMotion } from "../../lib/hooks/use-reduced-motion";
 import styles from "./editor-view.module.css";
 
@@ -49,6 +51,11 @@ export function EditorView({
   prompt,
   onPromptChange,
   onReset,
+  initialJob = null,
+  autostart = false,
+  onLoginRequired,
+  onJobChange,
+  variant = "home",
 }: {
   readonly video: VideoAsset;
   readonly effect: EffectId;
@@ -56,8 +63,17 @@ export function EditorView({
   readonly prompt: string;
   readonly onPromptChange: (prompt: string) => void;
   readonly onReset: () => void;
+  /** An edit to reopen (from a saved project). */
+  readonly initialJob?: EditJob | null;
+  /** Generate once on mount: the home page handed over an instruction. */
+  readonly autostart?: boolean;
+  /** No free edits left: the page asks for Facebook sign-in. */
+  readonly onLoginRequired?: () => void;
+  /** Every new job or status, so the page can refresh projects and quota. */
+  readonly onJobChange?: (job: EditJob | null) => void;
+  readonly variant?: "home" | "page";
 }) {
-  const { job, setJob, tracking, pollError, reset } = useJob(null);
+  const { job, setJob, tracking, pollError, reset } = useJob(initialJob);
   const [failure, setFailure] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [diagnostic, setDiagnostic] = useState(false);
@@ -67,8 +83,26 @@ export function EditorView({
   const [pendingFor, setPendingFor] = useState<string | null>(null);
   const [draft, setDraft] = useState<RenderParams | null>(null);
   const [draftFor, setDraftFor] = useState<string | null>(null);
+  const [editingMomentFor, setEditingMomentFor] = useState<string | null>(null);
+  const [freezeInvalid, setFreezeInvalid] = useState(false);
   const editorRef = useRef<HTMLElement>(null);
   const reducedMotion = useReducedMotion();
+  // Ideas read from the clip (one cached Muse Spark call). Optional: on any
+  // failure the composer keeps its static examples.
+  const [suggestions, setSuggestions] = useState<{ videoId: string; value: Suggestions | null } | null>(null);
+  useEffect(() => {
+    let canceled = false;
+    fetch(`/api/videos/${video.id}/suggestions`)
+      .then((response) => (response.ok ? response.json() : null))
+      .then((body) => {
+        const parsed = SuggestionsSchema.safeParse(body);
+        if (!canceled) setSuggestions({ videoId: video.id, value: parsed.success ? parsed.data : null });
+      })
+      .catch(() => { if (!canceled) setSuggestions({ videoId: video.id, value: null }); });
+    return () => { canceled = true; };
+  }, [video.id]);
+  const clipSuggestions = suggestions?.videoId === video.id ? suggestions.value : null;
+  const suggestionsLoading = suggestions?.videoId !== video.id;
 
   useEffect(() => {
     editorRef.current?.focus({ preventScroll: true });
@@ -80,10 +114,12 @@ export function EditorView({
   }, []);
 
   // The effect controls start from the parameters of the render on screen.
-  const renderKey = job?.render?.key ?? null;
-  if (renderKey !== draftFor) {
-    setDraftFor(renderKey);
-    setDraft(job?.render?.params ?? null);
+  const draftSource = job?.status === "ready_to_render" || job?.status === "failed" ? job.params : job?.render?.params ?? job?.params;
+  const draftKey = job ? `${job.id}:${JSON.stringify(draftSource)}` : null;
+  if (draftKey !== draftFor) {
+    setDraftFor(draftKey);
+    setDraft(draftSource ?? null);
+    setFreezeInvalid(false);
   }
 
   // Sync the local choice with the server's whenever a new selection round starts.
@@ -94,13 +130,23 @@ export function EditorView({
     if (job?.status !== "awaiting_selection") setPoint(null);
   }
 
+  // The instruction can move the job to another effect family (it asked for
+  // a blur while Motion Echo was picked): the tabs follow the job.
+  const jobFamily = job?.request.effect;
+  useEffect(() => {
+    if (jobFamily && jobFamily !== effect) onEffectChange(jobFamily);
+    // Only when the job's family changes, never when the user switches tabs.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [jobFamily]);
+
   const run = async (task: () => Promise<EditJob>) => {
     setBusy(true);
     setFailure(null);
     try {
       setJob(await task());
     } catch (error) {
-      setFailure(error instanceof ApiRequestError ? error.message : "We couldn’t complete that action. Try again.");
+      if (error instanceof ApiRequestError && error.code === "login_required" && onLoginRequired) onLoginRequired();
+      else setFailure(error instanceof ApiRequestError ? error.message : "We couldn’t complete that action. Try again.");
     } finally {
       setBusy(false);
     }
@@ -108,12 +154,61 @@ export function EditorView({
 
   const submit = () => run(() => jobApi.create({ videoId: video.id, effect, prompt }));
 
+  // The instruction typed on the home page starts here, once.
+  const autostarted = useRef(false);
+  useEffect(() => {
+    if (!autostart || autostarted.current || prompt.trim().length < 3) return;
+    autostarted.current = true;
+    void submit();
+    // Mount-only: later prop changes never generate again.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  const jobStatus = job?.status;
+  const jobChangeRef = useRef(onJobChange);
+  useEffect(() => {
+    jobChangeRef.current = onJobChange;
+  });
+  useEffect(() => {
+    jobChangeRef.current?.(job);
+    // Reported per job and status, not per progress tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [job?.id, jobStatus]);
+
+  // The AI editor's message stays on screen while Muse Spark answers.
+  const [chatPending, setChatPending] = useState<string | null>(null);
+  const sendChat = async (jobId: string, message: string) => {
+    setChatPending(message);
+    setFailure(null);
+    try {
+      setJob(await jobApi.chat(jobId, message));
+    } catch (error) {
+      setFailure(error instanceof ApiRequestError ? error.message : "The AI editor couldn’t answer. Try again.");
+    } finally {
+      setChatPending(null);
+    }
+  };
+
   const active = job ? ACTIVE_JOB_STATUSES.includes(job.status) : false;
+  const temporalDraft = temporalEffectsEnabled() && draft?.effect === "time_freeze_echo" ? draft : null;
+  const temporalRetry = Boolean(temporalDraft && job?.status === "failed" && job.selection.length);
+  const ready = job?.status === "ready_to_render" || temporalRetry;
   const selecting = job?.status === "awaiting_selection";
-  const showComposer = !job || ["failed", "canceled", "awaiting_clarification"].includes(job.status);
+  const showComposer = !job || (!temporalRetry && ["failed", "canceled", "awaiting_clarification"].includes(job.status));
   const showOverlay = tracking && job && !active && (selecting || job.status === "ready_to_render" || diagnostic);
   const result = job?.status === "completed" && job.render ? { ...job, render: job.render } : null;
-  const panelKey = active ? "processing" : selecting ? "selecting" : job?.status === "ready_to_render" ? "ready" : result ? "result" : "compose";
+  const panelKey = active ? "processing" : selecting ? "selecting" : ready ? "ready" : result ? "result" : "compose";
+  const editingMoment = Boolean(temporalDraft && job && !active && (ready || (result && editingMomentFor === job.id)));
+  const applyDraft = () => {
+    if (!job) return;
+    if (temporalDraft && temporalDraft.trigger.timestampMs === undefined) {
+      setEditingMomentFor(job.id);
+      setFreezeInvalid(true);
+      return;
+    }
+    setEditingMomentFor(null);
+    void run(() => jobApi.render(job.id, draft ?? undefined));
+  };
 
   // The last finished render stays on stage while a new one is computed, so
   // changing a setting never collapses the player back to the source.
@@ -137,9 +232,9 @@ export function EditorView({
   const currentFrame = tracking ? frameAt(tracking, frameIndex) : undefined;
 
   return (
-    <section id="editor" ref={editorRef} tabIndex={-1} aria-label="Clip editor" className={cn(styles.editor, result && "pb-28 lg:pb-0")}>
+    <section id="editor" ref={editorRef} tabIndex={-1} aria-label="Clip editor" data-variant={variant} className={cn(styles.editor, result && "pb-28 lg:pb-0")}>
       <section aria-label="Video" className={styles.preview}>
-        {stageRender && !diagnostic ? (
+        {stageRender && !diagnostic && !editingMoment ? (
           <CompareStage
             key={stageRender.key}
             render={stageRender}
@@ -149,6 +244,10 @@ export function EditorView({
           <VideoStage
             key={video.id}
             video={video}
+            freeze={editingMoment && temporalDraft ? {
+              trigger: temporalDraft.trigger, suggestion: job?.temporalSuggestion ?? null, invalid: freezeInvalid, focus: Boolean(result),
+              onChange: (trigger) => { setDraft({ ...temporalDraft, trigger }); setFreezeInvalid(false); },
+            } : undefined}
             overlay={
               showOverlay
                 ? (videoRef) => (
@@ -188,10 +287,11 @@ export function EditorView({
         <div className={styles.fileRow}>
           <div className={styles.fileDetails}>
             <p className={styles.fileName} title={video.originalName}>{video.originalName}</p>
-            <p className={styles.fileMeta}>{video.source.width}×{video.source.height} · {video.source.durationSeconds.toFixed(1)}s · {formatBytes(video.source.sizeBytes)}</p>
+            {/* Duration lives in the player; this line carries what the player does not. */}
+            <p className={styles.fileMeta}>{video.source.width}×{video.source.height} · {video.normalized.fps} fps · {formatBytes(video.source.sizeBytes)}</p>
           </div>
           <Button variant="ghost" size="sm" onClick={onReset} disabled={active} aria-label="Change clip">
-            <HugeiconsIcon icon={ArrowLeftRightIcon} size={14} strokeWidth={1.5} />Change clip
+            <HugeiconsIcon icon={ArrowLeftRightIcon} size={14} strokeWidth={1.5} />{variant === "page" ? "New clip" : "Change clip"}
           </Button>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3">
@@ -206,7 +306,7 @@ export function EditorView({
       </section>
 
       <aside className={styles.controls}>
-        <h2 className={styles.heading}>Make it your own.</h2>
+        {variant === "home" ? <h2 className={styles.heading}>Make it your own.</h2> : null}
         <motion.div
           key={panelKey}
           ref={panelRef}
@@ -236,13 +336,14 @@ export function EditorView({
             />
           ) : null}
 
-          {job?.status === "ready_to_render" ? (
+          {job && ready ? (
             <ReadyPanel
               job={job}
               frameCount={video.normalized.frameCount}
               onChangeSelection={() => void run(() => jobApi.reopen(job.id))}
               onNewInstruction={reset}
-              onRender={() => void run(() => jobApi.render(job.id))}
+              onRender={applyDraft}
+              controls={temporalDraft ? <EffectControls family={job.request.effect} value={temporalDraft} onChange={setDraft} /> : undefined}
               busy={busy}
             />
           ) : null}
@@ -252,18 +353,31 @@ export function EditorView({
               job={result}
               draft={draft}
               onDraftChange={setDraft}
-              onApply={() => void run(() => jobApi.render(result.id, draft))}
+              onApply={applyDraft}
+              onEditFreezePoint={() => setEditingMomentFor(editingMomentFor === result.id ? null : result.id)}
+              editingFreezePoint={editingMoment}
               busy={busy}
               onChangeSelection={() => void run(() => jobApi.reopen(result.id))}
               onNewInstruction={reset}
               onFillGaps={() => void run(() => jobApi.fill(result.id))}
+              chat={{
+                pending: chatPending,
+                disabled: busy,
+                onSend: (message) => void sendChat(result.id, message),
+                onRestore: (messageId) => void run(() => jobApi.restore(result.id, messageId)),
+                // Another subject needs new masks: a new edit, started in plain sight.
+                onStartEdit: (instruction) => {
+                  onPromptChange(instruction);
+                  void run(() => jobApi.create({ videoId: video.id, effect, prompt: instruction }));
+                },
+              }}
             />
           ) : null}
 
           {showComposer ? (
             <>
               {job?.status === "failed" && job.error ? (
-                <EditorNotice title="Edit couldn’t be completed" description={editorErrorMessage(job.error.code)} action={{ label: "Retry", onClick: () => void submit() }} />
+                <EditorNotice title="Edit couldn’t be completed" description={job.error.code === "unsupported_edit" || job.error.code === "no_match" ? job.error.message : editorErrorMessage(job.error.code)} action={{ label: "Retry", onClick: () => void submit() }} />
               ) : null}
               {job?.status === "awaiting_clarification" ? (
                 <EditorNotice status="info" title="Add one more detail" description={`${job.detail ?? ""} Add it to your instruction and generate again.`.trim()} />
@@ -279,6 +393,8 @@ export function EditorView({
                 onSubmit={() => void submit()}
                 canSubmit
                 busy={busy}
+                suggestions={clipSuggestions}
+                suggestionsLoading={suggestionsLoading}
               />
             </>
           ) : null}

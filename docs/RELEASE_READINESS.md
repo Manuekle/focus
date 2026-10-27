@@ -1,8 +1,10 @@
 # Release readiness
 
+This is the historical v1 audit. Current Time Freeze acceptance, test counts and Docker evidence are in [FOCUS_V2_ACCEPTANCE.md](FOCUS_V2_ACCEPTANCE.md). The publication decisions recorded here remain separate from feature acceptance.
+
 Audit date: 2026-10-26. Evidence below comes from commands actually run on this date; "fixture" means recorded or synthetic data, "live" means real Meta Model API calls.
 
-**Recommendation:** ready for a **public hackathon demo** on a single container with the default limits. **Not yet cleared for open-source publication** until the rights question below (Oruka-derived code) are resolved. No blockers remain in the product itself.
+**Recommendation:** ready for a **public hackathon demo** on a single container with the default limits. **Not yet cleared for open-source publication** until the rights questions below (Oruka-derived code, committed tooling) are resolved. No blockers remain in the product itself.
 
 ## Feature matrix
 
@@ -27,7 +29,6 @@ Audit date: 2026-10-26. Evidence below comes from commands actually run on this 
 | Abuse and cost protection | Complete | 8 guard tests; E2E with emergency switch | n/a | Limits are in memory per instance and reset on restart | Medium | Release (single instance) |
 | Health endpoint | Complete | E2E; Docker HEALTHCHECK | n/a | — | — | Release |
 | Docker deployment | Complete | Image built and run locally (arm64): healthy, full live job in the container | Live job inside container: 4 s clip → verified MP4 in 26 s | Not yet tested on a cloud host or on amd64 | Medium | Release after a smoke test on the target host |
-| Design-system catalog (`/system`) | Preserved | E2E page load | n/a | — | — | Release |
 
 ## Rights questions (block open-source publication, not the demo)
 
@@ -37,6 +38,7 @@ Audit date: 2026-10-26. Evidence below comes from commands actually run on this 
 | Interface font | Inter replaces Optimistic Display; SIL Open Font License 1.1 included in `public/fonts/inter/LICENSE.txt` | — | Keep the included font license |
 | License file | Intentionally absent (owner's decision); README states all rights reserved | — | Revisit before publishing |
 | Sample media | None in the repo; test clips are generated or kept outside git | — | — |
+| Committed agent tooling | Commit `c4b3313` added `.claude/worktrees/` (an unrelated project, including Apple SF Pro font files that may not be redistributed) and `.agents/skills/` (third-party agent skills under their own licenses) | Blocker for publication | Worktree now untracked and ignored; it must also be removed from history (amend `c4b3313` before the first push). Owner decides whether `.agents/` stays public |
 
 ## Tests executed (2026-10-26)
 
@@ -45,13 +47,12 @@ Audit date: 2026-10-26. Evidence below comes from commands actually run on this 
 | Install | `pnpm install --frozen-lockfile` (local and in Docker) | Pass |
 | TypeScript | `pnpm typecheck` | Pass |
 | ESLint | `pnpm lint` | Pass |
-| Import/package integrity | `pnpm verify` | Pass (191 files) |
-| Unit + integration (Vitest, FFmpeg) | `pnpm test` | **102 / 102 passed** |
+| Unit + integration (Vitest, FFmpeg) | `pnpm test` | **104 / 104 passed** |
 | Production build | `next build` | Pass |
-| Browser E2E (Playwright, Chrome) | `pnpm test:e2e` | **6 / 6 passed** |
+| Browser E2E (Playwright, Chrome) | `pnpm test:e2e` | **11 / 11 passed** |
 | Live Meta API | `pnpm test:live` | Muse Spark passed; SAM passed every check except an assertion on billed frames (50-frame minimum observed), since corrected and not re-run to save credits |
 | Live end-to-end journey | scripted upload → plan → SAM → gap fill → three effects → download (local production server) | Pass, all three MP4s verified |
-| Docker | `docker build` + run + health + live job | Pass (local, arm64) |
+| Docker | `docker build` + run + health + live job; final image rebuilt and re-checked (healthy, `/api/usage` 404 without token) | Pass (local, arm64) |
 
 Not run: tests on a cloud host; amd64 image; screen-reader audit; reduced-motion emulation (verified by code review only).
 
@@ -90,6 +91,7 @@ Slowest stage: SAM. Optimization applied from this measurement: new jobs now sta
 ## Defects found and fixed during the audit
 
 - Later effects on the same subject started from unfilled masks, rendered once with gaps, then re-rendered → now reuse the filled segmentation.
+- `pnpm lint` failed with 91 errors, all in committed agent tooling (`.agents/`, `.claude/worktrees/`) → excluded from ESLint; worktree untracked.
 - `pnpm install --frozen-lockfile` failed in CI/Docker on an undeclared build-script decision (esbuild) → declared in `pnpm-workspace.yaml`.
 - A malformed `X-Focus-Filename` header caused a 500 → now 400.
 - `/api/usage` was public → hidden in production unless an admin token is configured.

@@ -1,5 +1,3 @@
 @import "../styles/index.css";
-@import "./catalog.css";
 @import "./editor.css";
 @source ".";
-@source "../catalog";

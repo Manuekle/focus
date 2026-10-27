@@ -72,13 +72,19 @@ export function writeFrames(options: {
   readonly fps: number;
   readonly frameCount: number;
   readonly audioFrom?: string;
+  /**
+   * Time Freeze: the source audio plays up to `atSeconds`, then `silenceSeconds`
+   * of silence while the picture holds, then (when resuming) the rest of the
+   * source, so resumed frames and their sound stay together.
+   */
+  readonly audioFreeze?: AudioFreeze;
   readonly signal?: AbortSignal;
 }): FrameWriter {
-  const { output, width, height, fps, frameCount, audioFrom, signal } = options;
+  const { output, width, height, fps, frameCount, audioFrom, audioFreeze, signal } = options;
   const args = [
     "-y",
     "-f", "rawvideo", "-pix_fmt", "rgba", "-s", `${width}x${height}`, "-r", String(fps), "-i", "pipe:0",
-    ...(audioFrom ? ["-i", audioFrom, "-map", "0:v:0", "-map", "1:a:0", "-c:a", "copy"] : ["-map", "0:v:0", "-an"]),
+    ...(audioFrom ? ["-i", audioFrom, "-map", "0:v:0", ...(audioFreeze ? freezeAudioArgs(audioFreeze, frameCount / fps) : ["-map", "1:a:0", "-c:a", "copy"])] : ["-map", "0:v:0", "-an"]),
     "-frames:v", String(frameCount),
     "-c:v", "libx264", "-preset", "medium", "-crf", "18", "-profile:v", "high",
     // Untagged on both sides: decode and encode use the same default matrix,
@@ -123,6 +129,36 @@ export function writeFrames(options: {
       child.kill("SIGKILL");
     },
   };
+}
+
+export type AudioFreeze = { readonly atSeconds: number; readonly silenceSeconds: number; readonly resume: boolean };
+
+const AUDIO_RATE = 48000;
+
+/**
+ * Filter graph for the freeze audio policy. Every number comes from frame
+ * counts computed on the server, printed as fixed decimals; nothing else
+ * reaches the graph. All parts share one sample rate and layout so concat can
+ * join them sample-exactly.
+ */
+export function freezeAudioArgs({ atSeconds, silenceSeconds, resume }: AudioFreeze, outputDurationSeconds: number): string[] {
+  const at = atSeconds.toFixed(6);
+  const silence = silenceSeconds.toFixed(6);
+  const format = `aformat=sample_fmts=fltp:sample_rates=${AUDIO_RATE}:channel_layouts=stereo`;
+  // A short audio track must not pull the freeze earlier. First put it on
+  // the source clock, filling missing leading/trailing samples with silence.
+  const sourceDuration = (resume ? outputDurationSeconds - silenceSeconds : atSeconds).toFixed(6);
+  const source = `[1:a]aresample=${AUDIO_RATE}:first_pts=0,${format},apad=whole_dur=${sourceDuration},atrim=end=${sourceDuration}`;
+  const graph = resume
+    ? `${source},asplit=2[x][y];` +
+      `[x]atrim=end=${at},asetpts=PTS-STARTPTS[before];` +
+      `anullsrc=r=${AUDIO_RATE}:cl=stereo,atrim=duration=${silence},${format}[hold];` +
+      `[y]atrim=start=${at},asetpts=PTS-STARTPTS[after];` +
+      `[before][hold][after]concat=n=3:v=0:a=1[a]`
+    : `${source},atrim=end=${at},asetpts=PTS-STARTPTS[before];` +
+      `anullsrc=r=${AUDIO_RATE}:cl=stereo,atrim=duration=${silence},${format}[hold];` +
+      `[before][hold]concat=n=2:v=0:a=1[a]`;
+  return ["-filter_complex", graph, "-map", "[a]", "-c:a", "aac", "-b:a", "160k"];
 }
 
 /** Runs a one-shot FFmpeg command that can be canceled. */

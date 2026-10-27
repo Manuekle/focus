@@ -49,8 +49,53 @@ See `.env.example`. Required: `MODEL_API_KEY`. For a public demo, set at least:
 | `FOCUS_TRUST_PROXY` | 0 | Set to 1 behind a reverse proxy so limits use the real client IP. |
 | `FOCUS_AI_DISABLED` | 0 | Emergency switch: 1 refuses new AI work immediately (restart the container to apply). |
 | `FOCUS_ADMIN_TOKEN` | — | Enables `GET /api/usage` with header `X-Focus-Admin`. |
+| `FOCUS_SESSION_SECRET` | — | **Required in production.** Signs session cookies (32+ chars: `openssl rand -base64 48`). |
+| `FOCUS_FREE_EDITS` | 3 | AI edits allowed before Facebook sign-in. Stored on disk, survives restarts. |
+| `FOCUS_CHAT_PER_HOUR` | 60 | AI editor messages per client per hour. |
+| `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` | — | Real Facebook Login. Without them a simulated sign-in runs (development only). |
+| `FOCUS_PUBLIC_URL` | request origin | Origin of the OAuth redirect URI. Register `<FOCUS_PUBLIC_URL>/api/auth/facebook/callback` as a Valid OAuth Redirect URI in the Meta app. |
+| `FACEBOOK_GRAPH_VERSION` | v23.0 | Graph API version for the login dialog and `/me`. |
+| `FOCUS_AUTH_SIMULATED` | 0 | 1 allows the simulated sign-in on a production build (testing only: anyone could sign in as any name). |
 
 Limits are per instance and in memory: they reset on restart. They are practical guards for a demo, not billing-grade enforcement.
+
+## Temporal release flag
+
+`NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS` is a **public build-time boolean**, off by default. Only the exact value `true` enables Time Freeze as an additional effect. Missing, empty and other values compile to `false`. The explicit default is also compiled into API bundles, so changing the container's start-time environment cannot enable a server effect that the browser does not offer.
+
+```sh
+# Experimental build: keep server API keys in the normal runtime .env.
+NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=true pnpm build
+pnpm start
+
+# Or build the experimental container.
+docker build --build-arg NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=true -t focus-temporal .
+docker run -p 3000:3000 --env-file .env -v focus-data:/data focus-temporal
+```
+
+The Docker build argument carries this boolean only. Server secrets, including Meta API keys, stay in the runtime environment. `docker run -e NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=...` does not change an existing build. For development, set the flag before starting `next dev`, and restart it after changing the flag.
+
+To roll back, build with `NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=false` or rebuild the default Docker image, then replace the running process/container with that build. Keep the data volume. When disabled:
+
+- The stable effects remain available; the Time Freeze tab and saved temporal editor controls are hidden.
+- New temporal jobs, cached plans, re-renders with or without supplied parameters, subject changes, gap fills and AI edits of temporal jobs are refused with `effect_disabled` before that work starts.
+- A temporal browser draft keeps its text, selects Reality Shift and cancels automatic generation, so it cannot silently spend credits on a different effect. This correction is saved locally, preventing the old autostart from returning after re-enabling the feature.
+- Stored plans, masks, jobs and MP4s remain on disk under the normal retention rules. Existing completed export URLs still work; temporal project edits become visible again when the feature is enabled.
+
+The release flag is separate from `FOCUS_AI_DISABLED`: that existing emergency switch stops new AI requests for every effect. A feature-flag rollback takes effect when the replacement build starts; it does not cancel a worker already running in the old process.
+
+Verify both compiled states with no paid API work (Playwright starts an isolated server with AI disabled and empty provider keys):
+
+```sh
+NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=true pnpm build
+NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=true FOCUS_E2E_RUNTIME_TEMPORAL_EFFECTS=false pnpm test:e2e
+NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=false pnpm build
+NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=false FOCUS_E2E_RUNTIME_TEMPORAL_EFFECTS=true pnpm test:e2e
+```
+
+`FOCUS_E2E_RUNTIME_TEMPORAL_EFFECTS` belongs only to the test harness. Starting each server with the opposite value verifies that its API and client both obey the compiled release flag. To verify an unset flag, leave it out of `.env*` and use `env -u NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS pnpm build` for the stable build. The stable checks also reopen a pre-rollback draft/project and reject an empty-body render of saved temporal settings without altering the job.
+
+Run builds, TypeScript checks and video suites in sequence. Next regenerates shared type files, while FFmpeg and mask decoding use real CPU and memory. Vitest and browser checks each use one worker, with a 60-second fixture setup limit in Vitest. Browser files share their server and data directory. Upload checks wait for the actual normalization response before inspecting effect controls.
 
 ## Operations
 

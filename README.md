@@ -8,9 +8,15 @@ The interface is in Spanish. The three effects:
 
 | Effect | What it does | Status |
 | --- | --- | --- |
-| **Reality Shift** | The subject keeps its color (or stays sharp); everything else turns gray (or blurs). | Working, verified on real footage |
+| **Reality Shift** | The subject keeps its color, stays sharp, or stands in a **spotlight**; everything else turns gray, blurs or falls into shadow. | Working, verified on real footage (spotlight: real masks, offline render) |
 | **Break the Frame** | The video sits inside an inner frame on a 1080×1350 canvas; the subject is drawn above it and steps out across the frame edge. | Working, verified on real footage |
 | **Motion Echo** | Fading copies of the subject from earlier frames trace its path. | Working; designed for static cameras (see limitations) |
+
+**Finish** (any effect): color looks (Cinematic, Noir, Golden hour, Moonlight, Vintage film, Vivid), a glow or outline drawn from the subject's own mask, vignette, film grain and letterbox.
+
+**AI editor.** Once a result is ready, keep talking to it: "make it cinematic with a gold glow", "more dramatic", "turn it into motion trails". Muse Spark answers with a bounded settings patch (validated with Zod, numbers clamped) and Focus re-renders from the saved masks: no new SAM pass. Every turn's version can be restored for free. A request that needs another subject comes back as a suggested new edit, never as silent paid work.
+
+**Accounts.** Anyone can try Focus: 3 free AI edits without an account (counted server-side by an anonymous cookie and the client address; `FOCUS_FREE_EDITS`). After that, "Continue with Facebook". Signed-in edits are saved as **projects** (one per clip, every edit and AI editor turn kept, exempt from the 24-hour cleanup). Locally the Facebook step is simulated; set `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET` and the same routes run the real Facebook Login (Graph API authorization-code flow). The home page hands the clip and instruction to the full editor (`/editor`) through `localStorage`, so the instruction also survives the sign-in round trip.
 
 ## How it works
 
@@ -39,7 +45,6 @@ pnpm dev                  # http://localhost:3200
 ```
 
 - `/` — the editor.
-- `/system` — the Focus design-system catalog the editor is built with ([package docs](docs/DESIGN_SYSTEM_PACKAGE.md), [identity](docs/DESIGN_SYSTEM.md)).
 - `/api/health` — readiness (FFmpeg, FFprobe, storage, AI switch, daily budget).
 
 Uploads, masks and renders live in `.focus-data/` (git-ignored) and expire after 24 h.
@@ -47,10 +52,11 @@ Uploads, masks and renders live in `.focus-data/` (git-ignored) and expire after
 ## Tests
 
 ```sh
-pnpm check       # tokens, inventory, TypeScript, ESLint, import verification, unit + integration tests
+pnpm check       # TypeScript, ESLint, unit + integration tests
 pnpm test        # Vitest only (no network, no credits): parsing, plans, jobs, compositor, FFmpeg exports
 pnpm build && pnpm test:e2e   # Playwright (installed Chrome) against the production build, AI switched off
-pnpm test:live   # Paid: one Muse Spark call and one SAM pass (~50 frames). Needs MODEL_API_KEY.
+pnpm test:live   # Paid v1 planner, AI editor and SAM checks. Needs a Meta API key.
+pnpm test:live:temporal # Opt-in real-footage temporal checks; see docs/FOCUS_V2_LIVE_TESTING.md.
 ```
 
 Unit tests replay **recorded** SAM 3.1 output (`server/ai/__fixtures__`); they are not live tests. The live path is covered by `pnpm test:live` and by the end-to-end journey recorded in [docs/RELEASE_READINESS.md](docs/RELEASE_READINESS.md).
@@ -65,6 +71,8 @@ docker run -p 3000:3000 --env-file .env -v focus-data:/data focus
 ```
 
 Resources, abuse protection and environment variables: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
+
+Time Freeze is experimental and off by default. Enable it with `NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=true pnpm build`, then start that build. Docker uses `docker build --build-arg NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=true -t focus-temporal .`. This public boolean is compiled into both browser and API bundles; switching it on or off requires a rebuild. See [release and rollback checks](docs/DEPLOYMENT.md#temporal-release-flag).
 
 ## Known limitations
 
@@ -108,7 +116,7 @@ Drag the before/after slider, change a setting (re-render without AI calls), and
 
 No open-source license is granted at this time: **all rights reserved** unless stated otherwise.
 
-- The design-system base in `components/`, `lib/`, `styles/` and `catalog/` was extracted from Oruka (see `provenance.json`); this repository grants no license to that code.
+- The design-system base in `components/`, `lib/` and `styles/` was extracted from Oruka (see `provenance.json`); this repository grants no license to that code.
 - **Inter** (`public/fonts/inter/`) is © The Inter Project Authors and distributed under the included SIL Open Font License 1.1 (`LICENSE.txt`).
 - Meta models are used through the Meta Model API under Meta's terms; `@meta-sam/parser` is distributed under the SAM License.
 - Dependencies keep their licenses: Next.js, React, Zod, Motion and Hugeicons free icons (MIT); OpenAI SDK and Sharp (Apache-2.0). FFmpeg (LGPL/GPL, including libx264) is invoked as an external program.

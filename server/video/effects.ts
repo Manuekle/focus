@@ -150,3 +150,36 @@ export function padBox(box: Box, margin: number, width: number, height: number):
     bottom: Math.min(height, box.bottom + margin),
   };
 }
+
+/**
+ * Reality Shift · spotlight: the background darkens and loses some color,
+ * except for a soft pool of light around the subject. `center` and `radius`
+ * place the pool in source pixels.
+ */
+export function spotlight(frame: Buffer, alpha: Uint8Array, width: number, darkness: number, pool: { x: number; y: number; radius: number } | null): Buffer {
+  const out = Buffer.allocUnsafe(frame.length);
+  const inner = pool ? pool.radius * 0.7 : 0;
+  const outer = pool ? pool.radius * 2.4 : 1;
+  for (let i = 0, p = 0; i < alpha.length; i++, p += 4) {
+    let reach = 1;
+    if (pool) {
+      const dx = (i % width) - pool.x;
+      const dy = Math.floor(i / width) - pool.y;
+      const t = Math.min(1, Math.max(0, (Math.sqrt(dx * dx + dy * dy) - inner) / (outer - inner)));
+      // Light falls off smoothly; even the pool keeps a little shade.
+      reach = 0.3 + 0.7 * t * t * (3 - 2 * t);
+    }
+    const k = (darkness * reach * (255 - alpha[i])) / 255;
+    const r = frame[p];
+    const g = frame[p + 1];
+    const b = frame[p + 2];
+    const y = luma(r, g, b);
+    const keep = 1 - k;
+    const desaturate = 0.4 * k;
+    out[p] = Math.round((r + (y - r) * desaturate) * keep);
+    out[p + 1] = Math.round((g + (y - g) * desaturate) * keep);
+    out[p + 2] = Math.round((b + (y - b) * desaturate) * keep);
+    out[p + 3] = 255;
+  }
+  return out;
+}

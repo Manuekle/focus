@@ -3,23 +3,44 @@ import { createHash, randomUUID } from "node:crypto";
 import { mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import {
   ACTIVE_JOB_STATUSES,
+  CHAT_HISTORY_MAX,
   EFFECT_PLAN_EFFECTS,
+  effectFamily,
   EditJobSchema,
   EditPlanSchema,
+  type ChatMessage,
   type EditJob,
   type EditPlan,
   type EditRequest,
+  type EffectId,
   type RefineRequest,
   type VideoAsset,
 } from "../shared/schemas";
-import { RENDERER_VERSION, RenderParamsSchema, RenderResultSchema, defaultParams, type RenderParams, type RenderResult } from "../shared/render";
+import {
+  RENDERER_VERSION,
+  TEMPORAL_RENDERER_VERSION,
+  RenderParamsSchema,
+  RenderResultSchema,
+  applyParamsPatch,
+  defaultParams,
+  describeParamChanges,
+  type RenderParams,
+  type RenderParamsInput,
+  type RenderResult,
+} from "../shared/render";
 import { TrackingSchema, fillTracking, frameAt, hitTest, mergeTracking, type Tracking } from "../shared/tracking";
+import { effectEnabled } from "../shared/features";
+import { planFreeze, triggerProblem } from "../shared/temporal";
+import { suggestTemporalEvent, type TemporalSuggestion } from "../shared/temporal-events";
+import { checkTemporalTracking, selectionTrack } from "../shared/temporal-track";
+import { assistEdit } from "./ai/assistant";
 import { interpretInstruction } from "./ai/planner";
 import { segmentVideo, type SamPrompt } from "./ai/sam";
 import { recordUsage } from "./ai/usage";
 import { Limiter } from "./ai/meta";
 import { AppError } from "./errors";
 import { renderComparison, renderVideo, trackingMaskSource, verifyOutput } from "./video/compositor";
+import { retainedIds } from "./projects";
 import { VIDEO_FILES, dataRoot, videoDir } from "./storage";
 import { getVideo } from "./videos";
 
@@ -58,6 +79,7 @@ const { running, inflightSegmentations, inflightPlans, locks, inflightRenders, r
 export const services = {
   interpret: interpretInstruction,
   segment: segmentVideo,
+  assist: assistEdit,
 };
 
 function jobsDir(): string {
@@ -134,11 +156,17 @@ export async function getJob(id: string): Promise<EditJob> {
   const job = await readJob(id);
   // An active job with no live worker was interrupted by a restart or crash.
   if (ACTIVE_JOB_STATUSES.includes(job.status) && !running.has(id)) {
-    return saveJob({
-      ...job,
-      status: "failed",
-      detail: null,
-      error: { code: "interrupted", message: "El proceso se interrumpió (el servidor se reinició). Vuelve a generarlo; lo ya calculado se reutiliza." },
+    return withJobLock(id, async () => {
+      // The worker can finish between the initial read and the running check.
+      // Confirm the current state under the same lock as terminal writes.
+      const current = await readJob(id);
+      if (!ACTIVE_JOB_STATUSES.includes(current.status) || running.has(id)) return current;
+      return saveJob({
+        ...current,
+        status: "failed",
+        detail: null,
+        error: { code: "interrupted", message: "El proceso se interrumpió (el servidor se reinició). Vuelve a generarlo; lo ya calculado se reutiliza." },
+      });
     });
   }
   return job;
@@ -169,7 +197,12 @@ export function activeJobCount(): number {
   return running.size;
 }
 
+function assertEffectEnabled(effect: EffectId): void {
+  if (!effectEnabled(effect)) throw new AppError("effect_disabled", 400, "Ese efecto no está disponible.");
+}
+
 export async function createJob(request: EditRequest, gate?: PaidWorkGate): Promise<EditJob> {
+  assertEffectEnabled(request.effect);
   const video = await getVideo(request.videoId);
   void cleanupJobs();
   const key = requestKey(request);
@@ -186,7 +219,7 @@ export async function createJob(request: EditRequest, gate?: PaidWorkGate): Prom
     videoId: video.id,
     request,
     status: "interpreting",
-    detail: "Interpretando la instrucción con Muse Spark",
+    detail: "Reading your instruction with Muse Spark",
     phase: "understanding",
     progress: 0.05,
     plan: null,
@@ -196,8 +229,10 @@ export async function createJob(request: EditRequest, gate?: PaidWorkGate): Prom
     reused: { plan: false, segmentation: false },
     error: null,
     params: null,
+    temporalSuggestion: null,
     render: null,
     resultUrl: null,
+    chat: [],
     createdAt: now,
     updatedAt: now,
   });
@@ -321,12 +356,18 @@ async function trackingFor(
 
 async function runJob(id: string, video: VideoAsset, request: EditRequest, key: string, signal: AbortSignal): Promise<void> {
   const { plan, reused: planReused } = await planFor(video, request, key, signal);
+  // Cached plans can outlive the build that enabled their effect.
+  assertEffectEnabled(effectFamily(plan.effect));
+  // The instruction named an effect from another family: the job follows it,
+  // so render settings and the editor tabs match what is rendered.
+  const family = effectFamily(plan.effect);
+  if (family !== request.effect) await patchJob(id, { request: { ...request, effect: family } });
   if (!plan.supported) {
     await patchJob(id, {
       plan,
       status: "failed",
       detail: null,
-      error: { code: "unsupported_edit", message: plan.unsupportedReason ?? "Focus todavía no puede hacer ese tipo de edición." },
+      error: { code: "unsupported_edit", message: plan.unsupportedReason ?? "Focus can’t make that kind of edit yet." },
       reused: { plan: planReused, segmentation: false },
     });
     return;
@@ -335,7 +376,7 @@ async function runJob(id: string, video: VideoAsset, request: EditRequest, key: 
     await patchJob(id, {
       plan,
       status: "awaiting_clarification",
-      detail: plan.clarificationQuestion ?? "¿Qué sujeto quieres destacar?",
+      detail: plan.clarificationQuestion ?? "What should stand out?",
       progress: 0.15,
       reused: { plan: planReused, segmentation: false },
     });
@@ -345,7 +386,7 @@ async function runJob(id: string, video: VideoAsset, request: EditRequest, key: 
   await patchJob(id, {
     plan,
     status: "segmenting",
-    detail: `Buscando «${plan.target.concept}» con SAM 3.1`,
+    detail: `Finding “${plan.target.concept}” with SAM 3.1`,
     phase: "finding",
     progress: 0.15,
     reused: { plan: planReused, segmentation: false },
@@ -362,7 +403,7 @@ async function runJob(id: string, video: VideoAsset, request: EditRequest, key: 
       // Throttled: progress is written at most every 400 ms.
       if (Date.now() - lastWrite < 400) return;
       lastWrite = Date.now();
-      void patchProgress(id, { progress: 0.15 + fraction * 0.8, phase: "tracking", detail: `Siguiendo «${plan.target.concept}» · ${Math.round(fraction * video.normalized.frameCount)}/${video.normalized.frameCount} fotogramas` });
+      void patchProgress(id, { progress: 0.15 + fraction * 0.8, phase: "tracking", detail: `Tracking “${plan.target.concept}” · ${Math.round(fraction * video.normalized.frameCount)}/${video.normalized.frameCount} frames` });
     },
   );
   if (signal.aborted) return;
@@ -378,30 +419,37 @@ async function runJob(id: string, video: VideoAsset, request: EditRequest, key: 
       detail: null,
       segmentationId,
       reused: { plan: planReused, segmentation: reused },
-      error: { code: "no_match", message: `SAM 3.1 no encontró «${plan.target.concept}» en el video. Prueba a nombrar el sujeto de otra forma.` },
+      error: { code: "no_match", message: `SAM 3.1 couldn’t find “${plan.target.concept}” in the clip. Try naming the subject another way.` },
     });
     return;
   }
 
   const ids = tracking.objects.map((object) => object.id);
-  const autoSelect = plan.target.selection === "all" ? ids : ids.length === 1 ? ids : [];
+  // "several": what was found is preselected, and the job waits so the user
+  // can click the other subjects in the video.
+  const several = plan.target.selection === "several";
+  const autoSelect = plan.target.selection === "all" ? ids : ids.length === 1 && !several ? ids : [];
   await patchJob(id, {
     // Straight to rendering when nothing needs choosing: no transient
     // ready_to_render a poller could mistake for a resting state.
     status: autoSelect.length ? "rendering" : "awaiting_selection",
-    detail: autoSelect.length ? "Preparando el render" : `Encontramos ${ids.length} coincidencias. Elige cuál destacar.`,
+    detail: autoSelect.length
+      ? "Preparing the render"
+      : several
+        ? "Click each other subject in the video to add it."
+        : `Found ${ids.length} matches. Pick the ones that should stand out.`,
     phase: autoSelect.length ? "applying" : null,
     progress: autoSelect.length ? 0 : 1,
     segmentationId,
     objects: tracking.objects,
-    selection: autoSelect,
+    selection: several ? ids : autoSelect,
     reused: { plan: planReused, segmentation: reused },
   });
   if (autoSelect.length) await renderJob(id, video, null, signal);
 }
 
 export function renderKey(segmentationId: string, selection: readonly string[], params: RenderParams): string {
-  return `r-${hash(JSON.stringify({ v: RENDERER_VERSION, segmentationId, selection: [...selection].sort(), params }))}`;
+  return `r-${hash(JSON.stringify({ v: RENDERER_VERSION, ...(params.effect === "time_freeze_echo" ? { temporal: TEMPORAL_RENDERER_VERSION } : {}), segmentationId, selection: [...selection].sort(), params }))}`;
 }
 
 /** The render key is in each URL so a re-render never hits a cached earlier result. */
@@ -419,11 +467,42 @@ async function renderJob(id: string, video: VideoAsset, requested: RenderParams 
   if (!job.plan || !job.segmentationId || job.selection.length === 0) {
     throw new AppError("render_not_ready", 409, "Falta elegir el sujeto antes de renderizar.");
   }
-  const params = requested ?? job.params ?? defaultParams(job.plan);
+  let params = requested ?? job.params ?? defaultParams(job.plan);
+  assertEffectEnabled(effectFamily(params.effect));
   const segmentationId = job.segmentationId;
   const selection = job.selection;
+  let detectedTracking: Tracking | null = null;
+  let temporalSuggestion: TemporalSuggestion | null = null;
+  if (params.effect === "time_freeze_echo" && params.trigger.mode === "auto") {
+    detectedTracking = await readTracking(video, segmentationId);
+    if (!detectedTracking) throw new AppError("tracking_not_found", 404, "La segmentación ya no está disponible.");
+    const track = selectionTrack(detectedTracking, selection);
+    // A changing union of several identities is not one subject's movement.
+    temporalSuggestion = selection.length === 1 ? suggestTemporalEvent(track, params.trigger.event!, video.normalized) : null;
+    if (temporalSuggestion) {
+      // Never trust a client/model timestamp marked auto: resolve it from the
+      // current selection, including on re-render after selection changes.
+      params = { ...params, trigger: { mode: "auto", event: temporalSuggestion.event, timestampMs: temporalSuggestion.timestampMs } };
+      const plan = planFreeze(params, video.normalized);
+      if (checkTemporalTracking(track, { triggerFrame: plan.triggerFrame, sampleFrames: plan.requestedSamples }).error) temporalSuggestion = null;
+    }
+    if (!temporalSuggestion) {
+      await patchJob(id, {
+        status: "ready_to_render", detail: "No reliable automatic moment was found. Choose the freeze point on the timeline.",
+        phase: null, progress: 1, params: { ...params, trigger: { mode: "manual" } },
+        temporalSuggestion: null, render: null, resultUrl: null, error: null,
+      });
+      return;
+    }
+  }
+  // A freeze needs its moment before anything renders. Without one, the job
+  // rests until the user places the freeze point; nothing is guessed.
+  if (params.effect === "time_freeze_echo" && params.trigger.timestampMs === undefined) {
+    await patchJob(id, { status: "ready_to_render", detail: "Choose the freeze point on the timeline.", phase: null, progress: 1, params, temporalSuggestion: null, render: null, resultUrl: null, error: null });
+    return;
+  }
   const key = renderKey(segmentationId, selection, params);
-  await patchJob(id, { status: "rendering", detail: "Preparando el render", phase: "applying", progress: 0, params, error: null });
+  await patchJob(id, { status: "rendering", detail: "Preparing the render", phase: "applying", progress: 0, params, temporalSuggestion, error: null });
 
   const dir = path.join(videoDir(video.id), "renders", key);
   const cached = await readFile(path.join(dir, "meta.json"), "utf8").then((raw) => RenderResultSchema.safeParse(JSON.parse(raw)), () => null);
@@ -431,11 +510,14 @@ async function renderJob(id: string, video: VideoAsset, requested: RenderParams 
   if (cached?.success) {
     result = cached.data;
   } else {
-    let pending = inflightRenders.get(key);
+    // Render keys are local to a video directory. Equal settings on two
+    // clips must not share a worker result or leave one clip without files.
+    const flightKey = `${video.id}/${key}`;
+    let pending = inflightRenders.get(flightKey);
     if (!pending) {
       pending = renderLimiter
         .run(async () => {
-          const tracking = await readTracking(video, segmentationId);
+          const tracking = detectedTracking ?? await readTracking(video, segmentationId);
           if (!tracking) throw new AppError("tracking_not_found", 404, "La segmentación ya no está disponible.");
           const temp = `${dir}.tmp-${process.pid}-${Date.now()}`;
           await mkdir(temp, { recursive: true });
@@ -457,19 +539,21 @@ async function renderJob(id: string, video: VideoAsset, requested: RenderParams 
                 void patchRender(id, {
                   progress: fraction * 0.9,
                   phase: done ? "encoding" : "applying",
-                  detail: done ? "Cerrando el MP4" : `Aplicando el efecto · ${Math.round(fraction * video.normalized.frameCount)}/${video.normalized.frameCount} fotogramas`,
+                  detail: done ? "Finishing the MP4" : `Applying the effect · ${Math.round(fraction * video.normalized.frameCount)}/${video.normalized.frameCount} frames`,
                 });
               },
             });
-            void patchRender(id, { progress: 0.92, phase: "encoding", detail: "Verificando el MP4" });
+            void patchRender(id, { progress: 0.92, phase: "encoding", detail: "Verifying the MP4" });
             const verified = await verifyOutput(path.join(temp, "output.mp4"), {
               width: output.width,
               height: output.height,
               fps: video.normalized.fps,
-              frameCount: video.normalized.frameCount,
+              frameCount: output.frameCount,
               hasAudio: video.normalized.hasAudio,
+              ...(params.effect === "time_freeze_echo" ? { timingToleranceSeconds: Math.max(1 / video.normalized.fps, 1024 / 48000) } : {}),
             });
-            void patchRender(id, { progress: 0.95, phase: "encoding", detail: "Preparando la comparación" });
+            const freeze = output.freeze && params.effect === "time_freeze_echo" ? { ...output.freeze.plan, resume: params.resume } : undefined;
+            void patchRender(id, { progress: 0.95, phase: "encoding", detail: "Preparing the comparison" });
             await renderComparison({
               normalizedPath: path.join(videoDir(video.id), VIDEO_FILES.normalized),
               outputPath: path.join(temp, "output.mp4"),
@@ -477,7 +561,13 @@ async function renderJob(id: string, video: VideoAsset, requested: RenderParams 
               width: output.width,
               height: output.height,
               background: params.effect === "break_frame" ? params.background : "dark",
+              freeze,
               signal,
+            });
+            if (freeze) await verifyOutput(path.join(temp, "compare.mp4"), {
+              width: output.width, height: output.height * 2, fps: video.normalized.fps,
+              frameCount: output.frameCount, hasAudio: video.normalized.hasAudio,
+              timingToleranceSeconds: Math.max(1 / video.normalized.fps, 1024 / 48000),
             });
             const meta: RenderResult = {
               key,
@@ -491,6 +581,9 @@ async function renderJob(id: string, video: VideoAsset, requested: RenderParams 
               framesWithoutMask: output.framesWithoutMask,
               breakoutFrameRatio: output.breakoutFrameRatio,
               warnings: output.warnings,
+              temporal: freeze
+                ? { triggerFrame: freeze.triggerFrame, freezeStart: freeze.freezeStart, freezeFrames: freeze.freezeFrames, echoFrames: [...output.freeze!.echoFrames], resume: freeze.resume }
+                : null,
               renderMs: Date.now() - started,
               createdAt: new Date().toISOString(),
               urls: renderUrls(id, key),
@@ -504,8 +597,8 @@ async function renderJob(id: string, video: VideoAsset, requested: RenderParams 
             throw error;
           }
         })
-        .finally(() => inflightRenders.delete(key));
-      inflightRenders.set(key, pending);
+        .finally(() => inflightRenders.delete(flightKey));
+      inflightRenders.set(flightKey, pending);
     }
     result = await pending;
   }
@@ -515,7 +608,13 @@ async function renderJob(id: string, video: VideoAsset, requested: RenderParams 
     detail: null,
     progress: 1,
     params,
-    render: { ...result, urls: renderUrls(id, key) },
+    temporalSuggestion,
+    render: {
+      ...result, urls: renderUrls(id, key),
+      warnings: temporalSuggestion
+        ? [...result.warnings, `${temporalSuggestion.reason} Confidence: ${Math.round(temporalSuggestion.confidence * 100)}%. Review the freeze point and adjust it manually if needed.`]
+        : result.warnings,
+    },
     resultUrl: renderUrls(id, key).video,
   });
 }
@@ -529,31 +628,121 @@ function patchRender(id: string, patch: Pick<EditJob, "progress"> & Partial<Pick
   }).catch(() => undefined);
 }
 
-/** User-triggered (re)render with new parameters. Masks are reused; no AI call. */
-export async function startRender(id: string, requested?: RenderParams): Promise<EditJob> {
+/**
+ * User-triggered (re)render with new parameters. Masks are reused; no AI call.
+ * `followEffect` lets the AI editor move the job to another effect family:
+ * the masks work for every effect, only the editor tabs have to follow.
+ */
+export async function startRender(id: string, requested?: RenderParamsInput, options: { followEffect?: boolean } = {}): Promise<EditJob> {
   const job = await getJob(id);
   if (!["ready_to_render", "completed", "failed"].includes(job.status) || !job.plan || job.selection.length === 0) {
     throw new AppError("render_not_allowed", 409, "Este proceso no puede renderizarse ahora.");
   }
   let params: RenderParams | null = null;
+  let request = job.request;
   if (requested) {
     params = RenderParamsSchema.parse(requested);
     if (!EFFECT_PLAN_EFFECTS[job.request.effect].includes(params.effect)) {
-      throw new AppError("effect_mismatch", 400, "Ese ajuste no pertenece al efecto elegido.");
+      if (!options.followEffect) throw new AppError("effect_mismatch", 400, "Ese ajuste no pertenece al efecto elegido.");
+      request = { ...request, effect: effectFamily(params.effect) };
     }
   }
+  // An omitted body reuses saved params; it must obey the same release gate.
+  const effective = params ?? job.params ?? defaultParams(job.plan);
+  assertEffectEnabled(effectFamily(effective.effect));
   const video = await getVideo(job.videoId);
-  const updated = await withJobLock(id, () => saveJob({ ...job, status: "rendering", detail: "Preparando el render", phase: "applying", progress: 0, error: null }));
+  if (params?.effect === "time_freeze_echo") {
+    const problem = triggerProblem(params.trigger, video.normalized);
+    if (problem) throw new AppError("invalid_trigger", 400, problem);
+  }
+  const updated = await withJobLock(id, () => saveJob({ ...job, request, status: "rendering", detail: "Preparing the render", phase: "applying", progress: 0, error: null }));
   start(id, (signal) => renderJob(id, video, params, signal));
   return updated;
 }
 
-export async function resultFile(id: string, kind: "output" | "compare"): Promise<{ path: string; downloadName: string }> {
+const chatId = () => randomUUID().slice(0, 12);
+
+/** Appends turns to the conversation, keeping the newest. */
+function appendChat(job: EditJob, ...messages: ChatMessage[]): ChatMessage[] {
+  return [...job.chat, ...messages].slice(-CHAT_HISTORY_MAX);
+}
+
+/**
+ * One AI editor turn about a finished result. Muse Spark turns the request
+ * into a bounded parameter patch; a real change starts a re-render from the
+ * stored masks. A request that needs another subject comes back as a
+ * suggested instruction for a new edit, never as silent new SAM work.
+ */
+export async function chatEdit(id: string, message: string): Promise<EditJob> {
   const job = await getJob(id);
-  if (job.status !== "completed" || !job.render) throw new AppError("result_not_ready", 409, "El video editado todavía no está listo.");
-  const file = path.join(videoDir(job.videoId), "renders", job.render.key, `${kind}.mp4`);
+  if (job.status !== "completed" || !job.render || !job.plan) {
+    throw new AppError("chat_not_allowed", 409, "El editor de IA está disponible cuando el video editado está listo.");
+  }
+  assertEffectEnabled(effectFamily(job.render.params.effect));
+  const video = await getVideo(job.videoId);
+  const current = job.render.params;
+  const turn = await services.assist({
+    message,
+    history: job.chat,
+    params: current,
+    family: job.request.effect,
+    concept: job.plan.target.concept,
+    media: video.normalized,
+    videoId: video.id,
+  });
+  const next = turn.action === "adjust" ? applyParamsPatch(current, turn.patch) : null;
+  const changes = next ? describeParamChanges(current, next) : [];
+  const now = new Date().toISOString();
+  const user: ChatMessage = { id: chatId(), role: "user", text: message, at: now };
+  const reply: ChatMessage = {
+    id: chatId(),
+    role: "assistant",
+    text: turn.reply,
+    at: now,
+    ...(next && changes.length ? { changes, params: next } : {}),
+    ...(turn.newInstruction ? { suggestion: turn.newInstruction } : {}),
+  };
+  const saved = await withJobLock(id, async () => {
+    const latest = await readJob(id);
+    return saveJob({ ...latest, chat: appendChat(latest, user, reply) });
+  });
+  if (!next || !changes.length || saved.status !== "completed") return saved;
+  return startRender(id, next, { followEffect: true });
+}
+
+/** Brings back the render of an earlier AI editor turn. Cached renders return at once; no AI call. */
+export async function restoreChatTurn(id: string, messageId: string): Promise<EditJob> {
+  const job = await getJob(id);
+  const turn = job.chat.find((message) => message.id === messageId && message.params);
+  if (!turn?.params) throw new AppError("chat_turn_not_found", 404, "Esa versión ya no está disponible.");
+  return startRender(id, turn.params, { followEffect: true });
+}
+
+/** Every edit made on a clip, newest first: what a project attaches when it is first saved. */
+export async function jobsForVideo(videoId: string): Promise<EditJob[]> {
+  const names = await readdir(jobsDir()).catch(() => [] as string[]);
+  const jobs: EditJob[] = [];
+  for (const name of names.filter((entry) => entry.endsWith(".json"))) {
+    const job = await getJob(name.slice(0, -5)).catch(() => null);
+    if (job?.videoId === videoId) jobs.push(job);
+  }
+  return jobs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+}
+
+export async function resultFile(id: string, kind: "output" | "compare", version?: string): Promise<{ path: string; downloadName: string }> {
+  const job = await getJob(id);
+  if (version === undefined && (job.status !== "completed" || !job.render)) throw new AppError("result_not_ready", 409, "El video editado todavía no está listo.");
+  const key = version ?? job.render!.key;
+  if (!/^r-[0-9a-f]{16}$/.test(key)) throw new AppError("media_not_found", 404, "Ese archivo ya no está disponible.");
+  // A version is resolved only inside this job's video. A committed metadata
+  // file proves the render completed; an in-flight directory is never served.
+  const dir = path.join(videoDir(job.videoId), "renders", key);
+  const render = await readFile(path.join(dir, "meta.json"), "utf8")
+    .then((raw) => RenderResultSchema.parse(JSON.parse(raw))).catch(() => null);
+  if (!render || render.key !== key) throw new AppError("media_not_found", 404, "Ese archivo ya no está disponible.");
+  const file = path.join(dir, `${kind}.mp4`);
   const base = (await getVideo(job.videoId)).originalName.replace(/\.[^.]+$/, "").replace(/[^\p{L}\p{N}_-]+/gu, "-").slice(0, 60) || "video";
-  const effect = job.render.params.effect.replace(/_/g, "-");
+  const effect = render.params.effect.replace(/_/g, "-");
   return { path: file, downloadName: `focus-${effect}-${base}.mp4` };
 }
 
@@ -567,6 +756,7 @@ export async function cancelJob(id: string): Promise<EditJob> {
 
 export async function setSelection(id: string, objectIds: readonly string[]): Promise<EditJob> {
   const job = await getJob(id);
+  assertEffectEnabled(job.request.effect);
   if (!["awaiting_selection", "ready_to_render", "completed"].includes(job.status)) {
     throw new AppError("selection_not_allowed", 409, "Este proceso no está esperando una selección.");
   }
@@ -580,8 +770,9 @@ export async function setSelection(id: string, objectIds: readonly string[]): Pr
 /** Re-opens selection without any API call. */
 export async function reopenSelection(id: string): Promise<EditJob> {
   const job = await getJob(id);
+  assertEffectEnabled(job.request.effect);
   if (!["ready_to_render", "completed"].includes(job.status)) throw new AppError("selection_not_allowed", 409, "La selección no se puede cambiar ahora.");
-  return saveJob({ ...job, status: "awaiting_selection", detail: "Elige qué destacar." });
+  return saveJob({ ...job, status: "awaiting_selection", detail: "Pick what stands out." });
 }
 
 /**
@@ -590,6 +781,7 @@ export async function reopenSelection(id: string): Promise<EditJob> {
  */
 export async function refineWithPoint(id: string, refine: RefineRequest, gate?: PaidWorkGate): Promise<EditJob> {
   const job = await getJob(id);
+  assertEffectEnabled(job.request.effect);
   if (!["awaiting_selection", "ready_to_render", "completed"].includes(job.status) || !job.segmentationId) {
     throw new AppError("refine_not_allowed", 409, "Este proceso no admite una selección por punto ahora.");
   }
@@ -609,7 +801,7 @@ export async function refineWithPoint(id: string, refine: RefineRequest, gate?: 
   const objectId = 100 + pointObjects;
   const pointId = `p-${hash(`${refine.frameIndex}:${refine.point.x}:${refine.point.y}`)}`;
   const previous = job.segmentationId;
-  const updated = await saveJob({ ...job, status: "segmenting", detail: "Segmentando el punto elegido con SAM 3.1", phase: "finding", progress: 0.2 });
+  const updated = await saveJob({ ...job, status: "segmenting", detail: "Finding the subject at that point with SAM 3.1", phase: "finding", progress: 0.2 });
 
   start(id, async (signal) => {
     const { tracking: extra } = await trackingFor(
@@ -621,7 +813,7 @@ export async function refineWithPoint(id: string, refine: RefineRequest, gate?: 
     );
     if (signal.aborted) return;
     if (extra.objects.length === 0) {
-      await patchJob(id, { status: "awaiting_selection", detail: "SAM 3.1 no encontró un objeto en ese punto. Prueba en otra zona.", progress: 1 });
+      await patchJob(id, { status: "awaiting_selection", detail: "SAM 3.1 found nothing at that point. Try another spot.", progress: 1 });
       return;
     }
     const mergedId = `${previous}+${pointId}`;
@@ -633,7 +825,8 @@ export async function refineWithPoint(id: string, refine: RefineRequest, gate?: 
       progress: 1,
       segmentationId: mergedId,
       objects: merged.objects,
-      selection: extra.objects.map((object) => object.id),
+      // Adds to what was already chosen: a click means "this one too".
+      selection: [...new Set([...job.selection, ...extra.objects.map((object) => object.id)])],
     });
   });
   return updated;
@@ -647,6 +840,7 @@ export async function refineWithPoint(id: string, refine: RefineRequest, gate?: 
  */
 export async function fillGaps(id: string, gate?: PaidWorkGate): Promise<EditJob> {
   const job = await getJob(id);
+  assertEffectEnabled(job.request.effect);
   if (!["awaiting_selection", "ready_to_render", "completed"].includes(job.status) || !job.segmentationId || job.selection.length === 0) {
     throw new AppError("fill_not_allowed", 409, "Elige primero el sujeto.");
   }
@@ -669,7 +863,7 @@ export async function fillGaps(id: string, gate?: PaidWorkGate): Promise<EditJob
   const previousStatus = job.status;
   const extraId = `g-${hash(`${job.segmentationId}|${JSON.stringify(targets)}`)}`;
   const mergedId = `${job.segmentationId.split("+")[0]}+${extraId}`;
-  const updated = await withJobLock(id, () => saveJob({ ...job, status: "segmenting", detail: "Completando el seguimiento con SAM 3.1", phase: "finding", progress: 0.15, error: null }));
+  const updated = await withJobLock(id, () => saveJob({ ...job, status: "segmenting", detail: "Completing the tracking with SAM 3.1", phase: "finding", progress: 0.15, error: null }));
 
   start(id, async (signal) => {
     const { tracking: extra } = await trackingFor(
@@ -677,14 +871,14 @@ export async function fillGaps(id: string, gate?: PaidWorkGate): Promise<EditJob
       extraId,
       { kind: "box", objects: targets },
       signal,
-      (fraction) => void patchProgress(id, { progress: 0.15 + fraction * 0.8, phase: "tracking", detail: `Completando el seguimiento · ${Math.round(fraction * frameCount)}/${frameCount} fotogramas` }),
+      (fraction) => void patchProgress(id, { progress: 0.15 + fraction * 0.8, phase: "tracking", detail: `Completing the tracking · ${Math.round(fraction * frameCount)}/${frameCount} frames` }),
     );
     if (signal.aborted) return;
     const merged = fillTracking(base, extra, targets.map((target) => String(target.id)));
     await writeJson(segmentationFile(video, mergedId), { ...merged, id: mergedId });
     await patchJob(id, {
       status: wasCompleted ? "rendering" : previousStatus,
-      detail: wasCompleted ? "Preparando el render" : null,
+      detail: wasCompleted ? "Preparing the render" : null,
       phase: wasCompleted ? "applying" : null,
       progress: wasCompleted ? 0 : 1,
       segmentationId: mergedId,
@@ -695,11 +889,11 @@ export async function fillGaps(id: string, gate?: PaidWorkGate): Promise<EditJob
   return updated;
 }
 
-/** Removes videos (with their masks and renders) untouched for a day, and orphaned render temp dirs. */
+/** Removes videos (with their masks and renders) untouched for a day, and orphaned render temp dirs. Saved projects keep theirs. */
 export async function cleanupVideos(): Promise<void> {
   const root = path.join(dataRoot(), "videos");
   const ids = await readdir(root).catch(() => [] as string[]);
-  const busy = new Set<string>();
+  const busy = new Set<string>((await retainedIds()).videos);
   for (const jobId of running.keys()) {
     const job = await readJob(jobId).catch(() => null);
     if (job) busy.add(job.videoId);
@@ -724,21 +918,23 @@ export async function cleanupVideos(): Promise<void> {
   }
 }
 
-/** Removes jobs older than a day, and jobs whose video is gone. */
+/** Removes jobs older than a day, and jobs whose video is gone. Jobs in a saved project stay. */
 export async function cleanupJobs(): Promise<void> {
   await cleanupVideos();
+  const retained = (await retainedIds()).jobs;
   const names = await readdir(jobsDir()).catch(() => [] as string[]);
   const now = Date.now();
   for (const name of names) {
     const file = path.join(jobsDir(), name);
-    if (name.endsWith(".tmp")) {
-      await rm(file, { force: true });
-      continue;
-    }
     const info = await stat(file).catch(() => null);
     if (!info) continue;
+    // A temp file is a write in progress unless it is old: only stale ones go.
+    if (name.endsWith(".tmp")) {
+      if (now - info.mtimeMs > 60_000) await rm(file, { force: true });
+      continue;
+    }
     const id = name.replace(/\.json$/, "");
-    if (running.has(id)) continue;
+    if (running.has(id) || retained.has(id)) continue;
     const job = await readJob(id).catch(() => null);
     const videoExists = job ? await stat(videoDir(job.videoId)).then(() => true, () => false) : false;
     if (!job || !videoExists || now - info.mtimeMs > JOB_TTL_MS) await rm(file, { force: true });

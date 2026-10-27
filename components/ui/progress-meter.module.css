@@ -20,6 +20,15 @@
   box-shadow: var(--meter-track-edge);
 }
 
+.meter[data-size="sm"] {
+  --meter-height: 0.375rem;
+  --meter-glow-opacity: 0.5;
+}
+
+.meter[data-size="sm"] .glow {
+  filter: blur(6px);
+}
+
 .meter[data-empty] {
   --meter-fill: 0px;
 }

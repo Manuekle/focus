@@ -6,19 +6,22 @@ import { Button } from "../../components/ui/button";
 import { ProgressMeter } from "../../components/ui/progress-meter";
 import { Spinner } from "../../components/ui/spinner";
 import { ToggleChip } from "../../components/ui/toggle-chip";
-import { useState } from "react";
+import { useState, type ReactNode } from "react";
 import { useToast } from "../../components/toast-provider";
 import { cn } from "../../lib/utils";
-import type { RenderParams, RenderResult } from "../../shared/render";
+import { RenderParamsSchema, type RenderParams, type RenderResult } from "../../shared/render";
 import type { EditJob, JobPhase, PlanEffect } from "../../shared/schemas";
+import { AiEditor } from "./ai-editor";
 import { EffectControls } from "./effect-controls";
 import { EditorNotice } from "./editor-notice";
 
 export const PLAN_EFFECT_LABEL: Record<PlanEffect, string> = {
   selective_color: "Selective color",
   background_blur: "Background blur",
+  spotlight: "Spotlight",
   break_frame: "Break the Frame",
   motion_echo: "Motion Echo",
+  time_freeze_echo: "Time Freeze",
 };
 
 function Step({ state, title, model }: { readonly state: "done" | "active" | "pending"; readonly title: string; readonly model: string }) {
@@ -56,11 +59,13 @@ export function ProcessingPanel({ job, onCancel, canceling }: { readonly job: Ed
   // A re-render (a previous result exists) reuses the stored plan and masks.
   const rerender = job.status === "rendering" && job.render !== null;
   const percent = Math.round(job.progress * 100);
+  // A re-render asked for in the AI editor shows that request, not the first instruction.
+  const lastChat = rerender ? [...job.chat].reverse().find((message) => message.role === "user") : undefined;
   return (
     <section aria-label="Processing" className="flex flex-col gap-5">
       <div>
         <h2 className="text-sm font-medium">{job.status === "rendering" ? "Rendering your effect" : "Working on your instruction"}</h2>
-        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">“{job.request.prompt}”</p>
+        <p className="mt-1 line-clamp-2 text-xs leading-5 text-muted-foreground">“{lastChat?.text ?? job.request.prompt}”</p>
       </div>
       <ol className="flex flex-col gap-3">
         {PHASES.map((phase, index) => (
@@ -79,10 +84,11 @@ export function ProcessingPanel({ job, onCancel, canceling }: { readonly job: Ed
         ))}
       </ol>
       <div className="flex flex-col gap-2">
-        <ProgressMeter value={percent} aria-label="Progress" aria-valuetext={`${percent}%`} />
-        <p role="status" className="text-xs text-muted-foreground tabular-nums">
-          {job.detail ?? "Processing…"}
-        </p>
+        <div className="flex items-baseline justify-between gap-3 text-xs text-muted-foreground tabular-nums">
+          <p role="status" className="min-w-0 truncate">{job.detail ?? "Processing…"}</p>
+          <span aria-hidden className="shrink-0 text-foreground">{percent}%</span>
+        </div>
+        <ProgressMeter size="sm" value={percent} aria-label="Progress" aria-valuetext={`${percent}%`} />
       </div>
       <Button variant="outline" onClick={onCancel} disabled={canceling} aria-busy={canceling}>
         {canceling ? <Spinner /> : null}
@@ -119,7 +125,7 @@ export function SelectionPanel({
       <div>
         <h2 className="text-sm font-medium">Choose what stands out</h2>
         <p className="mt-1 text-xs leading-5 text-muted-foreground">
-          {job.detail ?? "Click your subject in the video or choose it from the list."}
+          {job.detail ?? "Click subjects in the video to add or remove them, or choose from the list."}
           {job.plan?.target.description ? ` Hint: ${job.plan.target.description}.` : ""}
         </p>
       </div>
@@ -165,6 +171,7 @@ export function ReadyPanel({
   onChangeSelection,
   onNewInstruction,
   onRender,
+  controls,
   busy = false,
 }: {
   readonly job: EditJob;
@@ -172,6 +179,7 @@ export function ReadyPanel({
   readonly onChangeSelection: () => void;
   readonly onNewInstruction: () => void;
   readonly onRender?: () => void;
+  readonly controls?: ReactNode;
   readonly busy?: boolean;
 }) {
   const selected = job.objects.filter((object) => job.selection.includes(object.id));
@@ -206,18 +214,18 @@ export function ReadyPanel({
         ) : null}
       </dl>
       <p className="text-xs leading-5 text-muted-foreground">Your selection is saved, so you can keep editing without repeating the AI step.</p>
+      {job.detail || job.error ? <p role={job.error ? "alert" : undefined} className="text-xs leading-5 text-muted-foreground">{job.error?.message ?? job.detail}</p> : null}
+      {controls}
       {onRender ? (
         <Button onClick={onRender} disabled={busy} aria-busy={busy}>
           {busy ? <Spinner /> : null}
-          Render effect
+          {job.params?.effect === "time_freeze_echo" ? "Preview Time Freeze" : "Render effect"}
         </Button>
       ) : null}
       <div className="flex flex-wrap gap-2">
-        {job.objects.length > 1 ? (
-          <Button variant="outline" size="sm" onClick={onChangeSelection}>
-            Change selection
-          </Button>
-        ) : null}
+        {job.status !== "failed" ? <Button variant="outline" size="sm" onClick={onChangeSelection}>
+          {job.objects.length > 1 ? "Change subjects" : "Add a subject"}
+        </Button> : null}
         <Button variant="ghost" size="sm" onClick={onNewInstruction}>
           New instruction
         </Button>
@@ -235,9 +243,21 @@ export function ResultPanel({
   onChangeSelection,
   onNewInstruction,
   onFillGaps,
+  onEditFreezePoint,
+  editingFreezePoint = false,
+  chat,
 }: {
   readonly job: EditJob & { readonly render: RenderResult };
   readonly onFillGaps: () => void;
+  readonly onEditFreezePoint?: () => void;
+  readonly editingFreezePoint?: boolean;
+  readonly chat: {
+    readonly pending: string | null;
+    readonly disabled: boolean;
+    readonly onSend: (message: string) => void;
+    readonly onRestore: (messageId: string) => void;
+    readonly onStartEdit: (instruction: string) => void;
+  };
   readonly draft: RenderParams;
   readonly onDraftChange: (next: RenderParams) => void;
   readonly onApply: () => void;
@@ -246,7 +266,24 @@ export function ResultPanel({
   readonly onNewInstruction: () => void;
 }) {
   const render = job.render;
-  const dirty = JSON.stringify(draft) !== JSON.stringify(render.params);
+  // Restoring a suggestion can construct identical values in a different
+  // key order. Compare the schema's canonical shape, including nested keys.
+  const dirty = JSON.stringify(RenderParamsSchema.parse(draft)) !== JSON.stringify(RenderParamsSchema.parse(render.params));
+  const temporal = draft.effect === "time_freeze_echo";
+  // The dedicated controls now explain the suggestion next to its marker.
+  // Keep actual render warnings in the existing notice without duplicating
+  // a long, persistent suggestion toast over the mobile timeline.
+  const warnings = render.warnings.filter((warning) => !job.temporalSuggestion || !warning.startsWith(job.temporalSuggestion.reason));
+  const adjustments = (
+    <div className="flex flex-col gap-4">
+      <EffectControls family={job.request.effect} value={draft} onChange={onDraftChange} />
+      <Button variant="secondary" onClick={onApply} disabled={!dirty || busy} aria-busy={busy}>
+        {busy ? <Spinner /> : null}
+        Apply adjustments
+      </Button>
+      <p className="-mt-3 text-xs leading-4 text-muted-foreground">Uses your saved selection. No additional AI step.</p>
+    </div>
+  );
   return (
     <section aria-label="Result" className="flex flex-col gap-5">
       <div className="flex items-center gap-2.5">
@@ -264,29 +301,44 @@ export function ResultPanel({
       {/* Phones get the same button in the fixed bottom bar instead. */}
       <DownloadButton url={render.urls.download} className="hidden lg:flex" />
 
-      {render.warnings.length ? (
+      {temporal ? (
+        <div className="flex flex-col gap-3">
+          <p className="text-xs text-muted-foreground tabular-nums">Freeze point · {((draft.trigger.timestampMs ?? 0) / 1000).toFixed(2)} s in the original clip{dirty ? " · unapplied changes" : ""}</p>
+          {job.temporalSuggestion ? <p className="text-xs leading-5 text-muted-foreground">
+            Suggested {job.temporalSuggestion.event === "jump_apex" ? "jump apex" : "peak motion"} · {Math.round(job.temporalSuggestion.confidence * 100)}% confidence. Review the moment before exporting.
+          </p> : null}
+          <Button variant="outline" size="sm" onClick={onEditFreezePoint} aria-pressed={editingFreezePoint}>
+            {editingFreezePoint ? "Preview rendered video" : "Adjust freeze point"}
+          </Button>
+          {adjustments}
+        </div>
+      ) : null}
+
+      {warnings.length ? (
         <EditorNotice
           status="warning"
           title="Review your result"
-          description={[render.warnings.join(" "), render.framesWithoutMask > 0 ? "Uses Meta AI to complete only the missing frames." : ""].filter(Boolean).join(" ")}
+          description={[warnings.join(" "), render.framesWithoutMask > 0 ? "Uses Meta AI to complete only the missing frames." : ""].filter(Boolean).join(" ")}
           action={render.framesWithoutMask > 0 && !busy ? { label: "Complete subject tracking", onClick: onFillGaps } : undefined}
         />
       ) : null}
 
-      <div className="h-px bg-border" />
-      <EffectControls family={job.request.effect} value={draft} onChange={onDraftChange} />
-      <Button variant="secondary" onClick={onApply} disabled={!dirty || busy} aria-busy={busy}>
-        {busy ? <Spinner /> : null}
-        Apply adjustments
-      </Button>
-      <p className="-mt-3 text-xs leading-4 text-muted-foreground">Uses your saved selection. No additional AI step.</p>
+      <AiEditor messages={job.chat} current={render.params} {...chat} />
+
+      {!temporal ? <details className="group" open={dirty || undefined}>
+        <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-foreground [&::-webkit-details-marker]:hidden">
+          Fine-tune by hand
+          <span aria-hidden className="text-muted-foreground transition-transform duration-200 group-open:rotate-45">+</span>
+        </summary>
+        <div className="mt-4 flex flex-col gap-4">
+          {adjustments}
+        </div>
+      </details> : null}
 
       <div className="flex flex-wrap gap-2">
-        {job.objects.length > 1 ? (
-          <Button variant="outline" size="sm" onClick={onChangeSelection}>
-            Change selection
-          </Button>
-        ) : null}
+        <Button variant="outline" size="sm" onClick={onChangeSelection}>
+          {job.objects.length > 1 ? "Change subjects" : "Add a subject"}
+        </Button>
         <Button variant="ghost" size="sm" onClick={onNewInstruction}>
           New instruction
         </Button>

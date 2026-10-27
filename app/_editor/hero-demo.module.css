@@ -1,0 +1,178 @@
+.demo { width: min(760px, 100%); margin: 36px auto 0; }
+
+.frame {
+  --split: 50;
+  position: relative;
+  overflow: hidden;
+  padding: 6px;
+  border-radius: 22px;
+  background: linear-gradient(180deg, #ffffff0d, #ffffff03);
+  box-shadow:
+    inset 0 1px 0 #ffffff14,
+    inset 0 0 0 1px #ffffff0a,
+    0 30px 80px -24px #000000b3,
+    0 18px 90px -40px #2853e966;
+  touch-action: pan-y;
+  user-select: none;
+  cursor: ew-resize;
+}
+
+.source { display: none; }
+
+.canvas {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 16 / 9;
+  border-radius: 16px;
+  background: #0b0d12;
+}
+
+.tag {
+  position: absolute;
+  top: 18px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  background: #0b0d12b8;
+  box-shadow: inset 0 0 0 1px #ffffff14;
+  backdrop-filter: blur(8px);
+  color: #c6ccda;
+  font-size: 11px;
+  line-height: 1.3;
+  pointer-events: none;
+}
+.tagBefore { left: 18px; }
+.tagAfter { right: 18px; color: var(--foreground); font-family: var(--font-porkys), sans-serif; font-size: 14px; letter-spacing: -0.02em; }
+.tagAfter > span { color: var(--primary); }
+
+.divider {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: calc(6px + (100% - 12px) * var(--split) / 100);
+  width: 1px;
+  background: linear-gradient(180deg, transparent, #fffffff0 18%, #fffffff0 82%, transparent);
+  box-shadow: 0 0 14px #ffffff59;
+  pointer-events: none;
+}
+
+.handle {
+  position: absolute;
+  top: 50%;
+  left: calc(6px + (100% - 12px) * var(--split) / 100);
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border-radius: 50%;
+  background: #0b0d12a6;
+  box-shadow: inset 0 0 0 1px #ffffffb3, 0 8px 24px #00000066;
+  backdrop-filter: blur(10px);
+  color: #fff;
+  transform: translate(-50%, -50%);
+  outline: none;
+}
+.handle:focus-visible { box-shadow: inset 0 0 0 1px #fff, 0 0 0 3px #819aff; }
+
+.play {
+  position: absolute;
+  bottom: 18px;
+  left: 18px;
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 50%;
+  background: #0b0d12b8;
+  box-shadow: inset 0 0 0 1px #ffffff1f;
+  backdrop-filter: blur(8px);
+  color: #c6ccda;
+  opacity: 0;
+  cursor: pointer;
+  transition: opacity 200ms var(--ease-smooth-out, ease-out), color 150ms var(--ease-smooth-out, ease-out);
+}
+.frame:hover .play,
+.play:focus-visible,
+.play[data-paused="true"] { opacity: 1; }
+.play:hover { color: var(--foreground); }
+.play:focus-visible { outline: 2px solid #819aff; outline-offset: 2px; }
+
+.caption { display: grid; justify-items: center; gap: 12px; margin-top: 16px; }
+
+.effects {
+  display: inline-flex;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 12px;
+  background: #ffffff06;
+  box-shadow: inset 0 0 0 1px #ffffff0d;
+}
+
+.effectTab {
+  position: relative;
+  overflow: hidden;
+  padding: 7px 13px;
+  border-radius: 9px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color 160ms var(--ease-smooth-out, ease-out), background-color 160ms var(--ease-smooth-out, ease-out);
+}
+.effectTab:hover { color: var(--foreground); }
+.effectTab[aria-pressed="true"] {
+  background: #ffffff0f;
+  box-shadow: inset 0 1px 0 #ffffff12;
+  color: var(--foreground);
+}
+.effectTab:focus-visible { outline: 2px solid #819aff; outline-offset: 2px; }
+
+/* While the effects take turns, the active tab fills with the clip. */
+.effectProgress {
+  position: absolute;
+  inset: auto 10px 3px;
+  height: 2px;
+  border-radius: 999px;
+  background: var(--primary);
+  box-shadow: 0 0 8px #2853e980;
+  transform: scaleX(var(--progress));
+  transform-origin: left;
+  opacity: 0;
+}
+.effectTab[aria-pressed="true"][data-cycling] .effectProgress { opacity: 1; }
+
+.line {
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 13px;
+  text-align: center;
+  animation: line-in 420ms var(--ease-smooth-out, ease-out);
+}
+.line > span { margin-left: 6px; opacity: 0.55; font-size: 12px; }
+.line > span::before { content: "·"; margin-right: 6px; }
+
+@keyframes line-in {
+  from { opacity: 0; filter: blur(4px); transform: translateY(3px); }
+}
+
+@media (hover: none) {
+  .play { opacity: 1; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .play, .effectTab { transition: none; }
+  .line { animation: none; }
+}
+@media (max-width: 680px) {
+  .demo { margin-top: 28px; }
+  .frame { padding: 4px; border-radius: 16px; }
+  .canvas { border-radius: 12px; }
+  .divider { top: 4px; bottom: 4px; left: calc(4px + (100% - 8px) * var(--split) / 100); }
+  .handle { left: calc(4px + (100% - 8px) * var(--split) / 100); width: 30px; height: 30px; }
+  .tag { top: 12px; }
+  .tagBefore { left: 12px; }
+  .tagAfter { right: 12px; }
+  .play { bottom: 12px; left: 12px; }
+  .effectTab { padding: 7px 10px; font-size: 12px; }
+  .line > span { display: none; }
+}

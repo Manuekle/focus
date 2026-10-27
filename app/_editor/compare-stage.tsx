@@ -146,7 +146,7 @@ export function CompareStage({
             </span>
           </div>
         ) : null}
-        <video ref={compareRef} src={render.urls.compare} muted playsInline loop preload="auto" className="hidden" {...mediaEvents} />
+        <video ref={compareRef} src={render.urls.compare} muted={render.temporal ? muted : true} playsInline loop preload="auto" className="hidden" {...mediaEvents} />
         {mode === "compare" ? (
           <div
             className="relative max-w-full cursor-ew-resize touch-none select-none"
@@ -207,6 +207,12 @@ export function CompareStage({
         <span className="w-[72px] shrink-0 text-xs tabular-nums text-muted-foreground">
           {formatSeconds(time)} / {formatSeconds(duration)}
         </span>
+        <div className="relative min-w-0 flex-1">
+        {render.temporal ? <span
+          aria-hidden data-freeze-span
+          className="pointer-events-none absolute inset-y-0 rounded bg-primary/25 ring-1 ring-inset ring-primary/60"
+          style={{ left: `${render.temporal.freezeStart / render.fps / duration * 100}%`, width: `${render.temporal.freezeFrames / render.fps / duration * 100}%` }}
+        /> : null}
         <input
           type="range"
           min={0}
@@ -215,10 +221,12 @@ export function CompareStage({
           value={Math.min(time, duration)}
           onChange={(event) => seek(Number(event.currentTarget.value))}
           aria-label="Video position"
-          className="editor-scrubber min-w-0 flex-1"
+          aria-valuetext={`${formatSeconds(time)} of ${formatSeconds(duration)}`}
+          className="editor-scrubber relative block w-full"
           style={{ "--scrub": `${(time / duration) * 100}%` } as CSSProperties}
         />
-        {mode === "edited" && render.hasAudio ? (
+        </div>
+        {render.hasAudio && (mode === "edited" || render.temporal) ? (
           <button
             type="button"
             onClick={() => setMuted((value) => !value)}
@@ -237,6 +245,9 @@ export function CompareStage({
           value={mode}
           onValueChange={(id) => switchMode(id as Mode)}
         />
+        {render.temporal ? <p className="basis-full text-xs text-muted-foreground tabular-nums">
+          Freeze · {(render.temporal.freezeStart / render.fps).toFixed(2)}–{((render.temporal.freezeStart + render.temporal.freezeFrames) / render.fps).toFixed(2)} s in the edited video
+        </p> : null}
       </figcaption>
     </figure>
   );

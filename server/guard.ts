@@ -7,6 +7,7 @@ import { samFramesSince } from "./ai/usage";
 //   FOCUS_AI_DISABLED=1            emergency switch: no new Meta AI work
 //   FOCUS_AI_REQUESTS_PER_HOUR=30  paid requests per client per hour
 //   FOCUS_UPLOADS_PER_HOUR=20      uploads per client per hour
+//   FOCUS_CHAT_PER_HOUR=60         AI editor messages per client per hour
 //   FOCUS_MAX_ACTIVE_JOBS=4        jobs running at once, all clients
 //   FOCUS_SAM_DAILY_FRAMES=20000   SAM frames per UTC day (0 = no budget)
 //   FOCUS_TRUST_PROXY=1            read the client IP from X-Forwarded-For
@@ -21,6 +22,7 @@ export function guardConfig() {
     aiDisabled: process.env.FOCUS_AI_DISABLED === "1",
     aiPerHour: number("FOCUS_AI_REQUESTS_PER_HOUR", 30),
     uploadsPerHour: number("FOCUS_UPLOADS_PER_HOUR", 20),
+    chatPerHour: number("FOCUS_CHAT_PER_HOUR", 60),
     maxActiveJobs: number("FOCUS_MAX_ACTIVE_JOBS", 4),
     samDailyFrames: number("FOCUS_SAM_DAILY_FRAMES", 20000),
     trustProxy: process.env.FOCUS_TRUST_PROXY === "1",
@@ -89,6 +91,19 @@ export async function guardAiRequest(request: Request, input: { activeJobs: numb
   }
   const wait = takeSlot("ai", clientKey(request), config.aiPerHour);
   if (wait !== null) throw tooMany(wait, "ediciones con IA");
+}
+
+/**
+ * AI editor turns: one small Muse Spark call each, never SAM, so they have
+ * their own hourly window instead of spending the edit allowance.
+ */
+export function guardChatRequest(request: Request): void {
+  const config = guardConfig();
+  if (config.aiDisabled) {
+    throw new AppError("ai_disabled", 503, "La edición con IA está pausada temporalmente en esta instalación. Vuelve a intentarlo más tarde.");
+  }
+  const wait = takeSlot("chat", clientKey(request), config.chatPerHour);
+  if (wait !== null) throw tooMany(wait, "mensajes al editor de IA");
 }
 
 const MAX_JSON_BYTES = 16 * 1024;

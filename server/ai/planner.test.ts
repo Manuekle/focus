@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import OpenAI from "openai";
 import { AppError } from "../errors";
 import { Limiter, metaError, readMetaConfig, requireMetaConfig, withRetry } from "./meta";
-import { PLAN_JSON_SCHEMA, parsePlanOutput } from "./planner";
+import { defaultParams } from "../../shared/render";
+import { PLAN_JSON_SCHEMA, parsePlanOutput, planJsonSchema, plannerInstructions } from "./planner";
 
 const plan = (overrides: Record<string, unknown> = {}) =>
   JSON.stringify({
@@ -18,7 +19,7 @@ const plan = (overrides: Record<string, unknown> = {}) =>
 
 describe("parsePlanOutput", () => {
   it("accepts a valid plan, strips nulls and normalizes the concept", () => {
-    const result = parsePlanOutput(plan(), { effect: "reality-shift" });
+    const result = parsePlanOutput(plan());
     expect(result).toEqual({
       supported: true,
       target: { concept: "skateboarder", selection: "single" },
@@ -29,20 +30,27 @@ describe("parsePlanOutput", () => {
   });
 
   it("keeps an unsupported verdict with its reason", () => {
-    const result = parsePlanOutput(plan({ supported: false, unsupportedReason: "No podemos borrar objetos." }), { effect: "reality-shift" });
+    const result = parsePlanOutput(plan({ supported: false, unsupportedReason: "No podemos borrar objetos." }));
     expect(result.supported).toBe(false);
     expect(result.unsupportedReason).toBe("No podemos borrar objetos.");
   });
 
-  it("forces the effect into the family the user picked", () => {
-    expect(parsePlanOutput(plan({ effect: "motion_echo" }), { effect: "break-the-frame" }).effect).toBe("break_frame");
-    expect(parsePlanOutput(plan({ effect: "background_blur" }), { effect: "reality-shift" }).effect).toBe("background_blur");
+  it("keeps an effect the instruction asked for, even outside the picked family", () => {
+    expect(parsePlanOutput(plan({ effect: "background_blur" })).effect).toBe("background_blur");
+    expect(parsePlanOutput(plan({ effect: "motion_echo" })).effect).toBe("motion_echo");
+  });
+
+  it("never asks which instance when every instance is wanted", () => {
+    const both = parsePlanOutput(plan({ target: { concept: "person", selection: "all", description: null }, needsClarification: true, clarificationQuestion: "Which person?" }));
+    expect(both.needsClarification).toBe(false);
+    const unclear = parsePlanOutput(plan({ needsClarification: true, clarificationQuestion: "What should stand out?" }));
+    expect(unclear.needsClarification).toBe(true);
   });
 
   it("drops trail parameters outside motion echo", () => {
-    const result = parsePlanOutput(plan({ parameters: { intensity: 0.5, trailCount: 4, trailSpacingMs: 120 } }), { effect: "reality-shift" });
+    const result = parsePlanOutput(plan({ parameters: { intensity: 0.5, trailCount: 4, trailSpacingMs: 120 } }));
     expect(result.parameters).toEqual({ intensity: 0.5 });
-    const echo = parsePlanOutput(plan({ effect: "motion_echo", parameters: { intensity: null, trailCount: 4, trailSpacingMs: 120 } }), { effect: "motion-echo" });
+    const echo = parsePlanOutput(plan({ effect: "motion_echo", parameters: { intensity: null, trailCount: 4, trailSpacingMs: 120 } }));
     expect(echo.parameters).toEqual({ trailCount: 4, trailSpacingMs: 120 });
   });
 
@@ -53,11 +61,11 @@ describe("parsePlanOutput", () => {
     ["out-of-range intensity", { parameters: { intensity: 4, trailCount: null, trailSpacingMs: null } }],
     ["an unknown effect", { effect: "remove_object" }],
   ])("rejects %s", (_name, overrides) => {
-    expect(() => parsePlanOutput(plan(overrides), { effect: "reality-shift" })).toThrowError(AppError);
+    expect(() => parsePlanOutput(plan(overrides))).toThrowError(AppError);
   });
 
   it("rejects non-JSON output", () => {
-    expect(() => parsePlanOutput("Sure! Here is your plan", { effect: "reality-shift" })).toThrowError(/ilegible/);
+    expect(() => parsePlanOutput("Sure! Here is your plan")).toThrowError(/ilegible/);
   });
 
   it("ships a strict schema the API accepts: every property required, no extra keys", () => {
@@ -147,5 +155,81 @@ describe("Meta client helpers", () => {
     expect(readMetaConfig({ MODEL_API_KEY: "a", META_API_KEY: "b" })?.apiKey).toBe("a");
     expect(readMetaConfig({ META_API_KEY: "b" })?.apiKey).toBe("b");
     expect(readMetaConfig({})).toBeNull();
+  });
+});
+
+describe("temporal instructions", () => {
+  // What Muse Spark returns for "Freeze time when I jump and create five copies of me."
+  const freeze = (parameters: Record<string, unknown> = {}) =>
+    plan({
+      target: { concept: "person", selection: "single", description: null },
+      effect: "time_freeze_echo",
+      parameters: { intensity: null, trailCount: null, trailSpacingMs: null, finish: null, triggerEvent: "jump_apex", echoCount: 5, echoSpacingMs: null, freezeDurationMs: null, ...parameters },
+    });
+
+  it("interprets a freeze-on-jump instruction as a validated temporal plan", () => {
+    const result = parsePlanOutput(freeze(), { temporal: true });
+    expect(result).toEqual({
+      supported: true,
+      target: { concept: "person", selection: "single" },
+      effect: "time_freeze_echo",
+      parameters: { triggerEvent: "jump_apex", echoCount: 5 },
+      needsClarification: false,
+    });
+    // The event becomes an automatic trigger with no timestamp: detection, not the model, finds the moment.
+    expect(defaultParams(result)).toMatchObject({
+      effect: "time_freeze_echo",
+      trigger: { mode: "auto", event: "jump_apex" },
+      freezeDurationMs: 1500,
+      echo: { count: 5 },
+      resume: true,
+    });
+    expect((defaultParams(result) as { trigger: { timestampMs?: number } }).trigger.timestampMs).toBeUndefined();
+  });
+
+  it("without a named moment the user places the freeze", () => {
+    const result = parsePlanOutput(freeze({ triggerEvent: null }), { temporal: true });
+    expect(defaultParams(result)).toMatchObject({ trigger: { mode: "manual" } });
+  });
+
+  it("clamps temporal numbers into range instead of failing", () => {
+    const result = parsePlanOutput(freeze({ echoCount: 10, echoSpacingMs: 20, freezeDurationMs: 9000 }), { temporal: true });
+    expect(result.parameters).toMatchObject({ echoCount: 6, echoSpacingMs: 80, freezeDurationMs: 3000 });
+  });
+
+  it("never accepts a timestamp from the model", () => {
+    const result = parsePlanOutput(freeze({ timestampMs: 1234 }), { temporal: true });
+    expect(JSON.stringify(result)).not.toContain("1234");
+  });
+
+  it("rejects an unknown trigger event", () => {
+    expect(() => parsePlanOutput(freeze({ triggerEvent: "backflip" }), { temporal: true })).toThrowError(AppError);
+  });
+
+  it("drops temporal knobs from other effects", () => {
+    const echo = parsePlanOutput(plan({ effect: "motion_echo", parameters: { intensity: null, trailCount: 4, trailSpacingMs: 120, echoCount: 5, triggerEvent: "jump_apex" } }), { temporal: true });
+    expect(echo.parameters).toEqual({ trailCount: 4, trailSpacingMs: 120 });
+  });
+
+  it("refuses Time Freeze while temporal effects are disabled", () => {
+    expect(() => parsePlanOutput(freeze())).toThrowError(AppError);
+  });
+
+  it("keeps the v1 request unchanged with the flag off", () => {
+    expect(planJsonSchema(false)).toEqual(PLAN_JSON_SCHEMA);
+    expect(JSON.stringify(planJsonSchema(false))).not.toContain("time_freeze_echo");
+    expect(plannerInstructions(false)).not.toMatch(/time_freeze|triggerEvent|time-freeze/);
+    expect(plannerInstructions(true)).toMatch(/Never return a time, a frame number/);
+  });
+
+  it("ships a strict temporal schema", () => {
+    const check = (node: Record<string, unknown>) => {
+      if (node.type === "object") {
+        expect(node.additionalProperties).toBe(false);
+        expect([...(node.required as string[])].sort()).toEqual(Object.keys(node.properties as object).sort());
+        for (const child of Object.values(node.properties as Record<string, Record<string, unknown>>)) check(child);
+      }
+    };
+    check(planJsonSchema(true) as unknown as Record<string, unknown>);
   });
 });

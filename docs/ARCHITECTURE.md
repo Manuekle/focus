@@ -9,12 +9,17 @@ server/             Everything with side effects
   videos.ts           upload → FFprobe validation → FFmpeg normalization
   jobs.ts             job lifecycle, caches, dedup, selection, gap fill, renders, cleanup
   guard.ts            rate limits, active-job cap, SAM budget, emergency switch, JSON limits
+  quota.ts            3 free AI edits without an account (cookie + client address)
+  projects.ts         saved projects per account; retained by cleanup
+  auth/               signed session cookies, users, Facebook Login (simulated locally)
   ai/meta.ts          Meta client, retries, error mapping, concurrency limiters
   ai/planner.ts       Muse Spark → validated EditPlan
+  ai/assistant.ts     AI editor: chat turn → bounded params patch (no SAM)
   ai/sam.ts           Files API + SAM 3.1 streaming → Tracking
   video/frames.ts     FFmpeg decode/encode pipes (RGBA frames, cancellable)
   video/masks.ts      SAM rasters → full-frame alpha, feathering
-  video/effects.ts    pixel operations (selective color, mask-aware blur, ghosts)
+  video/effects.ts    pixel operations (selective color, mask-aware blur, spotlight, ghosts)
+  video/finish.ts     finishing layer: looks, subject glow/outline, vignette, grain, letterbox
   video/layout.ts     Break the Frame geometry
   video/compositor.ts per-effect frame processors, export, comparison, FFprobe verification
 shared/             Types and pure logic used on both sides (Zod schemas, tracking model, coordinates)
@@ -50,7 +55,7 @@ The encoder receives exactly `frameCount` frames at 24 fps; audio is copied from
 
 ## Security model
 
-- The Meta key is read only in `server/ai/meta.ts`; no client module imports server code (`scripts/verify.mjs` enforces no `node:` imports in shared UI code).
+- The Meta key is read only in `server/ai/meta.ts`; no client module imports server code.
 - FFmpeg/FFprobe run with argument arrays, never a shell. Uploaded file names are sanitized and never used as paths.
 - Every id in a path (video UUID, job UUID, segmentation key) is validated by pattern before use.
 - JSON bodies are capped at 16 KB; uploads at 50 MB while streaming.

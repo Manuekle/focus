@@ -2,15 +2,22 @@
 
 import { useId, type CSSProperties } from "react";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
+import { Switch } from "../../components/ui/switch";
 import { ToggleChip } from "../../components/ui/toggle-chip";
+import { cn } from "../../lib/utils";
 import {
-  BackgroundBlurParamsSchema,
-  BreakFrameParamsSchema,
-  MotionEchoParamsSchema,
-  SelectiveColorParamsSchema,
+  ACCENT_LABEL,
+  ACCENT_RGB,
+  AccentColorSchema,
+  LOOK_LABEL,
+  LookSchema,
+  effectDefaults,
+  type Finish,
   type RenderParams,
 } from "../../shared/render";
 import { EFFECT_PLAN_EFFECTS, type EffectId, type PlanEffect } from "../../shared/schemas";
+import { temporalEffectsEnabled } from "../../shared/features";
+import { TEMPORAL_BOUNDS } from "../../shared/temporal";
 
 function Range({
   label,
@@ -56,18 +63,77 @@ function Range({
 
 const percent = (value: number) => `${Math.round(value * 100)}%`;
 
-/** Switching the effect inside its family starts from that effect's defaults. */
-function defaultsFor(effect: PlanEffect): RenderParams {
-  switch (effect) {
-    case "selective_color":
-      return SelectiveColorParamsSchema.parse({ effect });
-    case "background_blur":
-      return BackgroundBlurParamsSchema.parse({ effect });
-    case "break_frame":
-      return BreakFrameParamsSchema.parse({ effect });
-    case "motion_echo":
-      return MotionEchoParamsSchema.parse({ effect });
-  }
+const CHOICE_LABEL: Partial<Record<PlanEffect, string>> = {
+  selective_color: "Color",
+  background_blur: "Blur",
+  spotlight: "Spotlight",
+};
+
+/** Switching the effect inside its family starts from that effect's defaults, keeping the finish. */
+function defaultsFor(effect: PlanEffect, finish: Finish): RenderParams {
+  return { ...effectDefaults(effect), finish } as RenderParams;
+}
+
+/** Grade, subject light, vignette, grain and letterbox: the same on every effect. */
+function FinishControls({ value, onChange }: { readonly value: Finish; readonly onChange: (next: Finish) => void }) {
+  const set = (patch: Partial<Finish>) => onChange({ ...value, ...patch });
+  return (
+    <div className="flex flex-col gap-4">
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs text-muted-foreground">Look</span>
+        <div className="flex flex-wrap gap-1.5" role="group" aria-label="Look">
+          {LookSchema.options.map((look) => (
+            <ToggleChip key={look} size="xs" selected={value.look === look} onClick={() => set({ look })}>
+              {LOOK_LABEL[look]}
+            </ToggleChip>
+          ))}
+        </div>
+      </div>
+
+      <div className="flex flex-col gap-1.5">
+        <span className="text-xs text-muted-foreground">Subject light</span>
+        <SlidingTabs
+          tabs={[
+            { id: "none", label: "None" },
+            { id: "glow", label: "Glow" },
+            { id: "outline", label: "Outline" },
+          ]}
+          value={value.subject}
+          onValueChange={(id) => set({ subject: id as Finish["subject"] })}
+        />
+        {value.subject !== "none" ? (
+          <>
+            <div className="mt-1 flex gap-2" role="radiogroup" aria-label="Light color">
+              {AccentColorSchema.options.map((accent) => (
+                <button
+                  key={accent}
+                  type="button"
+                  role="radio"
+                  aria-checked={value.accent === accent}
+                  aria-label={ACCENT_LABEL[accent]}
+                  title={ACCENT_LABEL[accent]}
+                  onClick={() => set({ accent })}
+                  className={cn(
+                    "size-6 rounded-full border border-border outline-offset-2 transition-[box-shadow,transform] duration-150 hover:scale-110",
+                    value.accent === accent && "ring-2 ring-primary ring-offset-2 ring-offset-background",
+                  )}
+                  style={{ background: `rgb(${ACCENT_RGB[accent].join(" ")})` }}
+                />
+              ))}
+            </div>
+            <Range label="Light strength" value={value.accentStrength} min={0.2} max={1} step={0.05} format={percent} onChange={(accentStrength) => set({ accentStrength })} />
+          </>
+        ) : null}
+      </div>
+
+      <Range label="Vignette" value={value.vignette} min={0} max={1} step={0.05} format={(v) => (v ? percent(v) : "Off")} onChange={(vignette) => set({ vignette })} />
+      <Range label="Film grain" value={value.grain} min={0} max={1} step={0.05} format={(v) => (v ? percent(v) : "Off")} onChange={(grain) => set({ grain })} />
+      <span className="flex items-center justify-between text-xs">
+        <span className="text-muted-foreground" aria-hidden>Letterbox</span>
+        <Switch checked={value.letterbox} onCheckedChange={(letterbox) => set({ letterbox })} label="Letterbox" />
+      </span>
+    </div>
+  );
 }
 
 /** The few knobs each effect exposes. Every change re-renders from cached masks. */
@@ -85,14 +151,18 @@ export function EffectControls({
     <div className="flex flex-col gap-4">
       {choices.length > 1 ? (
         <SlidingTabs
-          tabs={choices.map((effect) => ({ id: effect, label: effect === "selective_color" ? "Selective color" : "Background blur" }))}
+          tabs={choices.map((effect) => ({ id: effect, label: CHOICE_LABEL[effect] ?? effect }))}
           value={value.effect}
-          onValueChange={(id) => onChange(defaultsFor(id as PlanEffect))}
+          onValueChange={(id) => onChange(defaultsFor(id as PlanEffect, value.finish))}
         />
       ) : null}
 
       {value.effect === "selective_color" ? (
         <Range label="Background desaturation" value={value.intensity} min={0.2} max={1} step={0.05} format={percent} onChange={(intensity) => onChange({ ...value, intensity })} />
+      ) : null}
+
+      {value.effect === "spotlight" ? (
+        <Range label="Darkness" value={value.darkness} min={0.2} max={0.95} step={0.05} format={percent} onChange={(darkness) => onChange({ ...value, darkness })} />
       ) : null}
 
       {value.effect === "background_blur" ? (
@@ -146,7 +216,35 @@ export function EffectControls({
         </>
       ) : null}
 
-      <Range label="Edge softness" value={value.feather} min={0} max={4} step={0.5} format={(px) => `${px} px`} onChange={(feather) => onChange({ ...value, feather })} />
+      {value.effect === "time_freeze_echo" && temporalEffectsEnabled() ? (
+        <>
+          <Range label="Echoes" value={value.echo.count} min={TEMPORAL_BOUNDS.echoCount[0]} max={TEMPORAL_BOUNDS.echoCount[1]} step={1} format={String} onChange={(count) => onChange({ ...value, echo: { ...value.echo, count } })} />
+          <Range label="Echo spacing" value={value.echo.spacingMs} min={TEMPORAL_BOUNDS.echoSpacingMs[0]} max={TEMPORAL_BOUNDS.echoSpacingMs[1]} step={20} format={(ms) => `${ms} ms`} onChange={(spacingMs) => onChange({ ...value, echo: { ...value.echo, spacingMs } })} />
+          <Range label="Echo intensity" value={value.echo.opacity} min={0} max={1} step={0.05} format={percent} onChange={(opacity) => onChange({ ...value, echo: { ...value.echo, opacity } })} />
+          <Range label="Freeze duration" value={value.freezeDurationMs} min={TEMPORAL_BOUNDS.freezeDurationMs[0]} max={TEMPORAL_BOUNDS.freezeDurationMs[1]} step={100} format={(ms) => `${(ms / 1000).toFixed(1)} s`} onChange={(freezeDurationMs) => onChange({ ...value, freezeDurationMs })} />
+        </>
+      ) : null}
+
+      {value.effect === "time_freeze_echo" ? (
+        <details>
+          <summary className="cursor-pointer text-xs text-muted-foreground">Finish and playback</summary>
+          <div className="mt-4 flex flex-col gap-4">
+            <span className="flex items-center justify-between text-xs">
+              <span aria-hidden className="text-muted-foreground">Resume playback</span>
+              <Switch checked={value.resume} onCheckedChange={(resume) => onChange({ ...value, resume })} label="Resume playback" />
+            </span>
+            <Range label="Edge softness" value={value.feather} min={0} max={4} step={0.5} format={(px) => `${px} px`} onChange={(feather) => onChange({ ...value, feather })} />
+            <FinishControls value={value.finish} onChange={(finish) => onChange({ ...value, finish })} />
+          </div>
+        </details>
+      ) : (
+        <>
+          <Range label="Edge softness" value={value.feather} min={0} max={4} step={0.5} format={(px) => `${px} px`} onChange={(feather) => onChange({ ...value, feather })} />
+          <div className="h-px bg-border" />
+          <p className="-mb-1 text-xs font-medium text-foreground">Finish</p>
+          <FinishControls value={value.finish} onChange={(finish) => onChange({ ...value, finish })} />
+        </>
+      )}
     </div>
   );
 }

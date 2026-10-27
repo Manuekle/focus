@@ -1,37 +1,39 @@
-import { Tick02Icon } from "@hugeicons/core-free-icons";
-import { HugeiconsIcon } from "../../components/icons/icon";
 import { cn } from "../../lib/utils";
 import { FLOW_STEPS, type FlowStepId } from "../../shared/pipeline";
 
-/** Where the clip is in Upload → Describe → … → Export. Reflects real state only. */
+/**
+ * Where the clip is in Upload → Describe → … → Export. Reflects real state
+ * only. A segmented line plus the current step's name: seven labelled pills
+ * never fit beside the player, and a scrolling rail hid the active step.
+ */
 export function FlowRail({ current }: { readonly current: FlowStepId }) {
   const currentIndex = FLOW_STEPS.findIndex((step) => step.id === current);
+  const step = FLOW_STEPS[currentIndex];
   return (
-    <ol aria-label="Editing progress" className="x-fade flex items-center gap-1 overflow-x-auto py-1 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-      {FLOW_STEPS.map((step, index) => {
-        const done = index < currentIndex;
-        const active = index === currentIndex;
-        return (
-          <li key={step.id} className="flex shrink-0 items-center gap-1" aria-current={active ? "step" : undefined}>
-            <span
-              className={cn(
-                "flex h-7 items-center gap-1.5 rounded-md px-2 text-xs",
-                active && "bg-accent font-medium text-accent-foreground",
-                done && "text-foreground",
-                !active && !done && "text-muted-foreground",
-              )}
-            >
-              {done ? (
-                <HugeiconsIcon icon={Tick02Icon} size={13} strokeWidth={2} className="text-primary" />
-              ) : (
-                <span className="tabular-nums opacity-70">{String(index + 1).padStart(2, "0")}</span>
-              )}
-              {step.label}
+    <div className="flex min-w-0 flex-1 items-center gap-3">
+      <ol aria-label="Editing progress" className="flex min-w-24 flex-1 items-center gap-1">
+        {FLOW_STEPS.map((entry, index) => (
+          <li
+            key={entry.id}
+            title={entry.label}
+            aria-current={index === currentIndex ? "step" : undefined}
+            className={cn(
+              "h-1 flex-1 rounded-full transition-colors duration-300",
+              index < currentIndex && "bg-primary",
+              index === currentIndex && "bg-[color-mix(in_srgb,var(--primary)_55%,var(--foreground))]",
+              index > currentIndex && "bg-[color-mix(in_srgb,var(--foreground)_10%,transparent)]",
+            )}
+          >
+            <span className="sr-only">
+              {entry.label}
+              {index < currentIndex ? " (done)" : ""}
             </span>
-            {index < FLOW_STEPS.length - 1 ? <span aria-hidden className="h-px w-3 bg-border" /> : null}
           </li>
-        );
-      })}
-    </ol>
+        ))}
+      </ol>
+      <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+        {currentIndex + 1}/{FLOW_STEPS.length} · <span className="text-foreground">{step?.label}</span>
+      </span>
+    </div>
   );
 }

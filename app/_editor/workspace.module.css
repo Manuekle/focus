@@ -56,6 +56,7 @@
 .brand img { border: 1px solid var(--border); border-radius: 11px; }
 .brandDot { color: var(--primary); }
 .nav { display: flex; align-items: center; gap: 30px; font-size: 12px; font-weight: 500; }
+@media (max-width: 560px) { .nav { gap: 10px; } .navLink { display: none; } }
 .skipLink { position: absolute; top: -100px; left: 16px; z-index: 50; padding: 12px 18px; border-radius: 6px; background: #181818; color: #fff; }
 .skipLink:focus { top: 16px; }
 
@@ -67,46 +68,21 @@
 }
 
 .hero { position: relative; isolation: isolate; padding: 32px 24px 28px; text-align: center; }
-.eyebrow {
-  position: relative;
-  isolation: isolate;
-  overflow: hidden;
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 14px;
-  padding: 6px 13px 6px 11px;
-  border: 1px solid #ffffff14;
-  border-radius: 999px;
-  background: #ffffff06;
-  box-shadow:
-    inset 0 1px 0 #ffffff12,
-    0 0 24px #2853e914;
-  color: #c6ccda;
-  font-size: 12px;
-}
 
-.eyebrow::after {
+/* A soft key light from above, landing on the title and the demo. */
+.hero::before {
   content: "";
   position: absolute;
-  inset: 0;
+  inset: -88px 0 0;
   z-index: -1;
   pointer-events: none;
-  background: linear-gradient(100deg, transparent 30%, #ffffff2e 48%, transparent 66%);
-  transform: translateX(-140%);
-  animation: eyebrow-shimmer 5.2s var(--ease-smooth-out, ease-out) infinite;
+  background:
+    radial-gradient(ellipse 34% 42% at 50% 0%, #a9bbff1c, transparent 70%),
+    radial-gradient(ellipse 46% 34% at 50% 62%, #2853e914, transparent 72%);
 }
 
-@keyframes eyebrow-shimmer {
-  0% { transform: translateX(-140%); }
-  52%, 100% { transform: translateX(140%); }
-}
+.eyebrow { margin-bottom: 18px; }
 
-@media (prefers-reduced-motion: reduce) {
-  .eyebrow::after { animation: none; opacity: 0; }
-}
-
-.eyebrow > span { width: 5px; height: 5px; border-radius: 50%; background: #2853e9; box-shadow: 0 0 9px #2853e94d; }
 .title { margin: 0; font-family: var(--font-porkys), sans-serif; font-size: clamp(52px, 6.2vw, 76px); font-weight: 400; line-height: 1.02; letter-spacing: -0.045em; }
 .titleLine {
   display: inline-block;
@@ -122,6 +98,10 @@
     0 0 1em #ffffff0d;
 }
 .titleAccent {
+  /* The gradient is clipped to this box, so it needs the same overhang room as .titleLine. */
+  display: inline-block;
+  padding: 0.1em 0.18em;
+  margin: -0.1em -0.18em;
   color: #6385fe;
   background: linear-gradient(180deg, #9aafff 0%, #6385fe 48%, #3b68ff 100%);
   background-clip: text;
@@ -132,8 +112,9 @@
   .titleWhite { text-shadow: none; }
   .titleAccent { background: none; color: CanvasText; -webkit-text-fill-color: CanvasText; filter: none; }
 }
-.intro { margin-top: 16px; color: var(--foreground); font-size: 14px; line-height: 1.65; }
+.intro { margin-top: 18px; color: var(--foreground); font-size: 16px; line-height: 1.55; text-wrap: balance; }
 .intro > span { color: var(--muted-foreground); }
+.cta { display: flex; justify-content: center; margin-top: 22px; }
 
 .studio { width: min(960px, calc(100% - 64px)); margin-inline: auto; scroll-margin-top: 24px; outline: none; }
 .steps { display: flex; align-items: center; justify-content: center; gap: 20px; padding: 14px 0 20px; }
@@ -286,9 +267,8 @@
   .brand > span { font-size: 27px; }
   .brand img { width: 33px; height: 33px; border-radius: 9px; }
   .hero { padding: 35px 16px 28px; }
-  .eyebrow { margin-bottom: 18px; font-size: 12px; }
   .title { font-size: clamp(42px, 10.7vw, 62px); line-height: 1.05; }
-  .intro { margin-top: 18px; font-size: 12px; }
+  .intro { margin-top: 16px; font-size: 14px; }
   .studio { width: calc(100% - 32px); }
   .steps { gap: 12px; padding-top: 4px; }
   .footer { padding-bottom: max(20px, env(safe-area-inset-bottom)); }

@@ -1,0 +1,31 @@
+.timeline { flex-basis: 100%; min-width: 0; display: flex; flex-direction: column; gap: 8px; padding-top: 4px; }
+.readout, .actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.readout { font-size: 12px; line-height: 1.5; }
+.readout label { font-weight: 500; }
+.readout output { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.actions { justify-content: flex-start; }
+.rails { --thumb: 12px; position: relative; display: flex; flex-direction: column; }
+.marker { appearance: none; width: 100%; height: 28px; background: transparent; cursor: ew-resize; }
+.marker::-webkit-slider-runnable-track { height: 2px; background: transparent; }
+.marker::-moz-range-track { height: 2px; background: transparent; }
+.marker::-webkit-slider-thumb { appearance: none; width: 12px; height: 12px; margin-top: -5px; border: 2px solid var(--foreground); border-radius: 2px; background: var(--primary); transform: rotate(45deg); }
+.marker::-moz-range-thumb { width: 8px; height: 8px; border: 2px solid var(--foreground); border-radius: 2px; background: var(--primary); transform: rotate(45deg); }
+.marker[data-unset] { opacity: 0.5; }
+.marker[data-suggested]::-webkit-slider-thumb { background: var(--card); border-color: var(--primary); }
+.marker[data-suggested]::-moz-range-thumb { background: var(--card); border-color: var(--primary); }
+.marker:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; border-radius: 4px; }
+.pin, .suggestion { pointer-events: none; position: absolute; top: 20px; bottom: 5px; width: 2px; background: var(--primary); left: calc(var(--thumb) / 2 + (100% - var(--thumb)) * var(--point)); }
+.suggestion { left: calc(var(--thumb) / 2 + (100% - var(--thumb)) * var(--suggestion)); background: transparent; border-inline-start: 2px dashed var(--muted-foreground); }
+.hint { font-size: 12px; line-height: 1.55; color: var(--muted-foreground); }
+.hint[data-invalid] { color: var(--destructive); }
+@media (pointer: coarse) {
+  .rails { --thumb: 20px; }
+  .marker { height: 40px; }
+  .marker::-webkit-slider-thumb { width: 20px; height: 20px; margin-top: -9px; }
+  .marker::-moz-range-thumb { width: 16px; height: 16px; }
+  .pin, .suggestion { top: 30px; bottom: 6px; }
+}
+@media (forced-colors: active) {
+  .pin, .suggestion { background: Highlight; }
+  .marker { forced-color-adjust: auto; }
+}

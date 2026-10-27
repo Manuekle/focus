@@ -4,16 +4,18 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { RenderParamsSchema, applyParamsPatch } from "../../shared/render";
 import type { VideoAsset } from "../../shared/schemas";
 import { ffmpeg } from "../ffmpeg";
 import { VIDEO_FILES, videoDir } from "../storage";
 import { ingestVideo } from "../videos";
+import { assistEdit } from "./assistant";
 import { readMetaConfig } from "./meta";
 import { interpretInstruction } from "./planner";
 import { segmentVideo } from "./sam";
 
 // Paid, opt-in: `pnpm test:live`. Uses real Meta API credits (one Muse Spark
-// call and one SAM 3.1 pass over ~48 frames). Skips without a key or footage.
+// call, one AI editor call and one SAM 3.1 pass over ~48 frames). Skips without a key or footage.
 
 const SOURCE = process.env.FOCUS_LIVE_VIDEO ?? "/System/Library/Wallpapers/.default/Golden Gate.mov";
 const enabled = readMetaConfig() !== null && existsSync(SOURCE);
@@ -43,6 +45,24 @@ describe.skipIf(!enabled)("Meta API (live)", () => {
     expect(plan.supported).toBe(true);
     expect(plan.effect).toBe("selective_color");
     expect(plan.target.concept).toMatch(/bridge/);
+  }, 120_000);
+
+  it("The AI editor turns a chat message into a bounded finish patch", async () => {
+    const current = RenderParamsSchema.parse({ effect: "selective_color" });
+    const turn = await assistEdit({
+      message: "Hazlo más cinematográfico, con un brillo dorado alrededor del puente y barras de cine",
+      history: [],
+      params: current,
+      family: "reality-shift",
+      concept: "bridge",
+      media: video.normalized,
+      videoId: video.id,
+    });
+    expect(turn.action).toBe("adjust");
+    expect(turn.reply.length).toBeGreaterThan(0);
+    const next = applyParamsPatch(current, turn.patch);
+    expect(next.effect).toBe("selective_color");
+    expect(next.finish).toMatchObject({ look: "cinematic", subject: "glow", accent: "gold", letterbox: true });
   }, 120_000);
 
   it("SAM 3.1 tracks the concept on every normalized frame", async () => {

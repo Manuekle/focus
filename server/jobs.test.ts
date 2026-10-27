@@ -1,15 +1,16 @@
 import { readFileSync } from "node:fs";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { Readable } from "node:stream";
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { parseVideoStream, type ResponsesEvent } from "@meta-sam/parser";
 import type { EditJob, EditPlan, VideoAsset } from "../shared/schemas";
 import { buildTracking, type Tracking } from "../shared/tracking";
 import { AppError } from "./errors";
 import { ffmpeg } from "./ffmpeg";
-import { cancelJob, createJob, fillGaps, getJob, refineWithPoint, reopenSelection, resultFile, services, setSelection, startRender } from "./jobs";
+import { cancelJob, chatEdit, createJob, fillGaps, getJob, refineWithPoint, reopenSelection, requestKey, restoreChatTurn, resultFile, services, setSelection, startRender } from "./jobs";
 import { ingestVideo } from "./videos";
 
 // The job lifecycle with the two paid services replaced by fakes: no network,
@@ -40,6 +41,28 @@ async function fakeTracking(id: string, text: string): Promise<Tracking> {
     fps: video.normalized.fps, frameCount: video.normalized.frameCount, records: result.records, diagnostics: result.diagnostics,
     outcome: result.outcome, videoFramesProcessed: null,
   });
+}
+
+/**
+ * A subject crossing the frame (80 px wide, 10 px per frame) with real one-bit SAM masks, encoded by the
+ * parser's own conformance encoder (not part of its public API).
+ */
+async function runnerTracking(id: string, jumping = false): Promise<Tracking> {
+  const codec = await import(pathToFileURL(path.join(process.cwd(), "node_modules/@meta-sam/parser/dist/mask-codec.js")).href) as {
+    encodeSegmentationMask(raster: Uint8Array, width: number, height: number): { encoding: "one_bit"; payload: string; width: number; height: number };
+  };
+  const mask = codec.encodeSegmentationMask(new Uint8Array(80 * 120).fill(1), 80, 120);
+  const { width, height, fps, frameCount } = video.normalized;
+  const frames = Array.from({ length: frameCount }, (_, frameIndex) => {
+    const left = 40 + frameIndex * 10;
+    const top = jumping ? Math.round(300 - 90 * Math.max(0, 1 - ((frameIndex - 48) / 24) ** 2)) : 300;
+    return { frameIndex, timestamp: frameIndex / fps, objects: [{ objectId: "0", box: { left, top, right: left + 80, bottom: top + 120 }, confidence: 0.9, mask }] };
+  });
+  return {
+    id, videoId: video.id, source: "concept", prompt: "runner", width, height, fps, frameCount, frames,
+    objects: [{ id: "0", framesPresent: frameCount, firstFrame: 0, lastFrame: frameCount - 1, meanConfidence: 0.9, meanArea: 9600, source: "concept" }],
+    missingFrames: [], diagnostics: [], outcome: { status: "completed" }, videoFramesProcessed: frameCount, createdAt: new Date().toISOString(),
+  };
 }
 
 beforeAll(async () => {
@@ -73,6 +96,8 @@ beforeAll(async () => {
     }
     if (input.prompt.kind === "concept" && input.prompt.concept === "gappy")
       return fakeTracking(input.id, BRIDGE.split("\n").filter(Boolean).slice(43).join("\n") + "\n");
+    if (input.prompt.kind === "concept" && input.prompt.concept === "runner") return runnerTracking(input.id);
+    if (input.prompt.kind === "concept" && input.prompt.concept === "jumper") return runnerTracking(input.id, true);
     if (input.prompt.kind === "point") return fakeTracking(input.id, ROCKS.split("\n")[0].replace(/^<0f>\d+/, "<0f>100").split(/,(?=\d+<\|box)/)[0] + "\n");
     return fakeTracking(input.id, objectCount === 0 ? "" : objectCount === 1 ? BRIDGE : ROCKS);
   };
@@ -135,6 +160,21 @@ describe("job lifecycle", () => {
     const job = await settle((await createJob({ videoId: video.id, effect: "reality-shift", prompt: prompt("all the stones") })).id);
     expect(job.status).toBe("completed");
     expect(job.selection).toHaveLength(job.objects.length);
+  });
+
+  it("follows an instruction that names an effect from another family", async () => {
+    nextPlan = { effect: "background_blur" };
+    const job = await settle((await createJob({ videoId: video.id, effect: "motion-echo", prompt: prompt("blur the background") })).id);
+    expect(job.status).toBe("completed");
+    expect(job.request.effect).toBe("reality-shift");
+    expect(job.render?.params.effect).toBe("background_blur");
+  });
+
+  it("waits with the found subjects preselected when several kinds are wanted", async () => {
+    nextPlan = { target: { concept: "bridge", selection: "several" } };
+    const job = await settle((await createJob({ videoId: video.id, effect: "reality-shift", prompt: prompt("the bridge and the boat") })).id);
+    expect(job.status).toBe("awaiting_selection");
+    expect(job.selection).toEqual(["0"]);
   });
 
   it("fails clearly for unsupported edits without calling SAM", async () => {
@@ -233,12 +273,248 @@ describe("render reuse", () => {
     await expect(startRender(job.id, { effect: "motion_echo", trailCount: 3, trailSpacingMs: 120, intensity: 0.6, feather: 1 })).rejects.toMatchObject({ code: "effect_mismatch" });
   });
 
+  it("checks the release flag and the freeze point before rendering Time Freeze", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS", "true");
+    try {
+      nextPlan = { target: { concept: "jumper", selection: "single" }, effect: "time_freeze_echo" };
+      const request = { videoId: video.id, effect: "time-freeze" as const, prompt: prompt("freeze the jumper") };
+      const job = await settle((await createJob(request)).id);
+      expect(job.request.effect).toBe("time-freeze");
+      const callsBefore = { ...calls };
+      vi.stubEnv("NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS", "false");
+      const gate = vi.fn();
+      // Even the existing job/cache must not bypass a disabled release.
+      await expect(createJob(request, gate)).rejects.toMatchObject({ code: "effect_disabled" });
+      expect(gate).not.toHaveBeenCalled();
+      await expect(startRender(job.id)).rejects.toMatchObject({ code: "effect_disabled" });
+      await expect(startRender(job.id, { effect: "time_freeze_echo", trigger: { mode: "manual", timestampMs: 1000 } })).rejects.toMatchObject({ code: "effect_disabled" });
+      await expect(setSelection(job.id, ["0"])).rejects.toMatchObject({ code: "effect_disabled" });
+      await expect(reopenSelection(job.id)).rejects.toMatchObject({ code: "effect_disabled" });
+      await expect(refineWithPoint(job.id, { frameIndex: 0, point: { x: 0, y: 0 } }, gate)).rejects.toMatchObject({ code: "effect_disabled" });
+      await expect(fillGaps(job.id, gate)).rejects.toMatchObject({ code: "effect_disabled" });
+      expect(await getJob(job.id)).toEqual(job);
+      expect(calls).toEqual(callsBefore);
+      expect(gate).not.toHaveBeenCalled();
+      vi.stubEnv("NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS", "true");
+      // The 4 s clip's last frame is at 3958 ms.
+      await expect(startRender(job.id, { effect: "time_freeze_echo", trigger: { mode: "manual", timestampMs: 4000 } })).rejects.toMatchObject({ code: "invalid_trigger" });
+      await expect(startRender(job.id, { effect: "time_freeze_echo" })).rejects.toMatchObject({ code: "invalid_trigger" });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("rejects a cached temporal plan under a v1 request before SAM after rollback", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS", "false");
+    try {
+      const request = { videoId: video.id, effect: "motion-echo" as const, prompt: prompt("cached freeze plan") };
+      const dir = path.join(work, "data", "videos", video.id, "plans");
+      await mkdir(dir, { recursive: true });
+      await writeFile(path.join(dir, `${requestKey(request)}.json`), JSON.stringify({ supported: true, target: { concept: "runner", selection: "single" }, effect: "time_freeze_echo", parameters: { triggerEvent: "peak_motion" }, needsClarification: false }));
+      const job = await settle((await createJob(request)).id);
+      expect(job).toMatchObject({ status: "failed", error: { code: "effect_disabled" }, render: null });
+      expect(calls).toEqual({ interpret: 0, segment: 0 });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("Time Freeze waits for its freeze point, renders from the stored masks, and re-renders without SAM", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS", "true");
+    try {
+      nextPlan = { target: { concept: "runner", selection: "single" }, effect: "time_freeze_echo", parameters: { echoCount: 4 } };
+      const job = await settle((await createJob({ videoId: video.id, effect: "time-freeze", prompt: prompt("freeze the runner") })).id);
+      // No moment named and none detected: nothing is guessed.
+      expect(job).toMatchObject({ status: "ready_to_render", detail: "Choose the freeze point on the timeline.", render: null, params: { effect: "time_freeze_echo", trigger: { mode: "manual" } } });
+      const segmentCalls = calls.segment;
+
+      const frozen = await settle((await startRender(job.id, { ...job.params!, trigger: { mode: "manual", timestampMs: 2000 } } as never)).id);
+      expect(frozen.status).toBe("completed");
+      // 96 source frames + 1.5 s × 24 fps inserted.
+      expect(frozen.render).toMatchObject({ frameCount: 132, temporal: { triggerFrame: 48, freezeStart: 49, freezeFrames: 36, echoFrames: [32, 36, 40, 44], resume: true } });
+      expect(frozen.render!.durationSeconds).toBeCloseTo(132 / 24, 1);
+
+      const rerender = await startRender(job.id, { ...frozen.render!.params, echo: { count: 2, spacingMs: 160, opacity: 0.85 } } as never);
+      // The MP4 currently on screen remains available while its replacement renders.
+      expect((await resultFile(job.id, "output", frozen.render!.key)).path).toContain(frozen.render!.key);
+      const fewer = await settle(rerender.id);
+      expect(fewer.render?.key).not.toBe(frozen.render?.key);
+      expect(fewer.render?.temporal?.echoFrames).toEqual([40, 44]);
+      expect((await resultFile(job.id, "output", frozen.render!.key)).path).toContain(frozen.render!.key);
+      expect((await resultFile(job.id, "compare", fewer.render!.key)).path).toContain(fewer.render!.key);
+      await expect(resultFile(job.id, "output", "../normalized")).rejects.toMatchObject({ code: "media_not_found", status: 404 });
+      await expect(resultFile(job.id, "output", "r-0000000000000000")).rejects.toMatchObject({ code: "media_not_found", status: 404 });
+      expect(calls.segment).toBe(segmentCalls);
+      // A completed export survives rollback, while edits and chat cannot
+      // restart its temporal work, including a cached chat version.
+      const saved = { ...fewer, chat: [{ id: "freeze-version", role: "assistant" as const, text: "Three echoes", at: new Date().toISOString(), params: fewer.render!.params }] };
+      await writeFile(path.join(work, "data", "jobs", `${fewer.id}.json`), JSON.stringify(saved));
+      const assist = vi.spyOn(services, "assist").mockResolvedValue({ reply: "No change", action: "none", patch: {} });
+      try {
+        vi.stubEnv("NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS", "false");
+        await expect(startRender(fewer.id)).rejects.toMatchObject({ code: "effect_disabled" });
+        await expect(chatEdit(fewer.id, "More echoes")).rejects.toMatchObject({ code: "effect_disabled" });
+        await expect(restoreChatTurn(fewer.id, "freeze-version")).rejects.toMatchObject({ code: "effect_disabled" });
+        expect(assist).not.toHaveBeenCalled();
+        expect((await resultFile(fewer.id, "output", frozen.render!.key)).path).toContain(frozen.render!.key);
+        expect((await resultFile(fewer.id, "output")).path).toContain(fewer.render!.key);
+        expect(await getJob(fewer.id)).toEqual(saved);
+      } finally {
+        assist.mockRestore();
+      }
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("Time Freeze on a subject that never moves fails with a clear reason", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS", "true");
+    try {
+      nextPlan = { target: { concept: "bridge", selection: "single" }, effect: "time_freeze_echo" };
+      const job = await settle((await createJob({ videoId: video.id, effect: "time-freeze", prompt: prompt("freeze the bridge") })).id);
+      const failed = await settle((await startRender(job.id, { ...job.params!, trigger: { mode: "manual", timestampMs: 2000 } } as never)).id);
+      expect(failed).toMatchObject({ status: "failed", error: { code: "echoes_overlap" } });
+      expect(failed.error?.message).toMatch(/barely moves/);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each(["jump_apex", "peak_motion"] as const)("resolves auto %s from stored tracking and keeps manual correction and cache reuse", async (event) => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS", "true");
+    try {
+      nextPlan = { target: { concept: event === "jump_apex" ? "jumper" : "runner", selection: "single" }, effect: "time_freeze_echo", parameters: { triggerEvent: event } };
+      const job = await settle((await createJob({ videoId: video.id, effect: "time-freeze", prompt: prompt(`automatic ${event}`) })).id);
+      expect(job.error).toBeNull();
+      expect(job.status).toBe("completed");
+      expect(job.temporalSuggestion).toMatchObject({ event, frameIndex: 48, timestampMs: 2000, confidence: expect.closeTo(0.9) });
+      expect(job.params).toMatchObject({ trigger: { mode: "auto", event, timestampMs: 2000 } });
+      expect(job.render).toMatchObject({ frameCount: 132, temporal: { triggerFrame: 48 } });
+      expect(job.render!.warnings.join(" ")).toMatch(/Suggested.*Confidence: 90%.*manually/);
+      const segmentCalls = calls.segment;
+
+      // Even a supplied auto timestamp is resolved from geometry, not trusted.
+      const cached = await settle((await startRender(job.id, { ...job.params!, trigger: { mode: "auto", event, timestampMs: 1000 } } as never)).id);
+      expect(cached.render?.key).toBe(job.render?.key);
+      expect(cached.temporalSuggestion).toEqual(job.temporalSuggestion);
+      expect(cached.render?.warnings.filter((warning) => warning.includes("Confidence:"))).toHaveLength(1);
+
+      const manual = await settle((await startRender(job.id, { ...job.params!, trigger: { mode: "manual", timestampMs: 2500 } } as never)).id);
+      expect(manual.status).toBe("completed");
+      expect(manual.params).toMatchObject({ trigger: { mode: "manual", timestampMs: 2500 } });
+      expect(manual.temporalSuggestion).toBeNull();
+      expect(manual.render?.temporal?.triggerFrame).toBe(60);
+      expect(manual.render?.warnings.join(" ")).not.toContain("Confidence:");
+      expect(calls.segment).toBe(segmentCalls);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it.each(["jump_apex", "peak_motion"] as const)("falls back to manual without rendering when %s has no evidence", async (event) => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS", "true");
+    try {
+      nextPlan = { target: { concept: "bridge", selection: "single" }, effect: "time_freeze_echo", parameters: { triggerEvent: event } };
+      const job = await settle((await createJob({ videoId: video.id, effect: "time-freeze", prompt: prompt(`no evidence for ${event}`) })).id);
+      expect(job).toMatchObject({ status: "ready_to_render", params: { trigger: { mode: "manual" } }, temporalSuggestion: null, render: null, resultUrl: null, error: null });
+      expect(job.params).not.toHaveProperty("trigger.timestampMs");
+      expect(job.detail).toMatch(/No reliable automatic moment.*Choose the freeze point/);
+      const segmentCalls = calls.segment;
+      const untrusted = await settle((await startRender(job.id, { effect: "time_freeze_echo", trigger: { mode: "auto", event, timestampMs: 2000 } })).id);
+      expect(untrusted).toMatchObject({ status: "ready_to_render", params: { trigger: { mode: "manual" } }, temporalSuggestion: null, render: null });
+      expect(calls.segment).toBe(segmentCalls);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
+  it("rejects a union of multiple subjects for automatic suggestions", async () => {
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS", "true");
+    try {
+      objectCount = 16;
+      nextPlan = { target: { concept: "rock", selection: "all" }, effect: "time_freeze_echo", parameters: { triggerEvent: "peak_motion" } };
+      const job = await settle((await createJob({ videoId: video.id, effect: "time-freeze", prompt: prompt("freeze several rocks") })).id);
+      expect(job.selection.length).toBeGreaterThan(1);
+      expect(job).toMatchObject({ status: "ready_to_render", params: { trigger: { mode: "manual" } }, temporalSuggestion: null, render: null });
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("serves the edited file, never the source", async () => {
     nextPlan = { target: { concept: "boat", selection: "single" } };
     const job = await settle((await createJob({ videoId: video.id, effect: "reality-shift", prompt: prompt("the boat") })).id);
     const file = await resultFile(job.id, "output");
     expect(file.path).toContain(path.join("renders", job.render!.key));
     expect(file.downloadName).toBe("focus-selective-color-clip.mp4");
+  });
+
+  it("keeps simultaneous renders with identical keys isolated by video", async () => {
+    const bytes = await readFile(path.join(work, "clip.mp4"));
+    const other = await ingestVideo({ body: Readable.toWeb(Readable.from(bytes)) as ReadableStream<Uint8Array>, fileName: "other.mp4" });
+    nextPlan = { target: { concept: "parallelpreview", selection: "single" } };
+    const segment = services.segment;
+    services.segment = async (input) => ({ ...await segment(input), videoId: input.videoId });
+    try {
+      const started = await Promise.all([
+        createJob({ videoId: video.id, effect: "reality-shift", prompt: prompt("first parallel preview") }),
+        createJob({ videoId: other.id, effect: "reality-shift", prompt: prompt("second parallel preview") }),
+      ]);
+      const [first, second] = await Promise.all(started.map((job) => settle(job.id)));
+      expect(first.status).toBe("completed");
+      expect(second.status).toBe("completed");
+      expect(first.render!.key).toBe(second.render!.key);
+      const a = await resultFile(first.id, "output", first.render!.key);
+      const b = await resultFile(second.id, "output", second.render!.key);
+      expect(a.path).not.toBe(b.path);
+      expect((await readFile(a.path)).length).toBeGreaterThan(1000);
+      expect((await readFile(b.path)).length).toBeGreaterThan(1000);
+    } finally {
+      services.segment = segment;
+    }
+  });
+});
+
+describe("AI editor", () => {
+  it("applies a chat turn as a re-render from the same masks and restores earlier versions for free", async () => {
+    nextPlan = { target: { concept: "mast", selection: "single" } };
+    const job = await settle((await createJob({ videoId: video.id, effect: "reality-shift", prompt: prompt("the mast") })).id);
+    const segmentCalls = calls.segment;
+
+    services.assist = async () => ({ reply: "Warmer, with a gold glow.", action: "adjust", patch: { finish: { look: "warm", subject: "glow", accent: "gold" } } });
+    const warm = await settle((await chatEdit(job.id, "warmer with a gold glow")).id);
+    expect(warm.status).toBe("completed");
+    expect(warm.render?.params.finish).toMatchObject({ look: "warm", subject: "glow", accent: "gold" });
+    expect(warm.chat.map((message) => message.role)).toEqual(["user", "assistant"]);
+    expect(warm.chat[1].changes).toEqual(["Look: Golden hour", "Subject glow: gold"]);
+
+    // Another effect family: same masks, the job follows the effect.
+    services.assist = async () => ({ reply: "Now with trails.", action: "adjust", patch: { effect: "motion_echo" } });
+    const echo = await settle((await chatEdit(job.id, "turn it into motion trails")).id);
+    expect(echo.request.effect).toBe("motion-echo");
+    expect(echo.render?.params).toMatchObject({ effect: "motion_echo", finish: { look: "warm" } });
+    expect(calls.segment).toBe(segmentCalls);
+
+    const started = Date.now();
+    const back = await settle((await restoreChatTurn(job.id, warm.chat[1].id)).id);
+    expect(back.render?.key).toBe(warm.render?.key);
+    expect(back.request.effect).toBe("reality-shift");
+    expect(Date.now() - started).toBeLessThan(1000);
+  });
+
+  it("replies without rendering when nothing changes, and suggests a new edit for another subject", async () => {
+    nextPlan = { target: { concept: "crane", selection: "single" } };
+    const job = await settle((await createJob({ videoId: video.id, effect: "reality-shift", prompt: prompt("the crane") })).id);
+    services.assist = async () => ({ reply: "I can't remove objects, but I can blur them.", action: "none", patch: {} });
+    const none = await chatEdit(job.id, "remove the car");
+    expect(none.status).toBe("completed");
+    expect(none.render?.key).toBe(job.render?.key);
+
+    services.assist = async () => ({ reply: "That needs a new tracking.", action: "new_edit", patch: {}, newInstruction: "Keep the dog in color" });
+    const suggested = await chatEdit(job.id, "now the dog");
+    expect(suggested.chat.at(-1)).toMatchObject({ role: "assistant", suggestion: "Keep the dog in color" });
+    expect(suggested.chat.at(-1)?.params).toBeUndefined();
+    await expect(restoreChatTurn(job.id, suggested.chat.at(-1)!.id)).rejects.toMatchObject({ code: "chat_turn_not_found" });
   });
 });
 
@@ -298,6 +574,6 @@ describe("cancellation and recovery", () => {
       reused: { plan: false, segmentation: false }, error: null, resultUrl: null, createdAt: now, updatedAt: now,
     }));
     const job = await getJob("00000000-0000-4000-8000-000000000000");
-    expect(job).toMatchObject({ status: "failed", error: { code: "interrupted" } });
+    expect(job).toMatchObject({ status: "failed", error: { code: "interrupted" }, temporalSuggestion: null });
   });
 });

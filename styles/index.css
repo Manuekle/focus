@@ -6,4 +6,3 @@
 @import "./focus-theme.css";
 @source "../components";
 @source "../lib";
-@source "../node_modules/streamdown/dist/*.js";

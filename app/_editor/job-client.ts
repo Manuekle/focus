@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { ACTIVE_JOB_STATUSES, ApiErrorBodySchema, EditJobSchema, type EditJob } from "../../shared/schemas";
-import type { RenderParams } from "../../shared/render";
+import type { RenderParamsInput } from "../../shared/render";
 import { TrackingSchema, type Tracking } from "../../shared/tracking";
 import { editorErrorMessage } from "./messages";
 
@@ -39,7 +39,9 @@ export const jobApi = {
   refine: (id: string, frameIndex: number, point: { x: number; y: number }) =>
     call(`/api/jobs/${id}/refine`, json({ frameIndex, point }), parseJob),
   fill: (id: string) => call(`/api/jobs/${id}/fill`, { method: "POST" }, parseJob),
-  render: (id: string, params?: RenderParams) => call(`/api/jobs/${id}/render`, json({ params }), parseJob),
+  render: (id: string, params?: RenderParamsInput) => call(`/api/jobs/${id}/render`, json({ params }), parseJob),
+  chat: (id: string, message: string) => call(`/api/jobs/${id}/chat`, json({ message }), parseJob),
+  restore: (id: string, messageId: string) => call(`/api/jobs/${id}/chat`, json({ restore: messageId }), parseJob),
   tracking: (id: string) => call(`/api/jobs/${id}/tracking`, undefined, (value) => TrackingSchema.parse(value)),
 };
 

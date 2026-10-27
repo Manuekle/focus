@@ -3,7 +3,7 @@ import localFont from "next/font/local";
 import { Workspace } from "./_editor/workspace";
 
 const porkys = localFont({
-  src: "../public/fonts/porkys/Porkys-Regular.ttf",
+  src: "../public/fonts/porkys/Porkys-Regular.woff2",
   variable: "--font-porkys",
   weight: "400",
   display: "swap",

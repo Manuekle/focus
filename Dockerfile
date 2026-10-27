@@ -14,7 +14,9 @@ FROM base AS build
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
-RUN pnpm build
+# Public release boolean, compiled into both client and server by Next.js.
+ARG NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=false
+RUN NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS="${NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS}" pnpm build
 
 FROM node:24-bookworm-slim AS runner
 # FFmpeg/FFprobe from Debian: H.264 (libx264), AAC, lanczos scaling.

@@ -47,6 +47,7 @@ const ProbeStreamSchema = z.object({
   r_frame_rate: z.string().optional(),
   nb_frames: z.string().optional(),
   duration: z.string().optional(),
+  start_time: z.string().optional(),
   tags: z.record(z.string(), z.string()).optional(),
   disposition: z.object({ attached_pic: z.number().optional() }).loose().optional(),
   side_data_list: z.array(z.object({ rotation: z.number().optional() }).loose()).optional(),

@@ -2,11 +2,15 @@ import path from "node:path";
 import sharp from "sharp";
 import { BREAK_FRAME_CANVAS, type RenderParams, type RenderParamsOf } from "../../shared/render";
 import type { NormalizedMedia } from "../../shared/schemas";
+import type { FreezePlan } from "../../shared/temporal";
+import { selectionTrack, type TrackPoint } from "../../shared/temporal-track";
 import { frameAt, type Box, type Tracking } from "../../shared/tracking";
 import { AppError } from "../errors";
 import { probe } from "../ffmpeg";
 import { parseRate } from "../media-validation";
-import { backgroundBlur, blendOver, blurSigma, cropGhost, drawGhost, padBox, selectiveColor, trailOpacity, type Ghost } from "./effects";
+import { backgroundBlur, blendOver, blurSigma, cropGhost, drawGhost, padBox, selectiveColor, spotlight, trailOpacity, type Ghost } from "./effects";
+import { createFinisher } from "./finish";
+import { renderTimeFreeze, type FreezeSummary } from "./temporal";
 import { readFrames, runFfmpeg, writeFrames } from "./frames";
 import { computeBreakFrameLayout, insideRect, subjectMotion, visibleSourceRect, type BreakFrameLayout, type SubjectMotion } from "./layout";
 import { feather, featherRadius, rasterizeSelection, type Alpha } from "./masks";
@@ -16,18 +20,27 @@ import { feather, featherRadius, rasterizeSelection, type Alpha } from "./masks"
 // Effects only differ in their FrameProcessor; decoding, masking, encoding,
 // the comparison video and verification are shared.
 
+/** One finished effect frame and the subject's mask in the same (output) coordinates. */
+export type ProcessedFrame = { readonly rgba: Buffer; readonly alpha: Uint8Array | null };
+
 export type FrameProcessor = {
   readonly width: number;
   readonly height: number;
-  process(index: number, frame: Buffer, alpha: Alpha): Promise<Buffer>;
+  process(index: number, frame: Buffer, alpha: Alpha): Promise<ProcessedFrame>;
   /** Extra per-render facts for the result. */
   summary(): { breakoutFrameRatio: number | null; warnings: string[] };
 };
 
 export const BACKGROUNDS = { dark: [0x14, 0x16, 0x1e], light: [0xf6, 0xf7, 0xfa] } as const;
 
-function sameSize(media: NormalizedMedia, process: FrameProcessor["process"]): FrameProcessor {
-  return { width: media.width, height: media.height, process, summary: () => ({ breakoutFrameRatio: null, warnings: [] }) };
+/** Effects that keep the source size: the source mask is already in output coordinates. */
+function sameSize(media: NormalizedMedia, effect: (index: number, frame: Buffer, alpha: Alpha) => Buffer | Promise<Buffer>): FrameProcessor {
+  return {
+    width: media.width,
+    height: media.height,
+    process: async (index, frame, alpha) => ({ rgba: await effect(index, frame, alpha), alpha: alpha.box ? alpha.data : null }),
+    summary: () => ({ breakoutFrameRatio: null, warnings: [] }),
+  };
 }
 
 export function selectiveColorProcessor(media: NormalizedMedia, params: RenderParamsOf<"selective_color">): FrameProcessor {
@@ -37,6 +50,24 @@ export function selectiveColorProcessor(media: NormalizedMedia, params: RenderPa
 export function backgroundBlurProcessor(media: NormalizedMedia, params: RenderParamsOf<"background_blur">): FrameProcessor {
   const sigma = blurSigma(params.level, media.width, media.height);
   return sameSize(media, (_index, frame, alpha) => backgroundBlur(frame, alpha.data, media.width, media.height, sigma));
+}
+
+export function spotlightProcessor(media: NormalizedMedia, params: RenderParamsOf<"spotlight">): FrameProcessor {
+  // The pool of light follows the subject, smoothed so box jitter never flickers.
+  let pool: { x: number; y: number; radius: number } | null = null;
+  return sameSize(media, (_index, frame, alpha) => {
+    if (alpha.box) {
+      const target = {
+        x: (alpha.box.left + alpha.box.right) / 2,
+        y: (alpha.box.top + alpha.box.bottom) / 2,
+        radius: Math.max(alpha.box.right - alpha.box.left, alpha.box.bottom - alpha.box.top) * 0.6,
+      };
+      pool = pool
+        ? { x: pool.x + (target.x - pool.x) * 0.35, y: pool.y + (target.y - pool.y) * 0.35, radius: pool.radius + (target.radius - pool.radius) * 0.35 }
+        : target;
+    }
+    return spotlight(frame, alpha.data, media.width, params.darkness, pool);
+  });
 }
 
 export function motionEchoProcessor(media: NormalizedMedia, params: RenderParamsOf<"motion_echo">): FrameProcessor {
@@ -133,7 +164,12 @@ export function breakFrameProcessor(media: NormalizedMedia, params: RenderParams
       drawFrameEdge(out, width, frameRect, edge, mask, visible);
       if (alpha.box) framesWithSubject++;
       if (outside > 200) breakoutFrames++;
-      return out;
+      let subject: Uint8Array | null = null;
+      if (alpha.box) {
+        subject = new Uint8Array(width * height);
+        for (let vy = 0; vy < visible.height; vy++) subject.set(mask.subarray(vy * visible.width, (vy + 1) * visible.width), (visible.y + vy) * width + visible.x);
+      }
+      return { rgba: out, alpha: subject };
     },
     summary() {
       const ratio = framesWithSubject ? breakoutFrames / framesWithSubject : 0;
@@ -170,6 +206,8 @@ export type MaskSource = {
   alphaAt(index: number): Alpha;
   /** Where the subject sits and travels across the clip, for layout. */
   subjectMotion(): SubjectMotion | null;
+  /** Per-frame summary of the selected objects (boxes, mask presence, confidence), when tracking provides one. */
+  track?(): TrackPoint[];
 };
 
 export function trackingMaskSource(tracking: Tracking, selection: readonly string[], media: NormalizedMedia): MaskSource {
@@ -180,6 +218,7 @@ export function trackingMaskSource(tracking: Tracking, selection: readonly strin
   return {
     alphaAt: (index) => rasterizeSelection(frameAt(tracking, index), chosen, media.width, media.height),
     subjectMotion: () => subjectMotion(subjectBoxes(tracking, chosen)),
+    track: () => selectionTrack(tracking, selection),
   };
 }
 
@@ -205,6 +244,8 @@ export function createProcessor(media: NormalizedMedia, params: RenderParams, ma
       return selectiveColorProcessor(media, params);
     case "background_blur":
       return backgroundBlurProcessor(media, params);
+    case "spotlight":
+      return spotlightProcessor(media, params);
     case "motion_echo":
       return motionEchoProcessor(media, params);
     case "break_frame":
@@ -213,6 +254,9 @@ export function createProcessor(media: NormalizedMedia, params: RenderParams, ma
         params,
         computeBreakFrameLayout({ source: media, canvas: BREAK_FRAME_CANVAS, frameSize: params.frameSize, subject: masks.subjectMotion() }),
       );
+    case "time_freeze_echo":
+      // Changes the clip's length: rendered by renderTimeFreeze, never per frame.
+      throw new AppError("effect_unavailable", 500, "Time Freeze no es un efecto por fotograma.");
   }
 }
 
@@ -223,6 +267,8 @@ export type RenderOutput = {
   readonly framesWithoutMask: number;
   readonly breakoutFrameRatio: number | null;
   readonly warnings: string[];
+  /** Time Freeze only: the output timeline and the echoes drawn. */
+  readonly freeze?: FreezeSummary;
 };
 
 export async function renderVideo(input: {
@@ -235,7 +281,10 @@ export async function renderVideo(input: {
   readonly onProgress?: (fraction: number) => void;
 }): Promise<RenderOutput> {
   const { media, masks, params, signal } = input;
+  // Changes the clip's length, so it has its own frame loop.
+  if (params.effect === "time_freeze_echo") return renderTimeFreeze({ ...input, params });
   const processor = createProcessor(media, params, masks);
+  const finisher = createFinisher(processor.width, processor.height, params.finish);
   const radius = featherRadius(params.feather, media.width, media.height);
   const output = path.join(input.outputDir, "output.mp4");
   const writer = writeFrames({
@@ -257,7 +306,8 @@ export async function renderVideo(input: {
       const raw = masks.alphaAt(index);
       if (!raw.box) framesWithoutMask++;
       const alpha: Alpha = raw.box ? { data: feather(raw.data, media.width, media.height, radius), box: raw.box } : raw;
-      await writer.write(await processor.process(index, frame, alpha));
+      const processed = await processor.process(index, frame, alpha);
+      await writer.write(finisher ? await finisher.apply(index, processed.rgba, processed.alpha) : processed.rgba);
       index++;
       input.onProgress?.(index / media.frameCount);
     }
@@ -290,16 +340,39 @@ export async function renderComparison(input: {
   readonly width: number;
   readonly height: number;
   readonly background: "dark" | "light";
+  /** Time Freeze: the original half holds on the same frame for as long, so both halves share one clock. */
+  readonly freeze?: FreezePlan & { readonly resume: boolean };
   readonly signal?: AbortSignal;
 }): Promise<void> {
   const color = input.background === "dark" ? "0x14161e" : "0xf6f7fa";
+  const { freeze } = input;
+  const fps = freeze ? parseRate((await probe(input.outputPath)).streams.find((stream) => stream.codec_type === "video")?.avg_frame_rate) : 0;
+  if (freeze && fps <= 0) throw new AppError("export_invalid", 500, "No se pudo verificar la cadencia de la comparación.");
+  // Concat uses a microsecond clock; the edited MP4 uses its track timebase.
+  // Framesync can round the final EOF differently depending on input order.
+  // Give both temporal halves exact integer frame timestamps before stacking.
+  const clock = freeze ? `,settb=expr=1/${fps},setpts=N` : "";
+  // Frame counts only: trim keeps 0…T, tpad repeats frame T, the rest follows.
+  const original = freeze
+    ? freeze.resume && freeze.outputFrameCount > freeze.freezeStart + freeze.freezeFrames
+      ? `[0:v]split=2[o1][o2];[o1]trim=end_frame=${freeze.freezeStart},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop=${freeze.freezeFrames}[o3];[o2]trim=start_frame=${freeze.freezeStart},setpts=PTS-STARTPTS[o4];[o3][o4]concat=n=2:v=1:a=0[original];[original]`
+      : `[0:v]trim=end_frame=${freeze.freezeStart},setpts=PTS-STARTPTS,tpad=stop_mode=clone:stop=${freeze.freezeFrames}[original];[original]`
+    : "[0:v]";
   await runFfmpeg(
     [
       "-i", input.normalizedPath,
       "-i", input.outputPath,
       "-filter_complex",
-      `[0:v]scale=${input.width}:${input.height}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${input.width}:${input.height}:(ow-iw)/2:(oh-ih)/2:color=${color},setsar=1[before];[1:v]setsar=1[after];[before][after]vstack=inputs=2[v]`,
-      "-map", "[v]", "-an",
+      `${original}scale=${input.width}:${input.height}:force_original_aspect_ratio=decrease:flags=lanczos,pad=${input.width}:${input.height}:(ow-iw)/2:(oh-ih)/2:color=${color},setsar=1${clock}[before];[1:v]setsar=1${clock}[after];[before][after]vstack=inputs=2${freeze ? `,trim=end_frame=${freeze.outputFrameCount}` : ""}[v]`,
+      "-map", "[v]",
+      // Temporal comparisons play the edited audio verbatim: the same mute
+      // and resume policy as the exported MP4. Existing v1 comparisons stay silent.
+      ...(freeze ? ["-map", "1:a:0?", "-c:a", "copy"] : ["-an"]),
+      // CFR at the encoder preserves every integer-timestamped frame. An
+      // fps filter after vstack drops its last frame with FFmpeg 5's EOF PTS.
+      ...(freeze ? ["-r", String(fps), "-fps_mode", "cfr"] : []),
+      // Trim the video in the graph. -frames:v would stop demuxing early
+      // and drop the last AAC packets from the copied edited soundtrack.
       "-c:v", "libx264", "-preset", "veryfast", "-crf", "20", "-pix_fmt", "yuv420p", "-movflags", "+faststart",
       input.comparePath,
     ],
@@ -308,7 +381,7 @@ export async function renderComparison(input: {
 }
 
 /** Checks the encoded file against what was requested. Throws on any mismatch. */
-export async function verifyOutput(file: string, expected: { width: number; height: number; fps: number; frameCount: number; hasAudio: boolean }) {
+export async function verifyOutput(file: string, expected: { width: number; height: number; fps: number; frameCount: number; hasAudio: boolean; timingToleranceSeconds?: number }) {
   const facts = await probe(file).catch(() => null);
   if (!facts) throw new AppError("export_invalid", 500, "El video exportado no se pudo leer.");
   const video = facts.streams.find((stream) => stream.codec_type === "video");
@@ -325,6 +398,17 @@ export async function verifyOutput(file: string, expected: { width: number; heig
   if (!(Math.abs(duration - expected.frameCount / expected.fps) <= 1.5 / expected.fps)) problems.push(`duración ${duration}`);
   const hasAudio = facts.streams.some((stream) => stream.codec_type === "audio");
   if (hasAudio !== expected.hasAudio) problems.push(hasAudio ? "audio inesperado" : "falta el audio");
+  if (expected.timingToleranceSeconds !== undefined) {
+    const tolerance = expected.timingToleranceSeconds;
+    if (!video || !(Math.abs(Number(video.start_time)) <= tolerance)) problems.push("inicio de video desalineado");
+    if (video && Math.abs(parseRate(video.r_frame_rate) - expected.fps) > 0.01) problems.push("cadencia de video irregular");
+    const audio = facts.streams.find((stream) => stream.codec_type === "audio");
+    if (audio) {
+      if (audio.codec_name !== "aac") problems.push(`códec de audio ${audio.codec_name}`);
+      if (!(Math.abs(Number(audio.start_time)) <= tolerance)) problems.push("inicio de audio desalineado");
+      if (!(Math.abs(Number(audio.duration) - expected.frameCount / expected.fps) <= tolerance)) problems.push(`duración de audio ${audio.duration}`);
+    }
+  }
   if (problems.length) throw new AppError("export_invalid", 500, "La exportación no pasó la verificación.", problems.join(", "));
   return { durationSeconds: duration };
 }

@@ -2,26 +2,28 @@
 
 import Link from "next/link";
 import Image from "next/image";
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { AnimatePresence, motion } from "motion/react";
-import { ArrowRight01Icon, ArrowUpRight01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
+import { ArrowDown01Icon, ArrowRight01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { EASE_OUT } from "../../lib/ease";
 import { useReducedMotion } from "../../lib/hooks/use-reduced-motion";
 import { HugeiconsIcon } from "../../components/icons/icon";
-import type { FileUploadItem } from "../../components/motion/file-upload";
 import { Button } from "../../components/ui/button";
 import { useToast } from "../../components/toast-provider";
 import { formatSeconds } from "../../shared/media";
-import { VideoAssetSchema, type EffectId, type VideoAsset } from "../../shared/schemas";
-import { EditorView } from "./editor-view";
+import type { EffectId, VideoAsset } from "../../shared/schemas";
+import { AccountButton } from "../_auth/account-button";
+import { useSession } from "../_auth/session-client";
 import { EditorNotice } from "./editor-notice";
 import { ClipboardColored24 } from "../../components/icons/ClipboardColored24";
 import { FeatherSparkleColored24 } from "../../components/icons/FeatherSparkleColored24";
 import { ShapesColored24 } from "../../components/icons/ShapesColored24";
 import { GithubIcon, XIcon } from "../../components/icons/social-icons";
-import { HeroAtmosphere } from "./hero-atmosphere";
-import { StudioUpload, type UploadPhase } from "./studio-upload";
-import { UploadError, checkFileLocally, uploadVideo } from "./upload";
+import { HeroBadge } from "./hero-badge";
+import { HeroDemo } from "./hero-demo";
+import { StudioUpload } from "./studio-upload";
+import { useClipUpload } from "./use-clip-upload";
 import styles from "./workspace.module.css";
 
 const HOW_STEPS = [
@@ -30,29 +32,47 @@ const HOW_STEPS = [
   { n: "03", copy: "Fine-tune, preview, export the clip.", Icon: ClipboardColored24 },
 ] as const;
 
-type Failure = { readonly id: number; readonly message: string; readonly detail?: string; readonly retry?: () => void };
+// The composer (and zod with it) only matters once a clip exists, so it stays
+// out of the first load. The chunk is warmed as soon as an upload or restore starts.
+const loadComposer = () => import("./home-composer");
+const HomeComposer = dynamic(() => import("./home-composer").then((module) => module.HomeComposer));
 
 type Stage =
   | { readonly kind: "empty" }
-  | { readonly kind: "uploading"; readonly item: FileUploadItem; readonly phase: UploadPhase }
+  | { readonly kind: "uploading" }
   | { readonly kind: "ready"; readonly video: VideoAsset };
 
 export function Workspace() {
-  const [stage, setStage] = useState<Stage>({ kind: "empty" });
-  const [failure, setFailure] = useState<Failure | null>(null);
+  const [ready, setReady] = useState<VideoAsset | null>(null);
   const [effect, setEffect] = useState<EffectId>("reality-shift");
   const [prompt, setPrompt] = useState("");
-  const abortRef = useRef<(() => void) | null>(null);
   const uploadIdRef = useRef(0);
+  const { session } = useSession();
   const studioRef = useRef<HTMLElement>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const [contentHeight, setContentHeight] = useState<number | "auto">("auto");
   const { toast } = useToast();
+  const { upload, failure, start: startUpload, cancel: cancelClip } = useClipUpload((video) => {
+    setReady(video);
+    toast({ title: "Your clip is ready", description: `${video.normalized.width}×${video.normalized.height} · ${formatSeconds(video.normalized.durationSeconds)}`, status: "success" });
+  });
+  const stage: Stage = upload ? { kind: "uploading" } : ready ? { kind: "ready", video: ready } : { kind: "empty" };
   const reducedMotion = useReducedMotion();
   const entrance = (delay: number, distance = 12) => ({
     initial: reducedMotion ? false as const : { opacity: 0, y: distance },
     animate: { opacity: 1, y: 0 },
     transition: { duration: reducedMotion ? 0 : 0.5, delay: reducedMotion ? 0 : delay, ease: EASE_OUT },
+  });
+  // A lens pulling focus: soft, sharp, a small hunt past it, settled.
+  const rackFocus = (delay: number) => ({
+    initial: reducedMotion ? false as const : { opacity: 0, filter: "blur(18px)", scale: 1.04 },
+    animate: { opacity: 1, filter: ["blur(18px)", "blur(0px)", "blur(2px)", "blur(0px)"], scale: 1 },
+    transition: reducedMotion ? { duration: 0 } : {
+      delay,
+      opacity: { duration: 0.5, delay, ease: EASE_OUT },
+      scale: { duration: 1.1, delay, ease: EASE_OUT },
+      filter: { duration: 1.1, delay, times: [0, 0.55, 0.75, 1], ease: "easeOut" },
+    },
   });
 
   useEffect(() => {
@@ -63,92 +83,64 @@ export function Workspace() {
     return () => observer.disconnect();
   }, []);
 
-  useEffect(() => () => {
-    uploadIdRef.current += 1;
-    abortRef.current?.();
-  }, []);
 
   // The current video lives in the URL (?v=id), so a reload keeps the clip
   // and every cached plan and mask that belongs to it.
+  // Until the restore settles, the URL is left alone: otherwise the empty
+  // first render would strip ?v before a remount (Strict Mode) can read it.
+  const restoringRef = useRef(true);
   useEffect(() => {
     const id = new URLSearchParams(window.location.search).get("v");
-    if (!id) return;
+    if (!id) {
+      restoringRef.current = false;
+      return;
+    }
     const attempt = uploadIdRef.current;
     let canceled = false;
+    void loadComposer();
+    const schemas = import("../../shared/schemas");
     fetch(`/api/videos/${encodeURIComponent(id)}`)
       .then((response) => (response.ok ? response.json() : null))
-      .then((body) => {
-        if (canceled || uploadIdRef.current !== attempt) return;
+      .then(async (body) => {
+        const { VideoAssetSchema } = await schemas;
+        if (canceled) return;
+        restoringRef.current = false;
+        if (uploadIdRef.current !== attempt) return;
         const parsed = VideoAssetSchema.safeParse(body);
-        if (parsed.success) setStage({ kind: "ready", video: parsed.data });
+        if (parsed.success) setReady(parsed.data);
         else window.history.replaceState(null, "", window.location.pathname);
       })
-      .catch(() => undefined);
+      .catch(() => { if (!canceled) restoringRef.current = false; });
     return () => { canceled = true; };
   }, []);
 
+  const stageKind = stage.kind;
+  const readyId = ready?.id;
   useEffect(() => {
-    const url = stage.kind === "ready" ? `${window.location.pathname}?v=${stage.video.id}` : window.location.pathname;
-    if (stage.kind !== "uploading" && `${window.location.pathname}${window.location.search}` !== url) window.history.replaceState(null, "", url);
-  }, [stage]);
+    if (restoringRef.current && stageKind === "empty") return;
+    restoringRef.current = false;
+    const url = stageKind === "ready" && readyId ? `${window.location.pathname}?v=${readyId}` : window.location.pathname;
+    if (stageKind !== "uploading" && `${window.location.pathname}${window.location.search}` !== url) window.history.replaceState(null, "", url);
+  }, [stageKind, readyId]);
 
-  const start = useCallback(async (file: File) => {
-    const attempt = ++uploadIdRef.current;
-    abortRef.current?.();
-    abortRef.current = null;
-    setFailure(null);
-    const base: FileUploadItem = { id: `${Date.now()}`, name: file.name, size: file.size, type: file.type, file };
-    setStage({ kind: "uploading", phase: "checking", item: { ...base, status: "uploading", progress: 0 } });
-    try {
-      await checkFileLocally(file);
-      if (uploadIdRef.current !== attempt) return;
-      setStage({ kind: "uploading", phase: "sending", item: { ...base, status: "uploading", progress: 0 } });
-      const handle = uploadVideo(file, (fraction) => {
-        if (uploadIdRef.current !== attempt) return;
-        setStage({
-          kind: "uploading",
-          // Bytes are in; FFprobe and FFmpeg are now running on the server.
-          phase: fraction >= 1 ? "preparing" : "sending",
-          item: { ...base, status: "uploading", progress: Math.round(fraction * 100) },
-        });
-      });
-      abortRef.current = handle.abort;
-      const video = await handle.promise;
-      if (uploadIdRef.current !== attempt) return;
-      setStage({ kind: "ready", video });
-      toast({ title: "Your clip is ready", description: `${video.normalized.width}×${video.normalized.height} · ${formatSeconds(video.normalized.durationSeconds)}`, status: "success" });
-    } catch (error) {
-      if (uploadIdRef.current !== attempt) return;
-      setStage({ kind: "empty" });
-      if (error instanceof UploadError && error.code === "aborted") return;
-      setFailure({
-        id: attempt,
-        message: error instanceof Error ? error.message : "We couldn’t upload your video. Try again.",
-        detail: error instanceof UploadError ? error.detail : undefined,
-        retry: () => void start(file),
-      });
-    } finally {
-      if (uploadIdRef.current === attempt) abortRef.current = null;
-    }
-  }, [toast]);
+  const start = useCallback((file: File) => {
+    uploadIdRef.current += 1;
+    setReady(null);
+    void loadComposer();
+    void startUpload(file);
+  }, [startUpload]);
 
   const reset = useCallback(() => {
-    if (stage.kind === "ready") {
-      void fetch(`/api/videos/${stage.video.id}`, { method: "DELETE" }).catch(() => undefined);
-    }
-    setStage({ kind: "empty" });
-    setFailure(null);
+    if (ready) void fetch(`/api/videos/${ready.id}`, { method: "DELETE" }).catch(() => undefined);
+    setReady(null);
     studioRef.current?.focus({ preventScroll: true });
-  }, [stage]);
+  }, [ready]);
 
   const cancelUpload = useCallback(() => {
     uploadIdRef.current += 1;
-    abortRef.current?.();
-    abortRef.current = null;
-    setStage({ kind: "empty" });
-    setFailure(null);
+    cancelClip();
     studioRef.current?.focus({ preventScroll: true });
-  }, []);
+  }, [cancelClip]);
 
   return (
     <div className={styles.workspace}>
@@ -159,23 +151,29 @@ export function Workspace() {
           <span>focus<span className={styles.brandDot}>.</span></span>
         </Link>
         <nav className={styles.nav} aria-label="Main navigation">
-          <Button asChild size="sm"><a href="#studio">Open studio <HugeiconsIcon icon={ArrowUpRight01Icon} size={14} strokeWidth={1.75} /></a></Button>
+          <Button asChild size="sm" variant="ghost" className={styles.navLink}><a href="#how-it-works">How it works</a></Button>
+          <Button asChild size="sm" variant="ghost" className={styles.navLink}><Link href="/editor">{session?.user ? "My projects" : "Editor"}</Link></Button>
+          <AccountButton session={session} next="/editor" />
         </nav>
       </motion.header>
 
         <main className={styles.home}>
           <section className={styles.hero} aria-labelledby="home-title">
-            <HeroAtmosphere />
-            <motion.p data-home-enter="" {...entrance(0.04, 6)} className={styles.eyebrow}><span aria-hidden />Small clips. Big possibilities.</motion.p>
+            <motion.p data-home-enter="" {...entrance(0.04, 6)} className={styles.eyebrow}><HeroBadge /></motion.p>
+            {/* Blur sits on the outer span; the inner one keeps its own glow filter. */}
             <h1 id="home-title" className={styles.title}>
-              <motion.span data-home-enter="" {...entrance(0.1, 16)} className={`${styles.titleLine} ${styles.titleWhite}`}>Make anything</motion.span>
+              <motion.span data-home-enter="" {...rackFocus(0.08)} className={styles.titleLine}><span className={styles.titleWhite}>Make anything</span></motion.span>
               <br />
-              <motion.span data-home-enter="" {...entrance(0.2, 16)} className={`${styles.titleLine} ${styles.titleAccent}`}>stand out</motion.span>
+              <motion.span data-home-enter="" {...rackFocus(0.22)} className={styles.titleLine}><span className={styles.titleAccent}>stand out</span></motion.span>
             </h1>
-            <motion.p data-home-enter="" {...entrance(0.28, 8)} className={styles.intro}>Your clip. Your words. A whole new look.<br /><span>Put the spotlight on what matters with AI.</span></motion.p>
+            <motion.p data-home-enter="" {...entrance(0.36, 8)} className={styles.intro}>Drop a clip. Say what matters.<br /><span>Focus finds it, tracks it, and makes it the star.</span></motion.p>
+            <motion.div data-home-enter="" {...entrance(0.42, 8)} className={styles.cta}>
+              <Button asChild><a href="#studio">Try it on your clip <HugeiconsIcon icon={ArrowDown01Icon} size={16} strokeWidth={1.75} /></a></Button>
+            </motion.div>
+            <motion.div data-home-enter="" {...entrance(0.5, 16)}><HeroDemo /></motion.div>
           </section>
 
-          <motion.section data-home-enter="" {...entrance(0.34)} ref={studioRef} id="studio" tabIndex={-1} className={styles.studio} aria-label="Video studio">
+          <motion.section data-home-enter="" {...entrance(0.58)} ref={studioRef} id="studio" tabIndex={-1} className={styles.studio} aria-label="Video studio">
             <ol className={styles.steps} aria-label="Editing steps">
               <li data-complete={stage.kind === "ready"} aria-current={stage.kind !== "ready" ? "step" : undefined}>
                 <span className={styles.stepNumber}>{stage.kind === "ready" ? <HugeiconsIcon icon={Tick02Icon} size={12} strokeWidth={2} /> : "1"}</span>Add a clip
@@ -196,10 +194,10 @@ export function Workspace() {
                     transition={{ duration: reducedMotion ? 0 : 0.3, ease: EASE_OUT }}
                   >
                     {stage.kind === "ready" ? (
-                      <EditorView video={stage.video} effect={effect} onEffectChange={setEffect} prompt={prompt} onPromptChange={setPrompt} onReset={reset} />
+                      <HomeComposer video={stage.video} effect={effect} onEffectChange={setEffect} prompt={prompt} onPromptChange={setPrompt} onReset={reset} />
                     ) : (
                       <>
-                        <StudioUpload item={stage.kind === "uploading" ? stage.item : undefined} phase={stage.kind === "uploading" ? stage.phase : undefined} onFile={(file) => void start(file)} onCancel={cancelUpload} />
+                        <StudioUpload item={upload?.item} phase={upload?.phase} onFile={start} onCancel={cancelUpload} />
                       </>
                     )}
                   </motion.div>
@@ -208,7 +206,7 @@ export function Workspace() {
             </motion.div>
           </motion.section>
 
-          <motion.footer data-home-enter="" {...entrance(0.42, 8)} id="how-it-works" className={styles.footer} aria-labelledby="how-title">
+          <motion.footer data-home-enter="" {...entrance(0.6, 8)} id="how-it-works" className={styles.footer} aria-labelledby="how-title">
             <h2 id="how-title" className={styles.footerTitle}>From a clip to<br />something different</h2>
             <ol className={styles.footerSteps}>
               {HOW_STEPS.map(({ n, copy, Icon }) => (

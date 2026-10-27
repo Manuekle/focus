@@ -6,6 +6,8 @@ import { HugeiconsIcon } from "../../components/icons/icon";
 import { formatSeconds } from "../../shared/media";
 import type { VideoAsset } from "../../shared/schemas";
 import { EditorNotice } from "./editor-notice";
+import { FreezeTimeline, type FreezeControl } from "./freeze-timeline";
+import { triggerFrame } from "../../shared/temporal";
 
 /** The centerpiece: the normalized video exactly as the pipeline will read it. */
 export function VideoStage({
@@ -13,6 +15,7 @@ export function VideoStage({
   overlay,
   hud,
   tools,
+  freeze,
 }: {
   readonly video: VideoAsset;
   /** Drawn exactly over the video frame (same box), e.g. the tracking overlay. */
@@ -21,6 +24,7 @@ export function VideoStage({
   readonly hud?: ReactNode;
   /** Extra controls in the caption bar. */
   readonly tools?: ReactNode;
+  readonly freeze?: FreezeControl;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -79,6 +83,11 @@ export function VideoStage({
           onLoadedMetadata={(event) => {
             const value = event.currentTarget.duration;
             if (Number.isFinite(value)) setDuration(value);
+            if (freeze?.trigger.timestampMs !== undefined) {
+              const at = triggerFrame(freeze.trigger.timestampMs, video.normalized) / fps;
+              event.currentTarget.currentTime = at;
+              setTime(at);
+            }
           }}
           onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
           onError={() => setFailed(true)}
@@ -97,7 +106,7 @@ export function VideoStage({
         ) : null}
       </div>
 
-      <figcaption className="flex items-center gap-3 border-t border-border px-3 py-2.5 sm:px-4">
+      <figcaption className="flex flex-wrap items-center gap-3 border-t border-border px-3 py-2.5 sm:px-4">
         <button
           type="button"
           onClick={toggle}
@@ -109,7 +118,7 @@ export function VideoStage({
         <span className="w-[72px] shrink-0 text-xs tabular-nums text-muted-foreground">
           {formatSeconds(time)} / {formatSeconds(duration)}
         </span>
-        <input
+        {!freeze ? <input
           type="range"
           min={0}
           max={duration || 0}
@@ -117,10 +126,10 @@ export function VideoStage({
           value={Math.min(time, duration)}
           onChange={(event) => seek(Number(event.currentTarget.value))}
           aria-label="Video position"
-          aria-valuetext={`${formatSeconds(time)} de ${formatSeconds(duration)}`}
+          aria-valuetext={`${formatSeconds(time)} of ${formatSeconds(duration)}`}
           className="editor-scrubber min-w-0 flex-1"
           style={{ "--scrub": `${progress}%` } as CSSProperties}
-        />
+        /> : <span className="min-w-0 flex-1 text-right text-xs text-muted-foreground">Choose a moment in the original clip</span>}
         {hasAudio ? (
           <button
             type="button"
@@ -133,9 +142,7 @@ export function VideoStage({
           </button>
         ) : null}
         {tools}
-        <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground xl:inline">
-          {width}×{height} · {fps} fps
-        </span>
+        {freeze ? <FreezeTimeline media={video.normalized} time={time} control={freeze} onSeek={(value) => { ref.current?.pause(); seek(value); }} /> : null}
       </figcaption>
     </figure>
   );

@@ -3,11 +3,14 @@
 .env.*
 !.env.example
 .focus-data
+.focus-data-*
 node_modules
 .next
 .git
 .claude
+.agents
 *.tsbuildinfo
 *.mp4
+!public/demo/*.mp4
 *.mov
 PHASES

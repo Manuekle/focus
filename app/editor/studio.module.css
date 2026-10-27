@@ -1,0 +1,91 @@
+.studio { display: flex; min-height: 100dvh; flex-direction: column; background: var(--background); color: var(--foreground); color-scheme: dark; }
+
+.header {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  height: 60px;
+  padding-inline: 20px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--background) 88%, transparent);
+  backdrop-filter: blur(12px);
+}
+.headerStart { display: flex; min-width: 0; align-items: center; gap: 16px; }
+.brand { display: inline-flex; flex-shrink: 0; align-items: center; gap: 8px; color: var(--foreground); text-decoration: none; }
+.brand > span { font-family: var(--font-porkys), sans-serif; font-size: 25px; line-height: 1; letter-spacing: -1px; }
+.brand img { border: 1px solid var(--border); border-radius: 9px; }
+.brandDot { color: var(--primary); }
+.title {
+  min-width: 0;
+  max-width: 320px;
+  padding: 4px 8px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 500;
+  outline: none;
+  text-overflow: ellipsis;
+}
+.title:hover { border-color: var(--border); }
+.title:focus { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); background: var(--card); }
+.titleStatic { overflow: hidden; color: var(--muted-foreground); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
+.saved { flex-shrink: 0; color: var(--muted-foreground); font-size: 11px; }
+
+.body { display: grid; flex: 1; grid-template-columns: 248px minmax(0, 1fr); }
+.sidebar {
+  position: sticky;
+  top: 60px;
+  display: flex;
+  height: calc(100dvh - 60px);
+  flex-direction: column;
+  gap: 18px;
+  overflow-y: auto;
+  padding: 16px 12px;
+  border-right: 1px solid var(--border);
+}
+.sideLabel { padding-inline: 8px; color: var(--muted-foreground); font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; }
+.projects { display: flex; flex-direction: column; gap: 8px; }
+.project { position: relative; border-radius: 10px; }
+.project:hover, .projectActive { background: var(--muted); }
+.projectLink { display: flex; align-items: center; gap: 10px; padding: 6px 30px 6px 6px; color: inherit; text-decoration: none; }
+.poster { width: 40px; height: 40px; flex-shrink: 0; border-radius: 7px; background: var(--card); object-fit: cover; }
+.projectDelete {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  border-radius: 6px;
+  color: var(--muted-foreground);
+  opacity: 0;
+  transform: translateY(-50%);
+  transition: opacity 150ms;
+}
+.project:hover .projectDelete, .projectDelete:focus-visible { opacity: 1; }
+.projectDelete:hover { background: var(--card); color: var(--foreground); }
+.guest { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--card); }
+
+.main { display: flex; min-width: 0; flex-direction: column; gap: 24px; padding: 24px clamp(16px, 3vw, 36px) 48px; }
+.empty { display: flex; max-width: 640px; flex-direction: column; gap: 12px; margin: 6vh auto 0; width: 100%; }
+.emptyTitle { font-family: var(--font-sn-pro); font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
+.drop { margin-top: 8px; }
+
+.history { display: flex; flex-direction: column; gap: 10px; padding-top: 18px; border-top: 1px solid var(--border); }
+.historyList { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px; }
+.edit { display: flex; width: 100%; height: 100%; flex-direction: column; gap: 4px; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--card); text-align: left; transition: border-color 150ms; }
+.edit:hover { border-color: color-mix(in srgb, var(--foreground) 22%, var(--border)); }
+.editActive { border-color: color-mix(in srgb, var(--primary) 60%, var(--border)); }
+
+@media (max-width: 860px) {
+  .body { grid-template-columns: 1fr; }
+  .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+  .saved { display: none; }
+}

@@ -3,22 +3,85 @@
 .tabs { display: flex; width: 100%; --tabs-bar-bg: #ffffff03; --tabs-bar-border: transparent; --tabs-pill-bg: #ffffff08; --tabs-pill-border: #ffffff06; --tabs-pill-shadow: 0 2px 5px #0000001a; box-shadow: none; }
 .tabs :global(.t-tab) { flex: 1; padding-inline: 8px; }
 .summary { min-height: 17px; color: var(--muted-foreground); font-size: 12px; line-height: 1.55; }
-.instruction { display: flex; flex-direction: column; gap: 7px; }
+.instruction { display: flex; flex-direction: column; gap: 10px; }
 .label { color: var(--foreground); font-size: 12px; font-weight: 500; }
-.instruction .textarea { min-height: 88px; border-color: #ffffff08; background: #ffffff04; box-shadow: inset 0 1px 2px #0000000a; font-size: 12px; line-height: 1.6; }
-.hint { display: flex; align-items: flex-start; justify-content: space-between; gap: 8px; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+
+/* One surface for the text, the inline completion and the key hints. */
+.field {
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff06, #ffffff02);
+  box-shadow: inset 0 0 0 1px #ffffff0d, inset 0 1px 0 #ffffff08;
+  transition: box-shadow 160ms ease-out, background-color 160ms ease-out;
+}
+.field:focus-within {
+  background-color: #ffffff04;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 55%, transparent), 0 0 0 4px color-mix(in srgb, var(--primary) 14%, transparent), 0 10px 30px -18px #2853e980;
+}
+.input { position: relative; display: grid; }
+/* Textarea and ghost share one grid cell and the same box, so they wrap alike. */
+.input > * { grid-area: 1 / 1; }
+.textarea, .ghost {
+  min-height: 84px;
+  margin: 0;
+  padding: 14px 16px 6px;
+  border: 0;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  letter-spacing: normal;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+}
+.textarea {
+  z-index: 1;
+  resize: none;
+  field-sizing: content;
+  background: transparent;
+  color: var(--foreground);
+  outline: none;
+  caret-color: var(--primary);
+}
+.textarea::placeholder { color: color-mix(in srgb, var(--muted-foreground) 80%, transparent); }
+.ghost { pointer-events: none; color: transparent; user-select: none; }
+.ghostTyped { color: transparent; }
+.ghostRest { color: color-mix(in srgb, var(--muted-foreground) 70%, transparent); }
+.hint { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 6px 16px 11px; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
 .hint > span:last-child { flex-shrink: 0; white-space: nowrap; }
-.examples { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; color: var(--muted-foreground); font-size: 12px; }
+.hint kbd { display: inline-block; min-width: 18px; padding: 0 5px; border-radius: 5px; background: #ffffff0b; box-shadow: inset 0 -1px 0 #ffffff0a; color: var(--foreground); font: inherit; font-size: 12px; line-height: 18px; text-align: center; }
+.hintAction { color: var(--foreground); }
+/* Key hints only matter while typing: at rest the field stays quiet. */
+.hintKeys { opacity: 0; transition: opacity 160ms ease-out; }
+.field:focus-within .hintKeys, .field[data-filled] .hintKeys { opacity: 1; }
+@media (hover: none) { .hintKeys { display: none; } }
+
+.ideas { display: flex; flex-direction: column; gap: 14px; }
+.group { display: flex; flex-direction: column; gap: 8px; }
+.groupLabel { display: inline-flex; align-items: center; gap: 5px; color: var(--muted-foreground); font-size: 12px; }
+.groupLabel svg { color: color-mix(in srgb, var(--primary) 70%, var(--foreground)); }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.chip { max-width: 100%; height: auto; min-height: 26px; padding-block: 4px; border-radius: 999px; white-space: normal; text-align: left; line-height: 1.35; }
+.skeleton { width: 168px; height: 26px; border-radius: 999px; background: linear-gradient(90deg, #ffffff06 0%, #ffffff10 50%, #ffffff06 100%) 0 0 / 200% 100%; animation: shimmer 1.4s linear infinite; }
+.skeletonShort { width: 124px; }
+.subject { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 3px 10px 3px 8px; border: 0; border-radius: 999px; background: transparent; box-shadow: inset 0 0 0 1px #ffffff14; color: var(--foreground); font: inherit; font-size: 12px; line-height: 1.35; cursor: pointer; transition: background-color 140ms ease-out, box-shadow 140ms ease-out, color 140ms ease-out; }
+.subjectPlus { color: var(--muted-foreground); transition: color 140ms ease-out; }
+.subject:hover { background: #ffffff08; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 45%, transparent); }
+.subject:hover .subjectPlus { color: var(--primary); }
+.subject:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
 .submit { display: flex; flex-direction: column; gap: 8px; margin-top: auto; }
 .generate { width: 100%; }
 .blocked { color: var(--muted-foreground); font-size: 12px; text-align: center; }
+
+@keyframes shimmer { to { background-position: -200% 0; } }
+@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 @media (max-width: 760px) {
   .tabs :global(.t-tab) { padding-inline: 6px; }
 }
 @media (max-width: 680px) {
-  .instruction .textarea { font-size: 12px; }
-  .hint { font-size: 12px; }
-  .examples { font-size: 12px; row-gap: 8px; }
+  /* 16px keeps iOS from zooming into the field. */
+  .textarea, .ghost { font-size: 16px; }
 }
 @media (max-width: 420px) {
   .tabs :global(.t-tab) { min-width: 0; height: 38px; white-space: normal; font-size: 12px; line-height: 1.2; }
