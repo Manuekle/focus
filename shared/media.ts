@@ -1,8 +1,19 @@
+import { mediaLimits } from "./media-limits";
+
 // Media limits shared by the browser and the server. The server re-checks
 // everything with FFprobe; the browser copy only avoids a pointless upload.
+//
+// These are the validated copies next.config.ts compiles from the server's
+// FOCUS_MAX_VIDEO_DURATION_SECONDS / FOCUS_MAX_UPLOAD_MB (NEXT_PUBLIC_FOCUS_MAX_*).
+// The server enforces the runtime values (server/media-limits.ts): change the
+// variables, then rebuild (or restart pnpm dev) so the interface matches.
+const limits = mediaLimits({
+  duration: process.env.NEXT_PUBLIC_FOCUS_MAX_VIDEO_DURATION_SECONDS,
+  uploadMb: process.env.NEXT_PUBLIC_FOCUS_MAX_UPLOAD_MB,
+});
 
-export const MAX_UPLOAD_BYTES = 50 * 1024 * 1024;
-export const MAX_DURATION_SECONDS = 10;
+export const MAX_UPLOAD_BYTES = limits.maxUploadMb * 1024 * 1024;
+export const MAX_DURATION_SECONDS = limits.maxDurationSeconds;
 /** Container rounding: a "10 s" export often probes as 10.02 s. */
 export const DURATION_TOLERANCE_SECONDS = 0.1;
 export const MIN_DIMENSION = 64;

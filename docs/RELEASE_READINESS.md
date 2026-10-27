@@ -10,7 +10,7 @@ Audit date: 2026-10-26. Evidence below comes from commands actually run on this 
 
 | Feature | Implementation | Tests | Live API verification | Known problems | Severity | Decision |
 | --- | --- | --- | --- | --- | --- | --- |
-| Upload + validation (MP4/MOV, ≤ 10 s, ≤ 50 MB, real probe) | Complete | Unit + FFmpeg integration; E2E (broken file, 12 s clip) | n/a | — | — | Release |
+| Upload + validation (MP4/MOV, ≤ 60 s, ≤ 150 MB, real probe) | Complete | Unit + FFmpeg integration (10, 30, 60, 61 s; 150 MB cap); E2E (broken file, 61 s clip) | n/a | — | — | Release |
 | Normalization (≤ 720p, 24 fps CFR, H.264, rotation) | Complete | FFmpeg integration (landscape, portrait, square) | n/a | — | — | Release |
 | Playback + URL restore | Complete | E2E (time advances after play; reload keeps the video) | n/a | — | — | Release |
 | Instruction → plan (Muse Spark 1.3) | Complete | 19 unit tests (parsing, unsupported, injection-shaped concepts, effect coercion) | Live: Spanish instructions → `bridge`, `white-haired boy`, `rock`; unsupported edit refused; `pnpm test:live` planner test passed | Concepts must be plain nouns; planner instructed accordingly after a live miss ("jumping rock") | Low | Release |
@@ -62,7 +62,7 @@ Not run: tests on a cloud host; amd64 image; screen-reader audit; reduced-motion
 | --- | --- |
 | API key in client bundles, server bundles or git history | Not found (searched `.next/static`, `.next/server`, all commits) |
 | `.env` committed | No; `.env*` ignored except `.env.example`; excluded from Docker context |
-| Upload validation | Extension + MIME on client; FFprobe container/stream/duration/resolution on server; 50 MB enforced while streaming |
+| Upload validation | Extension + MIME on client; FFprobe container/stream/duration/resolution on server; 150 MB enforced while streaming |
 | Path traversal | All path ids validated (UUID / key patterns); filenames sanitized and never used as paths; malformed filename header → 400 |
 | Shell injection | FFmpeg/FFprobe only via argument arrays |
 | Timeouts | FFprobe 30 s, normalization 120 s, Meta calls 180 s with bounded retries (transient errors only) |
@@ -102,4 +102,4 @@ Slowest stage: SAM. Optimization applied from this measurement: new jobs now sta
 
 ## Known limitations
 
-See the README. In short: ≤ 10 s clips; Motion Echo needs a static camera; SAM can miss frames (reported, fixable with a paid pass); automatic Break the Frame framing; single-instance state; dev server (Turbopack) occasionally serves stale route modules after edits — restart `pnpm dev`.
+See the README. In short: ≤ 60 s clips; Motion Echo needs a static camera; SAM can miss frames (reported, fixable with a paid pass); automatic Break the Frame framing; single-instance state; dev server (Turbopack) occasionally serves stale route modules after edits — restart `pnpm dev`.

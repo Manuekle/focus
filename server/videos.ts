@@ -6,7 +6,6 @@ import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
 import {
-  MAX_UPLOAD_BYTES,
   NORMALIZED_FPS,
   formatBytes,
   hasAcceptedExtension,
@@ -14,6 +13,7 @@ import {
 import { VideoAssetSchema, type NormalizedMedia, type VideoAsset, type VideoId } from "../shared/schemas";
 import { Limiter } from "./ai/meta";
 import { AppError } from "./errors";
+import { SERVER_MAX_UPLOAD_BYTES as MAX_UPLOAD_BYTES } from "./media-limits";
 import { MediaToolError, ffmpeg, probe } from "./ffmpeg";
 import { describeSource, normalizedDimensions, parseRate } from "./media-validation";
 import { VIDEO_FILES, createVideoDir, parseVideoId, removeVideoDir, videoDir } from "./storage";
@@ -73,7 +73,7 @@ export async function ingestVideo({ body, fileName, declaredBytes }: IngestInput
 
     const source = describeSource(await probeOrReject(sourcePath), sizeBytes);
     // FFmpeg normalization is CPU-heavy: at most two at a time per instance.
-    const normalized = await normalizeLimiter.run(() => normalize(sourcePath, dir, source.width, source.height, source.hasAudio));
+    const normalized = await normalizeLimiter.run(() => normalize(sourcePath, dir, source.width, source.height, source.hasAudio, source.durationSeconds));
 
     const asset: VideoAsset = {
       id,
@@ -120,8 +120,12 @@ async function normalize(
   width: number,
   height: number,
   hasAudio: boolean,
+  sourceSeconds: number,
 ): Promise<NormalizedMedia> {
   const target = normalizedDimensions(width, height);
+  // A long 4K or HEVC source can take minutes to normalize: allow 10 s of
+  // encoding per second of clip, never less than the two-minute default.
+  const timeoutMs = Math.max(120_000, Math.ceil(sourceSeconds) * 10_000);
   const output = path.join(dir, VIDEO_FILES.normalized);
   try {
     // FFmpeg autorotates by default, so the display-oriented size above is
@@ -136,7 +140,7 @@ async function normalize(
       ...(hasAudio ? ["-c:a", "aac", "-b:a", "160k", "-ac", "2"] : ["-an"]),
       "-movflags", "+faststart",
       output,
-    ]);
+    ], timeoutMs);
     await ffmpeg(["-i", output, "-frames:v", "1", "-q:v", "3", path.join(dir, VIDEO_FILES.poster)]);
   } catch (error) {
     throw new AppError(

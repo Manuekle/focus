@@ -41,6 +41,7 @@ import { Limiter } from "./ai/meta";
 import { AppError } from "./errors";
 import { renderComparison, renderVideo, trackingMaskSource, verifyOutput } from "./video/compositor";
 import { retainedIds } from "./projects";
+import { activeFlipbookCount } from "./animation/store";
 import { VIDEO_FILES, dataRoot, videoDir } from "./storage";
 import { getVideo } from "./videos";
 
@@ -197,6 +198,15 @@ export function activeJobCount(): number {
   return running.size;
 }
 
+/**
+ * Everything long, paid and CPU-heavy running in this process: video jobs and
+ * Flipbook workers. Both kinds of work check the same FOCUS_MAX_ACTIVE_JOBS
+ * cap against this one number, so neither can slip past the other.
+ */
+export function activeWorkCount(): number {
+  return running.size + activeFlipbookCount();
+}
+
 function assertEffectEnabled(effect: EffectId): void {
   if (!effectEnabled(effect)) throw new AppError("effect_disabled", 400, "Ese efecto no está disponible.");
 }
@@ -211,7 +221,7 @@ export async function createJob(request: EditRequest, gate?: PaidWorkGate): Prom
   // finished job instead of starting new paid work.
   const existing = await findJobByKey(key);
   if (existing && !["failed", "canceled"].includes(existing.status)) return existing;
-  await gate?.({ activeJobs: running.size, estimatedFrames: video.normalized.frameCount });
+  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: video.normalized.frameCount });
 
   const now = new Date().toISOString();
   const job = await saveJob({
@@ -796,7 +806,7 @@ export async function refineWithPoint(id: string, refine: RefineRequest, gate?: 
   const hit = hitTest(frameAt(base, refine.frameIndex), refine.point.x, refine.point.y);
   if (hit) return saveJob({ ...job, selection: [hit], status: "awaiting_selection", detail: null });
 
-  await gate?.({ activeJobs: running.size, estimatedFrames: frameCount });
+  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: frameCount });
   const pointObjects = base.objects.filter((object) => object.source === "point").length;
   const objectId = 100 + pointObjects;
   const pointId = `p-${hash(`${refine.frameIndex}:${refine.point.x}:${refine.point.y}`)}`;
@@ -857,7 +867,7 @@ export async function fillGaps(id: string, gate?: PaidWorkGate): Promise<EditJob
       return { id: Number(object.id), frameIndex: object.firstFrame, box };
     });
   if (targets.length === 0) throw new AppError("nothing_to_fill", 409, "El sujeto ya está seguido en todos los fotogramas.");
-  await gate?.({ activeJobs: running.size, estimatedFrames: frameCount });
+  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: frameCount });
 
   const wasCompleted = job.status === "completed";
   const previousStatus = job.status;

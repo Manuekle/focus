@@ -2,7 +2,7 @@ import path from "node:path";
 import { createReadStream } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { toFile } from "openai";
-import { buildObjectPrompt, frameIndexOf, parseVideoStream, recordsOfKind, type ResponsesEvent } from "@meta-sam/parser";
+import { buildObjectPrompt, decodeMaskToRaster, frameIndexOf, parseImageStream, parseVideoStream, recordsOfKind, type ResponsesEvent, type SegmentationMaskRecord } from "@meta-sam/parser";
 import type { NormalizedMedia } from "../../shared/schemas";
 import { buildTracking, type Box, type Tracking } from "../../shared/tracking";
 import { AppError } from "../errors";
@@ -165,4 +165,91 @@ export async function segmentVideo(input: SegmentInput): Promise<Tracking> {
 function isMissingFile(error: unknown): boolean {
   const message = error instanceof Error ? error.message.toLowerCase() : "";
   return message.includes("file") && (message.includes("not found") || message.includes("no such"));
+}
+
+/** One object SAM 3.1 found on a still image, as a full-image 0/255 mask. */
+export type ImageMask = {
+  readonly objectId: string;
+  readonly alpha: Uint8Array;
+  readonly box: Box;
+  readonly area: number;
+  readonly confidence: number | null;
+};
+
+/**
+ * Concept segmentation of a still image (Focus Flipbook sprites). Same model,
+ * client, limiter and usage log as the video path; the image travels inline
+ * as a PNG data URL, so the masks are in that PNG's own pixel grid.
+ */
+export async function segmentImage(input: {
+  readonly png: Buffer;
+  readonly width: number;
+  readonly height: number;
+  readonly concept: string;
+  readonly flipbookId?: string;
+  readonly signal?: AbortSignal;
+}): Promise<ImageMask[]> {
+  const config = requireMetaConfig();
+  const client = metaClient(config);
+  const started = Date.now();
+  try {
+    const result = await segmentationLimiter.run(() =>
+      withRetry(
+        async () => {
+          const stream = await client.responses.create(
+            {
+              model: config.segmentationModel,
+              input: [
+                {
+                  type: "message",
+                  role: "user",
+                  content: [
+                    { type: "input_text", text: input.concept },
+                    // Documented SAM image part: image_url only, no detail level.
+                    { type: "input_image", image_url: `data:image/png;base64,${input.png.toString("base64")}` } as unknown as { type: "input_text"; text: string },
+                  ],
+                },
+              ],
+              stream: true,
+              metadata: { mask_encoding: "one_bit", include_confidence: "true" },
+            },
+            { signal: input.signal },
+          );
+          return parseImageStream(stream as AsyncIterable<{ readonly type: string }>).finalResult;
+        },
+        { signal: input.signal, attempts: 2 },
+      ),
+    );
+    await recordUsage({ model: config.segmentationModel, kind: "segment_image", cached: false, ok: true, flipbookId: input.flipbookId, durationMs: Date.now() - started });
+    // The newest mask per object wins; an image has a single frame.
+    const latest = new Map<string, SegmentationMaskRecord>();
+    for (const record of recordsOfKind(result.records, "mask")) latest.set(record.objectId, record);
+    const masks: ImageMask[] = [];
+    for (const record of latest.values()) {
+      const raster = decodeMaskToRaster(record.mask);
+      const { left, top, right, bottom } = record.bounds;
+      const boxWidth = right - left;
+      const boxHeight = bottom - top;
+      if (boxWidth <= 0 || boxHeight <= 0) continue;
+      const alpha = new Uint8Array(input.width * input.height);
+      let area = 0;
+      for (let y = Math.max(0, top); y < Math.min(input.height, bottom); y++) {
+        const row = Math.min(record.mask.height - 1, Math.floor(((y - top) * record.mask.height) / boxHeight)) * record.mask.width;
+        for (let x = Math.max(0, left); x < Math.min(input.width, right); x++) {
+          const column = Math.min(record.mask.width - 1, Math.floor(((x - left) * record.mask.width) / boxWidth));
+          if (raster[row + column] === 1) {
+            alpha[y * input.width + x] = 255;
+            area++;
+          }
+        }
+      }
+      if (area > 0) masks.push({ objectId: record.objectId, alpha, box: { left, top, right, bottom }, area, confidence: record.confidence ?? null });
+    }
+    return masks.sort((a, b) => b.area - a.area);
+  } catch (error) {
+    if (!(error instanceof AppError)) {
+      await recordUsage({ model: config.segmentationModel, kind: "segment_image", cached: false, ok: false, flipbookId: input.flipbookId, error: String(error), durationMs: Date.now() - started });
+    }
+    throw metaError(error, "la segmentación de la imagen");
+  }
 }

@@ -1,6 +1,5 @@
 import {
   DURATION_TOLERANCE_SECONDS,
-  MAX_DURATION_SECONDS,
   MAX_SOURCE_DIMENSION,
   MIN_DIMENSION,
   NORMALIZED_LONG_SIDE,
@@ -8,6 +7,7 @@ import {
 } from "../shared/media";
 import type { SourceMedia } from "../shared/schemas";
 import { AppError } from "./errors";
+import { SERVER_MAX_DURATION_SECONDS as MAX_DURATION_SECONDS } from "./media-limits";
 import type { Probe, ProbeStream } from "./ffmpeg";
 
 // Pure functions over FFprobe output: what the file actually is, not what its

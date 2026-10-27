@@ -2,7 +2,9 @@
 
 Focus ships as one Docker container: Next.js standalone server + FFmpeg/FFprobe from Debian. Jobs run in-process and keep state in memory and on a local volume, so run **one instance** (no autoscaling across instances).
 
-Serverless functions are not a fit: a job holds an FFmpeg pipeline for up to ~30 s per clip and keeps files between requests.
+Serverless functions are not a fit for the current architecture: jobs keep running after the request returns, use FFmpeg, and keep files between requests. The live Flipbook trial took about five minutes; longer videos can also take minutes.
+
+**Railway is the prepared deployment target.** See [the Railway setup guide](RAILWAY.md), `railway.json` and `deploy/railway.env.example` for the single-instance service, persistent volume, public flags and credentials. Render with a paid persistent disk is another compatible option. Vercel would require separate media storage and workers.
 
 ## Build and run
 
@@ -17,7 +19,7 @@ docker run -d --name focus \
 curl http://localhost:3000/api/health
 ```
 
-The image runs as the unprivileged `node` user, stores media in `/data` (a volume) and has a `HEALTHCHECK` on `/api/health`.
+The image runs as the unprivileged `node` user, stores media in `/data` (a volume) and has a `HEALTHCHECK` on `/api/health` using the runtime `PORT`. Hosts that mount the volume as root can start the entrypoint as root; it fixes the mount's owner and immediately drops to `node` before starting the application.
 
 Tested locally (Docker 29, Apple Silicon, `linux/arm64` image): health `healthy`, FFmpeg 5.1.9, upload → Muse Spark → SAM 3.1 → render → download of a 4 s clip completed in 26 s with a verified MP4.
 
@@ -36,13 +38,17 @@ Measured on a laptop (Apple Silicon, native) for an 8 s, 1280×720, 191-frame cl
 
 Recommended: 2 vCPU, 2 GB RAM, 5 GB disk for `/data`. A render holds one decoded frame plus small buffers (< 100 MB). Renders run one at a time per instance, normalization two at a time, SAM one at a time.
 
+**Clips up to 60 s / 150 MB** (`FOCUS_MAX_VIDEO_DURATION_SECONDS`, `FOCUS_MAX_UPLOAD_MB`). Stage times scale roughly linearly with frame count, so expect about 7× the figures above for a 60 s clip (1,440 frames at 24 fps). Normalization allows 10 s of FFmpeg time per second of clip (at least 2 min). SAM streams its answer, so the 180 s Meta request timeout covers only the start of the response; SAM accepts up to 15,000 frames per request. Per clip, `/data` holds the source (≤ 150 MB), the normalized copy and every render for 24 h: size the volume for that. A reverse proxy in front of the container must accept 150 MB request bodies (for nginx: `client_max_body_size 150m;`). Next.js itself adds no limit for these uploads: there is no `proxy.ts`, and the upload route streams the body to disk with its own cap.
+
 ## Environment
 
 See `.env.example`. Required: `MODEL_API_KEY`. For a public demo, set at least:
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `FOCUS_SAM_DAILY_FRAMES` | 20000 | Daily SAM frame budget (each request bills ≥ 50 frames). |
+| `FOCUS_MAX_VIDEO_DURATION_SECONDS` | 60 | Longest accepted clip, 1–600 s. Enforced by the server at runtime; the interface shows the value compiled at build time (Docker: `--build-arg` too). |
+| `FOCUS_MAX_UPLOAD_MB` | 150 | Largest accepted upload, 1–1024 MB. Same build-time note. |
+| `FOCUS_SAM_DAILY_FRAMES` | 20000 | Daily SAM frame budget (each request bills ≥ 50 frames; a 60 s clip is 1,440 frames). |
 | `FOCUS_AI_REQUESTS_PER_HOUR` | 30 | Paid requests per client per hour. |
 | `FOCUS_UPLOADS_PER_HOUR` | 20 | Uploads per client per hour. |
 | `FOCUS_MAX_ACTIVE_JOBS` | 4 | Running jobs across all clients. |

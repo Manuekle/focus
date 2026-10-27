@@ -1,0 +1,9 @@
+/* Video | Flipbook: the two creation modes, the same in every header. */
+.modes { display: flex; flex-shrink: 0; gap: 2px; padding: 2px; border-radius: 10px; background: #ffffff05; box-shadow: inset 0 0 0 1px #ffffff0a; }
+.mode { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; color: var(--muted-foreground); font-size: 13px; line-height: 20px; text-decoration: none; transition: background-color 150ms, color 150ms, box-shadow 150ms; }
+.mode:hover { color: var(--foreground); }
+.mode[aria-current="page"] { background: #ffffff0d; color: var(--foreground); box-shadow: 0 2px 5px #0000001a, inset 0 0 0 1px #ffffff08; }
+.mode:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.mode svg { opacity: 0.8; }
+@media (max-width: 680px) { .mode { padding: 4px 8px; } .mode svg { display: none; } }
+@media (prefers-reduced-motion: reduce) { .mode { transition: none; } }

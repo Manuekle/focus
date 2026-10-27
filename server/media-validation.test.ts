@@ -35,12 +35,20 @@ describe("describeSource", () => {
     expect([media.width, media.height]).toEqual([1080, 1920]);
   });
 
-  it("rejects videos longer than the limit", () => {
-    expect(codeOf(() => describeSource(probeOf({ format: { duration: "12.4" } }), 1))).toBe("duration_too_long");
+  it("accepts 10, 30 and exactly 60 second clips", () => {
+    for (const duration of ["10", "30", "60", "60.000"]) {
+      expect(codeOf(() => describeSource(probeOf({ format: { duration } }), 1))).toBeUndefined();
+    }
+  });
+
+  it("rejects videos longer than 60 seconds, naming the limit", () => {
+    expect(codeOf(() => describeSource(probeOf({ format: { duration: "61" } }), 1))).toBe("duration_too_long");
+    expect(codeOf(() => describeSource(probeOf({ format: { duration: "60.2" } }), 1))).toBe("duration_too_long");
+    expect(() => describeSource(probeOf({ format: { duration: "61" } }), 1)).toThrow(/60 s/);
   });
 
   it("tolerates container rounding at the limit", () => {
-    expect(codeOf(() => describeSource(probeOf({ format: { duration: "10.04" } }), 1))).toBeUndefined();
+    expect(codeOf(() => describeSource(probeOf({ format: { duration: "60.04" } }), 1))).toBeUndefined();
   });
 
   it("rejects non-MP4/MOV containers", () => {

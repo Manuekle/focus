@@ -9,18 +9,23 @@ import { AppError } from "../errors";
 //   Segmenter (sam.ts)     — SAM 3.1 receives a concrete concept or point
 //                            prompt and returns tracked masks.
 //   Renderer  (../video)   — deterministic compositing.
+//   Drawings  (../animation) — Muse Image redraws a character pose by pose
+//                            for Focus Flipbook; SAM 3.1 cuts the sprites out.
 
 export type MetaConfig = {
   readonly apiKey: string;
   readonly baseUrl: string;
   readonly plannerModel: string;
   readonly segmentationModel: string;
+  /** Muse Image: Focus Flipbook's drawings. */
+  readonly imageModel: string;
 };
 
 export const META_DEFAULTS = {
   baseUrl: "https://api.meta.ai/v1",
   plannerModel: "muse-spark-1.3",
   segmentationModel: "sam-3.1",
+  imageModel: "muse-image-1.0",
 } as const;
 
 /** Returns null when no key is configured. */
@@ -34,6 +39,7 @@ export function readMetaConfig(env: Readonly<Record<string, string | undefined>>
     baseUrl: env.META_BASE_URL ?? META_DEFAULTS.baseUrl,
     plannerModel: env.META_PLANNER_MODEL ?? META_DEFAULTS.plannerModel,
     segmentationModel: env.META_SEGMENTATION_MODEL ?? META_DEFAULTS.segmentationModel,
+    imageModel: env.META_IMAGE_MODEL ?? META_DEFAULTS.imageModel,
   };
 }
 

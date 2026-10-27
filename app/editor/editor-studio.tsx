@@ -4,7 +4,7 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Add01Icon, Delete02Icon } from "@hugeicons/core-free-icons";
+import { Add01Icon, Delete02Icon, Film01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { ProgressMeter } from "../../components/ui/progress-meter";
@@ -12,14 +12,16 @@ import { Spinner } from "../../components/ui/spinner";
 import { cn } from "../../lib/utils";
 import { ProjectDetailSchema, ProjectSummarySchema, type ProjectDetail, type ProjectSummary } from "../../shared/account";
 import { ACTIVE_JOB_STATUSES, VideoAssetSchema, type EditJob, type EffectId, type VideoAsset } from "../../shared/schemas";
+import { MAX_DURATION_SECONDS } from "../../shared/media";
 import { AccountButton } from "../_auth/account-button";
 import { FacebookButton } from "../_auth/facebook-button";
 import { LoginDialog } from "../_auth/login-dialog";
 import { useSession } from "../_auth/session-client";
 import { readDraft, settleDraft } from "../_editor/draft";
-import { effectEnabled } from "../../shared/features";
+import { effectEnabled, flipbookEnabled } from "../../shared/features";
 import { EditorNotice } from "../_editor/editor-notice";
 import { EditorView } from "../_editor/editor-view";
+import { ModeSwitch } from "../_editor/mode-switch";
 import { PLAN_EFFECT_LABEL } from "../_editor/job-panel";
 import { StudioUpload } from "../_editor/studio-upload";
 import { useClipUpload } from "../_editor/use-clip-upload";
@@ -195,6 +197,7 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
             <Image src="/brand/focus-cat.webp" alt="" width={30} height={30} />
             <span>focus<span className={styles.brandDot}>.</span></span>
           </Link>
+          {flipbookEnabled() ? <ModeSwitch current="video" /> : null}
           {detail ? (
             <input
               aria-label="Project name"
@@ -219,6 +222,15 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
             <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
             New clip
           </Button>
+          {flipbookEnabled() ? (
+            <Link href="/flipbook" className={styles.feature}>
+              <span className={styles.featureIcon} aria-hidden><HugeiconsIcon icon={Film01Icon} size={16} strokeWidth={1.75} /></span>
+              <span className="min-w-0">
+                <span className="block text-xs font-medium text-foreground">Flipbook</span>
+                <span className="block text-[11px] leading-4 text-muted-foreground">Turn a drawing into a frame-by-frame animation</span>
+              </span>
+            </Link>
+          ) : null}
 
           {user ? (
             <nav className={styles.projects} aria-label="Projects">
@@ -271,7 +283,7 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
           {!videoId ? (
             <section className={styles.empty} aria-label="New clip">
               <h1 className={styles.emptyTitle}>Start with a clip</h1>
-              <p className="text-sm text-muted-foreground">MP4 or MOV, up to 10 seconds. Then tell the AI what should stand out.</p>
+              <p className="text-sm text-muted-foreground">MP4 or MOV, up to {MAX_DURATION_SECONDS} seconds. Then tell the AI what should stand out.</p>
               <div className={styles.drop}>
                 <StudioUpload item={upload?.item} phase={upload?.phase} onFile={(file) => void start(file)} onCancel={cancel} />
               </div>
