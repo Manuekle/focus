@@ -8,20 +8,22 @@ Se utiliza la app Consumidor existente **focus**, ID **1106108992117051**. No se
 - [Facebook Login / OAuth](https://developers.facebook.com/apps/1106108992117051/fb-login/settings/)
 - [Permisos y funciones](https://developers.facebook.com/apps/1106108992117051/app-review/permissions/)
 
-`FACEBOOK_APP_ID` y `FACEBOOK_APP_SECRET` están preparados como variables **pendientes** del servicio `focus` en Railway, entorno `production`. La clave existente se transfirió sin incluirla en Git o en esta documentación. `FACEBOOK_GRAPH_VERSION=v26.0` coincide con la versión que la app muestra para todas sus llamadas y para sus roles. Mantener `FOCUS_AUTH_SIMULATED=0` y conservar el secreto de sesión preparado.
+`FACEBOOK_APP_ID` y `FACEBOOK_APP_SECRET` están configurados como variables del servicio `focus` en Railway, entorno `production`. La clave existente se transfirió sin incluirla en Git o en esta documentación. `FACEBOOK_GRAPH_VERSION=v26.0` coincide con la versión que la app muestra para todas sus llamadas y para sus roles. Mantener `FOCUS_AUTH_SIMULATED=0` y conservar el secreto de sesión preparado.
 
 El servidor utiliza OAuth por código de autorización y solicita únicamente `public_profile,email`. El diálogo de acceso informa también del correo opcional. La contraseña de Facebook no pasa por Focus.
 
 En Meta se guardaron el contacto **elustondo129@gmail.com**, la categoría **Utilidad y productividad** y el icono de gato que ya utiliza Focus. Se comprobó su persistencia al volver a los ajustes; el correo se verificó visualmente porque el navegador lo oculta en las lecturas de campos.
 
-## URLs que registrar después del deploy
+## URLs del servicio
+
+El dominio actual elegido por el usuario es `focusmeta.up.railway.app`. `FOCUS_PUBLIC_URL` y los campos de Meta deben usar ese mismo origen. Al cambiar de dominio, retirar de Meta los callbacks y dominios anteriores que ya no estén bajo el control del servicio.
 
 Cuando Railway asigne el dominio HTTPS real, usar ese mismo origen en `FOCUS_PUBLIC_URL` y en estos campos de Meta:
 
 | Campo | Valor |
 | --- | --- |
 | Dominios de la app | Solo el hostname, sin protocolo ni ruta |
-| Plataforma / Sitio web | `https://<dominio>/` |
+| Plataforma / Sitio web | `https://<dominio>/flipbook` |
 | URL de la política de privacidad | `https://<dominio>/privacy` |
 | Eliminación de datos / URL de instrucciones | `https://<dominio>/data-deletion` |
 | URI de redireccionamiento de OAuth válido | `https://<dominio>/api/auth/facebook/callback` |
@@ -37,7 +39,7 @@ El 27 de octubre de 2026, Meta mostraba:
 - Inicio de sesión del cliente de OAuth y OAuth web: activados.
 - HTTPS y coincidencia estricta del redirect: activados y bloqueados por Meta.
 - Navegador integrado, dispositivos, SDK de JavaScript y Messenger: desactivados.
-- Lista de redirects: vacía, pendiente del dominio de Railway.
+- Lista de redirects: registrar el callback exacto del dominio activo y comprobarlo con el validador de Meta.
 
 Estos valores sirven para el flujo del servidor existente; no hace falta habilitar el SDK de JavaScript ni agregar permisos de fotos, videos, publicaciones o amigos.
 
@@ -61,4 +63,4 @@ El perfil de Railway para la demo usa el trial con 500 MB de volumen y 1 GiB de 
 - Lectura y navegación verificadas en navegador; a 390 px no hay desbordamiento horizontal y el contenido declara idioma español.
 - Sin credenciales en el contenedor de prueba, el inicio de sesión de producción devuelve 503 y no habilita la simulación.
 
-Estas pruebas no utilizaron claves de proveedor ni consumieron créditos de Meta. La ida y vuelta real por Facebook sigue pendiente del dominio y el redirect definitivos.
+Estas pruebas no utilizaron claves de proveedor ni consumieron créditos de Meta. La prueba de consentimiento y retorno real de una cuenta de Facebook se realiza aparte; las URLs configuradas y su validación no equivalen a esa prueba.

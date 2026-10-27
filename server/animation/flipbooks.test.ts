@@ -1,9 +1,10 @@
 import path from "node:path";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, stat, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
+import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { WALK_PHASES, type CharacterAnalysis, type Flipbook, type FlipbookStatus } from "../../shared/flipbook";
+import { ACTION_SPECS, type CharacterAnalysis, type Flipbook, type FlipbookStatus } from "../../shared/flipbook";
 import { AppError } from "../errors";
 import { activeWorkCount } from "../jobs";
 import { DRIFT, walkerPng } from "./__fixtures__/walker";
@@ -12,17 +13,25 @@ import {
   cancelFlipbook,
   changeReference,
   createFlipbook,
+  emptiedScene,
   exportFlipbook,
+  generateBackground,
   generateMissing,
+  listFlipbooks,
+  readUploadedImage,
+  saveFlipbook,
+  saveLook,
+  sendToEditor,
   reorderFrames,
   replaceFrame,
   services,
   unbilled,
+  unsaveFlipbook,
 } from "./flipbooks";
 import { segmentation } from "./frame-alignment";
 import { ingestCharacterImage } from "./image-input";
-import { parsePlanOutput } from "./pose-planning";
-import { getFlipbook } from "./store";
+import { actionFor, parsePlanOutput } from "./pose-planning";
+import { cleanupFlipbooks, flipbookFiles, getFlipbook } from "./store";
 
 // The Flipbook lifecycle with every paid call replaced by a deterministic
 // fake: Muse Spark returns fixed JSON, Muse Image returns the fixture walker,
@@ -42,7 +51,7 @@ const baseAnalysis: CharacterAnalysis = {
 };
 
 let analysis: CharacterAnalysis = baseAnalysis;
-const calls = { analyze: 0, plan: 0, draw: 0, clean: 0, drawIndices: [] as number[], neighbors: 0, activeDuringDraw: 0 };
+const calls = { analyze: 0, plan: 0, draw: 0, clean: 0, scene: 0, describe: 0, drawIndices: [] as number[], neighbors: 0, activeDuringDraw: 0 };
 let drawFailures = new Map<number, AppError>();
 let drawGate: Promise<void> | null = null;
 
@@ -69,7 +78,8 @@ beforeAll(async () => {
   services.analyze = async () => { calls.analyze++; return analysis; };
   services.plan = async ({ analysis: seen }) => {
     calls.plan++;
-    return parsePlanOutput(JSON.stringify({ direction: "right", motion: "in_place", drawingFps: null, durationSeconds: null, poses: WALK_PHASES.map((phase) => ({ phase, detail: "" })) }), seen);
+    const phases = ACTION_SPECS[actionFor(seen)].poses.map((pose) => pose.phase);
+    return parsePlanOutput(JSON.stringify({ direction: "right", motion: "in_place", drawingFps: null, durationSeconds: null, poses: phases.map((phase) => ({ phase, detail: "" })) }), seen);
   };
   services.draw = async ({ index, neighbor, signal }) => {
     calls.draw++;
@@ -83,8 +93,19 @@ beforeAll(async () => {
     return { png: await walkerPng(DRIFT[index].phase, DRIFT[index]), width: 1024, height: 1536 };
   };
   services.cleanReference = async () => { calls.clean++; return { png: await walkerPng("left_passing", { scale: 1.05 }), width: 1024, height: 1536 }; };
-  services.scene = async () => { throw new AppError("meta_unavailable", 502, "not used"); };
+  services.scene = async () => { calls.scene++; return { png: await sharp({ create: { width: 1536, height: 1024, channels: 3, background: "#7fb4e6" } }).png().toBuffer(), width: 1536, height: 1024 }; };
+  services.describe = async () => {
+    calls.describe++;
+    return { analysis: { ...baseAnalysis, requestedAction: "none" }, summary: "A walker on a white page.", setting: null, ideas: [{ action: "run", direction: "left", detail: "in a hurry" }] };
+  };
   services.review = async () => ({ summary: "fake", recognizableWalk: true, frames: new Map() });
+  // A left-to-right gradient: any seam or wrong scroll shows up in the pixels.
+  services.backdrop = async () => {
+    const width = 1536, height = 1024;
+    const data = Buffer.alloc(width * height * 3);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) { const at = (y * width + x) * 3; data[at] = Math.round((x / width) * 255); data[at + 1] = 120; data[at + 2] = y < height * 0.8 ? 200 : 60; }
+    return { png: await sharp(data, { raw: { width, height, channels: 3 } }).png().toBuffer(), width, height };
+  };
 });
 
 beforeEach(() => {
@@ -190,6 +211,63 @@ describe("the eight-pose pipeline", () => {
     expect(calls.draw).toBe(draws);
     await applyFrameAction(flipbook.id, "f5", { action: "restore" });
   });
+
+  it("draws a background once, still and as a seamless strip that scrolls in exports", async () => {
+    const used = (await getFlipbook(flipbook.id)).budget.used;
+    const next = await generateBackground(flipbook.id, { prompt: "a park at sunset", confirmExtra: false });
+    expect(next.backgrounds.generated?.prompt).toBe("a park at sunset");
+    expect(next.budget.used).toBe(used + 1);
+    const still = await sharp(flipbookFiles.background(flipbook.id, "generated")).metadata();
+    const strip = await sharp(flipbookFiles.background(flipbook.id, "generated-loop")).metadata();
+    expect(strip.height).toBe(still.height);
+    expect(strip.width).toBe(Math.round(still.width! * 0.88));
+    // The strip's right edge leads into its left edge: the seam is continuous.
+    const { data, info } = await sharp(flipbookFiles.background(flipbook.id, "generated-loop")).raw().toBuffer({ resolveWithObject: true });
+    const pixel = (x: number) => data[(10 * info.width + x) * info.channels];
+    expect(Math.abs(pixel(info.width - 1) - pixel(0))).toBeLessThanOrEqual(2);
+
+    const settings = { drawingFps: 8 as const, durationSeconds: 2 as const, motion: "in_place" as const, speed: 1 };
+    const mp4 = await exportFlipbook(flipbook.id, { format: "mp4", settings, background: { kind: "generated", motion: "scroll" } });
+    expect(mp4.record.facts.frames).toBe(48);
+    const gif = await exportFlipbook(flipbook.id, { format: "gif", settings, background: { kind: "generated", motion: "scroll" } });
+    // A scrolling background needs the whole trip, not one looping cycle.
+    expect(gif.record.facts.frames).toBe(16);
+    const stillGif = await exportFlipbook(flipbook.id, { format: "gif", settings, background: { kind: "generated", motion: "static" } });
+    expect(stillGif.record.facts.frames).toBe(8);
+    await expect(exportFlipbook(flipbook.id, { format: "spritesheet", settings, background: { kind: "generated", motion: "static" } })).rejects.toMatchObject({ code: "sprites_background" });
+  });
+
+  it("keeps the last look, saves to one account only, and saved animations outlive the cleanup", async () => {
+    const owner = "11111111-1111-4111-8111-111111111111";
+    const other = "22222222-2222-4222-8222-222222222222";
+    const look = { settings: { drawingFps: 12 as const, durationSeconds: 6 as const, motion: "in_place" as const, speed: 1 }, background: { kind: "generated" as const, motion: "scroll" as const } };
+    expect((await saveLook(flipbook.id, look)).look).toEqual(look);
+    const saved = await saveFlipbook(flipbook.id, owner, { title: "Park walk" });
+    expect(saved.ownerId).toBe(owner);
+    expect(saved.title).toBe("Park walk");
+    await expect(saveFlipbook(flipbook.id, other, {})).rejects.toMatchObject({ code: "flipbook_not_found" });
+    await expect(unsaveFlipbook(flipbook.id, other)).rejects.toMatchObject({ code: "flipbook_not_found" });
+    expect((await listFlipbooks(owner)).map((entry) => [entry.id, entry.title, entry.frames])).toEqual([[flipbook.id, "Park walk", 8]]);
+    expect(await listFlipbooks(other)).toEqual([]);
+
+    const old = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000);
+    await utimes(flipbookFiles.state(flipbook.id), old, old);
+    await cleanupFlipbooks();
+    expect((await getFlipbook(flipbook.id)).ownerId).toBe(owner);
+
+    await unsaveFlipbook(flipbook.id, owner);
+    expect(await listFlipbooks(owner)).toEqual([]);
+  });
+
+  it("opens the animation in the video editor as a normalized clip", async () => {
+    const settings = { drawingFps: 8 as const, durationSeconds: 2 as const, motion: "right" as const, speed: 1 };
+    await expect(sendToEditor(flipbook.id, { settings, background: { kind: "transparent" } })).rejects.toMatchObject({ code: "mp4_needs_background" });
+    const { video } = await sendToEditor(flipbook.id, { settings, background: { kind: "generated", motion: "static" } });
+    expect(video.originalName).toMatch(/\.mp4$/);
+    expect(video.normalized.durationSeconds).toBeGreaterThan(1.9);
+    expect(video.normalized.durationSeconds).toBeLessThan(2.2);
+    expect(video.urls.preview).toContain(`/api/videos/${video.id}/media`);
+  });
 });
 
 describe("budget and failures", () => {
@@ -240,6 +318,54 @@ describe("budget and failures", () => {
   });
 });
 
+describe("reading the upload, and the scene behind the character", () => {
+  it("reads an upload once, cuts the character out, and a flipbook made from it reuses the reading", async () => {
+    const before = { ...calls };
+    const look = await readUploadedImage(imageId);
+    expect(look.summary).toBe("A walker on a white page.");
+    expect(look.ideas).toEqual([{ action: "run", direction: "left", detail: "in a hurry" }]);
+    // A plain page: the character comes out, there is no scene to keep.
+    expect(look.layers).toEqual({ character: true, scene: false });
+    expect((await readUploadedImage(imageId)).summary).toBe(look.summary);
+    expect(calls.describe - before.describe).toBe(1);
+
+    const created = await createFlipbook({ imageId, prompt: "Run across the screen to the left, in a hurry", action: "run" });
+    expect(created.analysis?.requestedAction).toBe("run");
+    const flipbook = await waitFor(created.id, ["ready", "failed", "reference_ready"]);
+    expect(flipbook.error).toBeNull();
+    expect(flipbook.status).toBe("ready");
+    expect(flipbook.plan?.action).toBe("run");
+    expect(calls.analyze - before.analyze).toBe(0);
+    expect(calls.scene - before.scene).toBe(0);
+  });
+
+  it("empties the character's place in the scene preview", async () => {
+    const source = await sharp({ create: { width: 200, height: 100, channels: 4, background: "#3366cc" } }).png().toBuffer();
+    const cutout = await sharp({ create: { width: 40, height: 60, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } } }).png().toBuffer();
+    const measure = { rawWidth: 200, rawHeight: 100, crop: { left: 80, top: 20, width: 40, height: 60 } } as Parameters<typeof emptiedScene>[2];
+    const { data, info } = await sharp(await emptiedScene(source, cutout, measure)).raw().toBuffer({ resolveWithObject: true });
+    expect(info.channels).toBe(4);
+    const alphaAt = (x: number, y: number) => data[(y * info.width + x) * 4 + 3];
+    expect(alphaAt(100, 50)).toBe(0);
+    expect(alphaAt(10, 10)).toBe(255);
+  });
+
+  it("separates the scene alongside the poses and makes it the background", async () => {
+    const before = { ...calls };
+    const created = await createFlipbook({ imageId, prompt: "walk in place", keepScene: true });
+    const flipbook = await waitFor(created.id, ["ready", "failed", "reference_ready"]);
+    expect(flipbook.status).toBe("ready");
+    expect(calls.scene - before.scene).toBe(1);
+    expect(flipbook.backgrounds.scene).toBe(true);
+    // In place: the scene scrolls behind the walk.
+    expect(flipbook.look?.background).toEqual({ kind: "scene", motion: "scroll" });
+    expect(flipbook.budget.used).toBe(9);
+    expect(await stat(flipbookFiles.background(flipbook.id, "scene-loop"))).toBeTruthy();
+    const mp4 = await exportFlipbook(flipbook.id, { format: "mp4", settings: { drawingFps: 8, durationSeconds: 2, motion: "in_place", speed: 1 }, background: { kind: "scene", motion: "scroll" } });
+    expect(mp4.record.facts.frames).toBe(48);
+  });
+});
+
 describe("input handling", () => {
   it("pauses on a risky input after drawing a clean side-view reference", async () => {
     analysis = { ...baseAnalysis, view: "three_quarter", facing: "front" };
@@ -262,10 +388,23 @@ describe("input handling", () => {
     expect(done.frames.every((frame) => frame.status === "ready")).toBe(true);
   });
 
-  it("refuses actions other than walking, before any drawing is paid for", async () => {
+  it("makes a jump on the spot: eight drawings, the airborne ones lifted off the ground", async () => {
     analysis = { ...baseAnalysis, requestedAction: "jump" };
+    const created = await createFlipbook({ imageId, prompt: "jump in place" });
+    const result = await waitFor(created.id, ["ready", "failed", "reference_ready", "unsupported"]);
+    expect(result.status).toBe("ready");
+    expect(result.plan?.action).toBe("jump");
+    expect(result.plan?.motion).toBe("in_place");
+    expect(result.plan?.drawingFps).toBe(12);
+    expect(result.frames.every((frame) => frame.status === "ready")).toBe(true);
+    const apex = result.plan!.poses.find((pose) => pose.phase === "jump_apex")!;
+    expect(apex.lift).toBeGreaterThan(0.1);
+  });
+
+  it("refuses actions it can't animate, before any drawing is paid for", async () => {
+    analysis = { ...baseAnalysis, requestedAction: "dance" };
     const draws = calls.draw;
-    const created = await createFlipbook({ imageId, prompt: "make it jump" });
+    const created = await createFlipbook({ imageId, prompt: "make it dance" });
     const result = await waitFor(created.id, ["unsupported", "failed", "ready"]);
     expect(result.status).toBe("unsupported");
     expect(result.error?.code).toBe("unsupported_animation");

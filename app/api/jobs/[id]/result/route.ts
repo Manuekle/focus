@@ -10,7 +10,7 @@ export async function GET(request: Request, { params }: Context) {
     const { id } = await params;
     const search = new URL(request.url).searchParams;
     const kind = search.get("kind") ?? "output";
-    if (kind !== "output" && kind !== "compare") throw new AppError("invalid_kind", 400, "Tipo de archivo desconocido.");
+    if (kind !== "output" && kind !== "compare") throw new AppError("invalid_kind", 400, "Unknown file type.");
     const file = await resultFile(id, kind, search.get("r") ?? undefined);
     return await serveFile(request, file.path, "video/mp4", kind === "output" && search.get("download") === "1" ? file.downloadName : undefined);
   } catch (error) {

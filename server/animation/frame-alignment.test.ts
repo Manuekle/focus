@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { WALK_POSES, type FrameId } from "../../shared/flipbook";
 import { AppError } from "../errors";
 import { DRIFT, walkerPng, walkerPose } from "./__fixtures__/walker";
-import { BASELINE_Y, CELL_HEIGHT, TARGET_HEIGHT, computeAlignment, extractSubject, renderSprite, segmentation, type AlignInput, type Extraction } from "./frame-alignment";
+import { BASELINE_Y, CELL_HEIGHT, TARGET_HEIGHT, computeAlignment, extractSubject, renderSprite, segmentation, segmentationConcepts, type AlignInput, type Extraction } from "./frame-alignment";
 import { contactSheet } from "./quality-control";
 
 // Cut-out and registration on deterministic drawings. SAM is switched off:
@@ -175,5 +175,14 @@ describe("run and fight registration", () => {
     const torsoB = b.measure.crop.left + b.measure.torsoX;
     // Under 1% of body height: the jab doesn't drag the registration column.
     expect(Math.abs(torsoA - torsoB)).toBeLessThanOrEqual((a.measure.footY - a.measure.topY) * 0.01);
+  });
+});
+
+describe("segmentation concepts", () => {
+  it("falls back from a detailed phrase to its head noun, then to character", () => {
+    expect(segmentationConcepts("girl with horse ears")).toEqual(["girl with horse ears", "girl", "character"]);
+    expect(segmentationConcepts("boy in red hoodie")).toEqual(["boy in red hoodie", "boy", "character"]);
+    expect(segmentationConcepts("cartoon fox")).toEqual(["cartoon fox", "fox", "character"]);
+    expect(segmentationConcepts("character")).toEqual(["character"]);
   });
 });

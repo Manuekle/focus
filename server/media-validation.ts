@@ -34,12 +34,12 @@ function rotationOf(stream: ProbeStream): number {
 export function describeSource(probe: Probe, sizeBytes: number): SourceMedia {
   const containers = probe.format.format_name.split(",");
   if (!containers.some((name) => ACCEPTED_CONTAINERS.includes(name))) {
-    throw new AppError("unsupported_container", 415, "Formato no compatible. Sube un archivo MP4 o MOV.");
+    throw new AppError("unsupported_container", 415, "Unsupported format. Upload an MP4 or MOV file.");
   }
 
   const video = probe.streams.find((stream) => stream.codec_type === "video" && stream.disposition?.attached_pic !== 1);
   if (!video || !video.width || !video.height) {
-    throw new AppError("no_video_stream", 422, "El archivo no contiene una pista de video legible.");
+    throw new AppError("no_video_stream", 422, "This file doesn’t contain a readable video track.");
   }
 
   const rotation = rotationOf(video);
@@ -48,27 +48,27 @@ export function describeSource(probe: Probe, sizeBytes: number): SourceMedia {
   const height = quarterTurn ? video.width : video.height;
 
   if (Math.min(width, height) < MIN_DIMENSION) {
-    throw new AppError("resolution_too_small", 422, `El video es demasiado pequeño (${width}×${height}). Usa al menos ${MIN_DIMENSION} px por lado.`);
+    throw new AppError("resolution_too_small", 422, `This video is too small (${width}×${height}). Use at least ${MIN_DIMENSION} px on each side.`);
   }
   if (Math.max(width, height) > MAX_SOURCE_DIMENSION) {
-    throw new AppError("resolution_too_large", 422, `La resolución ${width}×${height} supera el máximo de ${MAX_SOURCE_DIMENSION} px.`);
+    throw new AppError("resolution_too_large", 422, `The resolution ${width}×${height} exceeds the maximum of ${MAX_SOURCE_DIMENSION} px.`);
   }
 
   const durationSeconds = Number(probe.format.duration ?? video.duration);
   if (!Number.isFinite(durationSeconds) || durationSeconds <= 0) {
-    throw new AppError("unknown_duration", 422, "No pudimos leer la duración del video. Exporta el archivo de nuevo e inténtalo otra vez.");
+    throw new AppError("unknown_duration", 422, "We couldn’t read the video’s duration. Export the file again and retry.");
   }
   if (durationSeconds > MAX_DURATION_SECONDS + DURATION_TOLERANCE_SECONDS) {
     throw new AppError(
       "duration_too_long",
       422,
-      `El video dura ${durationSeconds.toFixed(1)} s. Recórtalo a ${MAX_DURATION_SECONDS} s o menos y vuelve a subirlo.`,
+      `This video is ${durationSeconds.toFixed(1)} s long. Trim it to ${MAX_DURATION_SECONDS} s or less and upload it again.`,
     );
   }
 
   const fps = parseRate(video.avg_frame_rate) || parseRate(video.r_frame_rate);
   if (!(fps > 0)) {
-    throw new AppError("unknown_frame_rate", 422, "No pudimos leer la cadencia de fotogramas del video.");
+    throw new AppError("unknown_frame_rate", 422, "We couldn’t read the video’s frame rate.");
   }
 
   return {

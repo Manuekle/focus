@@ -56,7 +56,7 @@ export function ToastProvider({ children }: { readonly children: ReactNode }) {
   const toast = useCallback(
     ({ sound = true, ...input }: ToastInput & { readonly sound?: boolean }) => {
       if (sound) cue(...STATUS_CUE[input.status ?? "neutral"]);
-      // An error stays until it is dismissed. 4.2s is enough for "Guardado"
+      // An error stays until it is dismissed. 4.2s is enough for "Saved"
       // and nowhere near enough to read what failed and decide what to do
       // about it — WCAG 2.2.1, and the reason the timing is adjustable at all.
       // Spread after the default so a caller that wants its own duration

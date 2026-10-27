@@ -46,7 +46,7 @@ async function writeLimited(body: ReadableStream<Uint8Array>, target: string): P
 }
 
 function tooLarge(): AppError {
-  return new AppError("file_too_large", 413, `El archivo supera ${formatBytes(MAX_UPLOAD_BYTES)}. Exporta una versión más corta o más ligera.`);
+  return new AppError("file_too_large", 413, `This file exceeds ${formatBytes(MAX_UPLOAD_BYTES)}. Export a shorter or smaller version.`);
 }
 
 /**
@@ -59,7 +59,7 @@ function tooLarge(): AppError {
 export async function ingestVideo({ body, fileName, declaredBytes }: IngestInput): Promise<VideoAsset> {
   const originalName = cleanFileName(fileName);
   if (!hasAcceptedExtension(originalName)) {
-    throw new AppError("unsupported_type", 415, "Formato no compatible. Sube un archivo MP4 o MOV.");
+    throw new AppError("unsupported_type", 415, "Unsupported format. Upload an MP4 or MOV file.");
   }
   if (declaredBytes !== undefined && declaredBytes > MAX_UPLOAD_BYTES) throw tooLarge();
 
@@ -69,7 +69,7 @@ export async function ingestVideo({ body, fileName, declaredBytes }: IngestInput
     const extension = path.extname(originalName).toLowerCase();
     const sourcePath = path.join(dir, VIDEO_FILES.source(extension));
     const sizeBytes = await writeLimited(body, sourcePath);
-    if (sizeBytes === 0) throw new AppError("empty_file", 400, "El archivo está vacío.");
+    if (sizeBytes === 0) throw new AppError("empty_file", 400, "This file is empty. Choose another file.");
 
     const source = describeSource(await probeOrReject(sourcePath), sizeBytes);
     // FFmpeg normalization is CPU-heavy: at most two at a time per instance.
@@ -108,7 +108,7 @@ async function probeOrReject(file: string) {
     throw new AppError(
       "unreadable_media",
       422,
-      "No pudimos leer este archivo como video. Puede estar dañado o usar un formato no compatible.",
+      "We couldn’t read this file as a video. It may be damaged or use an unsupported format.",
       toolDetail(error, path.dirname(file)),
     );
   }
@@ -146,14 +146,14 @@ async function normalize(
     throw new AppError(
       "normalization_failed",
       422,
-      "No pudimos preparar este video para editarlo. Exporta el archivo como MP4 (H.264) e inténtalo de nuevo.",
+      "We couldn’t prepare this video for editing. Export it as an MP4 (H.264) and try again.",
       toolDetail(error, dir),
     );
   }
 
   const result = await probe(output);
   const video = result.streams.find((stream) => stream.codec_type === "video");
-  if (!video?.width || !video.height) throw new AppError("normalization_failed", 500, "La normalización no produjo un video válido.");
+  if (!video?.width || !video.height) throw new AppError("normalization_failed", 500, "Video preparation didn’t produce a valid video. Export it as an MP4 (H.264) and try again.");
   const durationSeconds = Number(result.format.duration ?? video.duration);
   const fps = parseRate(video.avg_frame_rate) || NORMALIZED_FPS;
   const frameCount = Number(video.nb_frames) || Math.max(1, Math.round(durationSeconds * fps));
@@ -174,7 +174,7 @@ export async function getVideo(id: string): Promise<VideoAsset> {
     const raw = await readFile(path.join(videoDir(videoId), VIDEO_FILES.asset), "utf8");
     return VideoAssetSchema.parse(JSON.parse(raw));
   } catch {
-    throw new AppError("video_not_found", 404, "Ese video no existe o ya se eliminó.");
+    throw new AppError("video_not_found", 404, "This video doesn’t exist or has been deleted.");
   }
 }
 
@@ -197,6 +197,6 @@ export async function mediaFile(id: VideoId, variant: MediaVariant): Promise<{ p
     variant === "poster" ? "image/jpeg" : file.endsWith(".mov") ? "video/quicktime" : "video/mp4";
   const full = path.join(dir, file);
   const info = await stat(full).catch(() => null);
-  if (!info) throw new AppError("media_not_found", 404, "Ese archivo ya no está disponible.");
+  if (!info) throw new AppError("media_not_found", 404, "This file is no longer available.");
   return { path: full, size: info.size, type };
 }

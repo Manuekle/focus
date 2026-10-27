@@ -88,7 +88,7 @@ function jobsDir(): string {
 }
 
 function jobPath(id: string): string {
-  if (!/^[0-9a-f-]{36}$/.test(id)) throw new AppError("job_not_found", 404, "Ese proceso no existe.");
+  if (!/^[0-9a-f-]{36}$/.test(id)) throw new AppError("job_not_found", 404, "This edit doesn’t exist.");
   return path.join(jobsDir(), `${id}.json`);
 }
 
@@ -115,7 +115,7 @@ async function writeJson(file: string, value: unknown): Promise<void> {
 
 async function readJob(id: string): Promise<EditJob> {
   const raw = await readFile(jobPath(id), "utf8").catch(() => null);
-  if (!raw) throw new AppError("job_not_found", 404, "Ese proceso no existe o ya expiró.");
+  if (!raw) throw new AppError("job_not_found", 404, "This edit no longer exists or has expired.");
   return EditJobSchema.parse(JSON.parse(raw));
 }
 
@@ -166,7 +166,7 @@ export async function getJob(id: string): Promise<EditJob> {
         ...current,
         status: "failed",
         detail: null,
-        error: { code: "interrupted", message: "El proceso se interrumpió (el servidor se reinició). Vuelve a generarlo; lo ya calculado se reutiliza." },
+        error: { code: "interrupted", message: "Processing was interrupted when the server restarted. Generate again to continue from your saved progress." },
       });
     });
   }
@@ -174,7 +174,7 @@ export async function getJob(id: string): Promise<EditJob> {
 }
 
 function segmentationFile(video: VideoAsset, id: string): string {
-  if (!/^[a-z0-9+-]+$/.test(id)) throw new AppError("segmentation_not_found", 404, "Segmentación no encontrada.");
+  if (!/^[a-z0-9+-]+$/.test(id)) throw new AppError("segmentation_not_found", 404, "Subject tracking wasn’t found.");
   return path.join(videoDir(video.id), "segmentations", `${id}.json`);
 }
 
@@ -185,9 +185,9 @@ export async function readTracking(video: VideoAsset, id: string): Promise<Track
 
 export async function getJobTracking(jobId: string): Promise<Tracking> {
   const job = await getJob(jobId);
-  if (!job.segmentationId) throw new AppError("tracking_not_ready", 409, "La segmentación todavía no está lista.");
+  if (!job.segmentationId) throw new AppError("tracking_not_ready", 409, "Subject tracking isn’t ready yet.");
   const tracking = await readTracking(await getVideo(job.videoId), job.segmentationId);
-  if (!tracking) throw new AppError("tracking_not_found", 404, "La segmentación ya no está disponible.");
+  if (!tracking) throw new AppError("tracking_not_found", 404, "Your saved subject tracking is no longer available.");
   return tracking;
 }
 
@@ -208,7 +208,7 @@ export function activeWorkCount(): number {
 }
 
 function assertEffectEnabled(effect: EffectId): void {
-  if (!effectEnabled(effect)) throw new AppError("effect_disabled", 400, "Ese efecto no está disponible.");
+  if (!effectEnabled(effect)) throw new AppError("effect_disabled", 400, "That effect isn’t available.");
 }
 
 export async function createJob(request: EditRequest, gate?: PaidWorkGate): Promise<EditJob> {
@@ -267,7 +267,7 @@ function start(id: string, work: (signal: AbortSignal) => Promise<void>): void {
   void work(controller.signal)
     .catch(async (error) => {
       if (controller.signal.aborted) return;
-      const failure = error instanceof AppError ? error : new AppError("internal_error", 500, "Algo falló durante el proceso.");
+      const failure = error instanceof AppError ? error : new AppError("internal_error", 500, "Something went wrong while processing your edit. Try again.");
       if (!(error instanceof AppError)) console.error("[focus] job failed", error);
       else if (failure.detail) console.warn(`[focus] job ${id} failed: ${failure.code} — ${failure.detail}`);
       await patchJob(id, { status: "failed", detail: null, error: { code: failure.code, message: failure.message } }).catch(() => undefined);
@@ -475,7 +475,7 @@ function renderUrls(jobId: string, key: string): RenderResult["urls"] {
 async function renderJob(id: string, video: VideoAsset, requested: RenderParams | null, signal: AbortSignal): Promise<void> {
   const job = await readJob(id);
   if (!job.plan || !job.segmentationId || job.selection.length === 0) {
-    throw new AppError("render_not_ready", 409, "Falta elegir el sujeto antes de renderizar.");
+    throw new AppError("render_not_ready", 409, "Choose your subject before rendering.");
   }
   let params = requested ?? job.params ?? defaultParams(job.plan);
   assertEffectEnabled(effectFamily(params.effect));
@@ -485,7 +485,7 @@ async function renderJob(id: string, video: VideoAsset, requested: RenderParams 
   let temporalSuggestion: TemporalSuggestion | null = null;
   if (params.effect === "time_freeze_echo" && params.trigger.mode === "auto") {
     detectedTracking = await readTracking(video, segmentationId);
-    if (!detectedTracking) throw new AppError("tracking_not_found", 404, "La segmentación ya no está disponible.");
+    if (!detectedTracking) throw new AppError("tracking_not_found", 404, "Your saved subject tracking is no longer available.");
     const track = selectionTrack(detectedTracking, selection);
     // A changing union of several identities is not one subject's movement.
     temporalSuggestion = selection.length === 1 ? suggestTemporalEvent(track, params.trigger.event!, video.normalized) : null;
@@ -528,7 +528,7 @@ async function renderJob(id: string, video: VideoAsset, requested: RenderParams 
       pending = renderLimiter
         .run(async () => {
           const tracking = detectedTracking ?? await readTracking(video, segmentationId);
-          if (!tracking) throw new AppError("tracking_not_found", 404, "La segmentación ya no está disponible.");
+          if (!tracking) throw new AppError("tracking_not_found", 404, "Your saved subject tracking is no longer available.");
           const temp = `${dir}.tmp-${process.pid}-${Date.now()}`;
           await mkdir(temp, { recursive: true });
           try {
@@ -646,14 +646,14 @@ function patchRender(id: string, patch: Pick<EditJob, "progress"> & Partial<Pick
 export async function startRender(id: string, requested?: RenderParamsInput, options: { followEffect?: boolean } = {}): Promise<EditJob> {
   const job = await getJob(id);
   if (!["ready_to_render", "completed", "failed"].includes(job.status) || !job.plan || job.selection.length === 0) {
-    throw new AppError("render_not_allowed", 409, "Este proceso no puede renderizarse ahora.");
+    throw new AppError("render_not_allowed", 409, "This edit can’t be rendered right now.");
   }
   let params: RenderParams | null = null;
   let request = job.request;
   if (requested) {
     params = RenderParamsSchema.parse(requested);
     if (!EFFECT_PLAN_EFFECTS[job.request.effect].includes(params.effect)) {
-      if (!options.followEffect) throw new AppError("effect_mismatch", 400, "Ese ajuste no pertenece al efecto elegido.");
+      if (!options.followEffect) throw new AppError("effect_mismatch", 400, "That setting doesn’t apply to the selected effect.");
       request = { ...request, effect: effectFamily(params.effect) };
     }
   }
@@ -686,7 +686,7 @@ function appendChat(job: EditJob, ...messages: ChatMessage[]): ChatMessage[] {
 export async function chatEdit(id: string, message: string): Promise<EditJob> {
   const job = await getJob(id);
   if (job.status !== "completed" || !job.render || !job.plan) {
-    throw new AppError("chat_not_allowed", 409, "El editor de IA está disponible cuando el video editado está listo.");
+    throw new AppError("chat_not_allowed", 409, "The AI editor is available once your edited video is ready.");
   }
   assertEffectEnabled(effectFamily(job.render.params.effect));
   const video = await getVideo(job.videoId);
@@ -724,7 +724,7 @@ export async function chatEdit(id: string, message: string): Promise<EditJob> {
 export async function restoreChatTurn(id: string, messageId: string): Promise<EditJob> {
   const job = await getJob(id);
   const turn = job.chat.find((message) => message.id === messageId && message.params);
-  if (!turn?.params) throw new AppError("chat_turn_not_found", 404, "Esa versión ya no está disponible.");
+  if (!turn?.params) throw new AppError("chat_turn_not_found", 404, "That version is no longer available.");
   return startRender(id, turn.params, { followEffect: true });
 }
 
@@ -741,15 +741,15 @@ export async function jobsForVideo(videoId: string): Promise<EditJob[]> {
 
 export async function resultFile(id: string, kind: "output" | "compare", version?: string): Promise<{ path: string; downloadName: string }> {
   const job = await getJob(id);
-  if (version === undefined && (job.status !== "completed" || !job.render)) throw new AppError("result_not_ready", 409, "El video editado todavía no está listo.");
+  if (version === undefined && (job.status !== "completed" || !job.render)) throw new AppError("result_not_ready", 409, "Your edited video isn’t ready yet.");
   const key = version ?? job.render!.key;
-  if (!/^r-[0-9a-f]{16}$/.test(key)) throw new AppError("media_not_found", 404, "Ese archivo ya no está disponible.");
+  if (!/^r-[0-9a-f]{16}$/.test(key)) throw new AppError("media_not_found", 404, "This file is no longer available.");
   // A version is resolved only inside this job's video. A committed metadata
   // file proves the render completed; an in-flight directory is never served.
   const dir = path.join(videoDir(job.videoId), "renders", key);
   const render = await readFile(path.join(dir, "meta.json"), "utf8")
     .then((raw) => RenderResultSchema.parse(JSON.parse(raw))).catch(() => null);
-  if (!render || render.key !== key) throw new AppError("media_not_found", 404, "Ese archivo ya no está disponible.");
+  if (!render || render.key !== key) throw new AppError("media_not_found", 404, "This file is no longer available.");
   const file = path.join(dir, `${kind}.mp4`);
   const base = (await getVideo(job.videoId)).originalName.replace(/\.[^.]+$/, "").replace(/[^\p{L}\p{N}_-]+/gu, "-").slice(0, 60) || "video";
   const effect = render.params.effect.replace(/_/g, "-");
@@ -768,11 +768,11 @@ export async function setSelection(id: string, objectIds: readonly string[]): Pr
   const job = await getJob(id);
   assertEffectEnabled(job.request.effect);
   if (!["awaiting_selection", "ready_to_render", "completed"].includes(job.status)) {
-    throw new AppError("selection_not_allowed", 409, "Este proceso no está esperando una selección.");
+    throw new AppError("selection_not_allowed", 409, "This edit isn’t waiting for a subject selection.");
   }
   const known = new Set(job.objects.map((object) => object.id));
   const unique = [...new Set(objectIds)];
-  if (unique.some((objectId) => !known.has(objectId))) throw new AppError("unknown_object", 400, "Ese objeto no existe en la segmentación.");
+  if (unique.some((objectId) => !known.has(objectId))) throw new AppError("unknown_object", 400, "That subject wasn’t found in the tracking data.");
   await withJobLock(id, () => saveJob({ ...job, selection: unique, status: "ready_to_render", detail: null }));
   return startRender(id);
 }
@@ -781,7 +781,7 @@ export async function setSelection(id: string, objectIds: readonly string[]): Pr
 export async function reopenSelection(id: string): Promise<EditJob> {
   const job = await getJob(id);
   assertEffectEnabled(job.request.effect);
-  if (!["ready_to_render", "completed"].includes(job.status)) throw new AppError("selection_not_allowed", 409, "La selección no se puede cambiar ahora.");
+  if (!["ready_to_render", "completed"].includes(job.status)) throw new AppError("selection_not_allowed", 409, "Your selection can’t be changed right now.");
   return saveJob({ ...job, status: "awaiting_selection", detail: "Pick what stands out." });
 }
 
@@ -793,15 +793,15 @@ export async function refineWithPoint(id: string, refine: RefineRequest, gate?: 
   const job = await getJob(id);
   assertEffectEnabled(job.request.effect);
   if (!["awaiting_selection", "ready_to_render", "completed"].includes(job.status) || !job.segmentationId) {
-    throw new AppError("refine_not_allowed", 409, "Este proceso no admite una selección por punto ahora.");
+    throw new AppError("refine_not_allowed", 409, "This edit doesn’t support selecting a subject by point right now.");
   }
   const video = await getVideo(job.videoId);
   const { width, height, frameCount } = video.normalized;
   if (refine.frameIndex >= frameCount || refine.point.x >= width || refine.point.y >= height) {
-    throw new AppError("invalid_point", 400, "El punto está fuera del video.");
+    throw new AppError("invalid_point", 400, "Choose a point inside the video.");
   }
   const base = await readTracking(video, job.segmentationId);
-  if (!base) throw new AppError("tracking_not_found", 404, "La segmentación ya no está disponible.");
+  if (!base) throw new AppError("tracking_not_found", 404, "Your saved subject tracking is no longer available.");
 
   const hit = hitTest(frameAt(base, refine.frameIndex), refine.point.x, refine.point.y);
   if (hit) return saveJob({ ...job, selection: [hit], status: "awaiting_selection", detail: null });
@@ -852,11 +852,11 @@ export async function fillGaps(id: string, gate?: PaidWorkGate): Promise<EditJob
   const job = await getJob(id);
   assertEffectEnabled(job.request.effect);
   if (!["awaiting_selection", "ready_to_render", "completed"].includes(job.status) || !job.segmentationId || job.selection.length === 0) {
-    throw new AppError("fill_not_allowed", 409, "Elige primero el sujeto.");
+    throw new AppError("fill_not_allowed", 409, "Choose your subject first.");
   }
   const video = await getVideo(job.videoId);
   const base = await readTracking(video, job.segmentationId);
-  if (!base) throw new AppError("tracking_not_found", 404, "La segmentación ya no está disponible.");
+  if (!base) throw new AppError("tracking_not_found", 404, "Your saved subject tracking is no longer available.");
   const { frameCount } = video.normalized;
   const targets = job.selection
     .map((objectId) => base.objects.find((object) => object.id === objectId))
@@ -866,7 +866,7 @@ export async function fillGaps(id: string, gate?: PaidWorkGate): Promise<EditJob
       const box = frame.objects.find((entry) => entry.objectId === object.id)!.box;
       return { id: Number(object.id), frameIndex: object.firstFrame, box };
     });
-  if (targets.length === 0) throw new AppError("nothing_to_fill", 409, "El sujeto ya está seguido en todos los fotogramas.");
+  if (targets.length === 0) throw new AppError("nothing_to_fill", 409, "Your subject is already tracked throughout the clip.");
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: frameCount });
 
   const wasCompleted = job.status === "completed";

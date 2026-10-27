@@ -4,7 +4,7 @@ import { FocusProvider } from "../components/focus-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "Focus — Design system", description: "Una identidad nueva. Un sistema completo de componentes, patrones y fundamentos para construir interfaces con claridad.",
+  title: "Focus — Design system", description: "A new identity. A complete system of components, patterns, and foundations for building clear interfaces.",
   robots: { index: false, follow: false },
 };
 export default function RootLayout({children}: {readonly children: ReactNode}) {

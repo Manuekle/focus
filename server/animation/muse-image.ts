@@ -106,6 +106,6 @@ export async function generateImage(input: {
     if (blocked(error)) {
       throw new AppError("image_blocked", 422, "Muse Image declined to draw this. Try another reference image or correction note.");
     }
-    throw metaError(error, "el dibujo");
+    throw metaError(error, "drawing generation");
   }
 }

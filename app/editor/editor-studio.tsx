@@ -4,11 +4,10 @@ import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Add01Icon, Delete02Icon, Film01Icon } from "@hugeicons/core-free-icons";
+import { Add01Icon, Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { ProgressMeter } from "../../components/ui/progress-meter";
-import { Spinner } from "../../components/ui/spinner";
 import { cn } from "../../lib/utils";
 import { ProjectDetailSchema, ProjectSummarySchema, type ProjectDetail, type ProjectSummary } from "../../shared/account";
 import { ACTIVE_JOB_STATUSES, VideoAssetSchema, type EditJob, type EffectId, type VideoAsset } from "../../shared/schemas";
@@ -17,24 +16,17 @@ import { AccountButton } from "../_auth/account-button";
 import { FacebookButton } from "../_auth/facebook-button";
 import { LoginDialog } from "../_auth/login-dialog";
 import { useSession } from "../_auth/session-client";
+import { ago } from "../_editor/ago";
 import { readDraft, settleDraft } from "../_editor/draft";
 import { effectEnabled, flipbookEnabled } from "../../shared/features";
 import { EditorNotice } from "../_editor/editor-notice";
 import { EditorView } from "../_editor/editor-view";
 import { ModeSwitch } from "../_editor/mode-switch";
 import { PLAN_EFFECT_LABEL } from "../_editor/job-panel";
+import { EditorSkeleton, SidebarListSkeleton } from "../_editor/studio-skeletons";
 import { StudioUpload } from "../_editor/studio-upload";
 import { useClipUpload } from "../_editor/use-clip-upload";
 import styles from "./studio.module.css";
-
-const ago = (iso: string) => {
-  const minutes = Math.round((Date.now() - Date.parse(iso)) / 60_000);
-  if (minutes < 1) return "just now";
-  if (minutes < 60) return `${minutes} min ago`;
-  const hours = Math.round(minutes / 60);
-  if (hours < 24) return `${hours} h ago`;
-  return new Date(iso).toLocaleDateString(undefined, { month: "short", day: "numeric" });
-};
 
 const STATUS_LABEL: Partial<Record<EditJob["status"], string>> = {
   completed: "Ready",
@@ -197,7 +189,6 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
             <Image src="/brand/focus-cat.webp" alt="" width={30} height={30} />
             <span>focus<span className={styles.brandDot}>.</span></span>
           </Link>
-          {flipbookEnabled() ? <ModeSwitch current="video" /> : null}
           {detail ? (
             <input
               aria-label="Project name"
@@ -213,7 +204,8 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
           ) : null}
           {detail ? <span className={styles.saved}>Saved to your projects</span> : null}
         </div>
-        <AccountButton session={session} next={here} />
+        {flipbookEnabled() ? <ModeSwitch current="video" /> : <span />}
+        <div className={styles.headerEnd}><AccountButton session={session} next={here} /></div>
       </header>
 
       <div className={styles.body}>
@@ -222,21 +214,12 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
             <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
             New clip
           </Button>
-          {flipbookEnabled() ? (
-            <Link href="/flipbook" className={styles.feature}>
-              <span className={styles.featureIcon} aria-hidden><HugeiconsIcon icon={Film01Icon} size={16} strokeWidth={1.75} /></span>
-              <span className="min-w-0">
-                <span className="block text-xs font-medium text-foreground">Flipbook</span>
-                <span className="block text-[11px] leading-4 text-muted-foreground">Turn a drawing into a frame-by-frame animation</span>
-              </span>
-            </Link>
-          ) : null}
 
           {user ? (
             <nav className={styles.projects} aria-label="Projects">
               <p className={styles.sideLabel}>Projects</p>
               {projects === null ? (
-                <span className="flex items-center gap-2 px-2 text-xs text-muted-foreground"><Spinner className="size-3" />Loading</span>
+                <SidebarListSkeleton label="Loading your projects" />
               ) : projects.length === 0 ? (
                 <p className="px-2 text-xs leading-5 text-muted-foreground">Every clip you edit is saved here.</p>
               ) : (
@@ -298,7 +281,7 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
               <Button className="w-fit" onClick={() => router.push("/editor")}>Upload a clip</Button>
             </section>
           ) : !editorReady ? (
-            <div className="flex items-center gap-2 py-24 text-sm text-muted-foreground"><Spinner className="size-4" />Opening your clip…</div>
+            <EditorSkeleton />
           ) : (
             <>
               <EditorView

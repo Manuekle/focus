@@ -26,6 +26,8 @@ export type QcEntry = {
   readonly phase: string;
   readonly measure: Measure;
   readonly scale: number;
+  /** The pose's planned height on the bob chart (0 = standing); a crouch is shorter on purpose. */
+  readonly relativeRootY?: number;
   /** Aligned sprite PNG (cell size). */
   readonly sprite: Buffer;
 };
@@ -66,11 +68,15 @@ const median = (values: readonly number[]) => {
 
 /** Checks every ready frame, in playback order (the loop's wrap counts as a neighbor). */
 export async function checkFrames(entries: readonly QcEntry[], referenceHistogram: readonly number[] | null, action: AnimationAction = "walk"): Promise<Map<string, QcResult>> {
-  const stride = actionSpec(action).stride;
+  const spec = actionSpec(action);
+  const stride = spec.stride;
   const results = new Map<string, QcResult>();
   if (!entries.length) return results;
   const shapes = await Promise.all(entries.map((entry) => silhouette(entry.sprite)));
-  const medianScale = median(entries.map((entry) => entry.scale));
+  // Every drawing is framed alike, so its scale carries the pose's planned height (a crouch is drawn
+  // shorter on purpose). Divided out, what is left is drift in how big the character was drawn.
+  const drift = entries.map((entry) => entry.scale / (1 + (entry.relativeRootY ?? 0)));
+  const medianScale = median(drift);
   const medianCom = median(shapes.map((shape) => shape.comX));
   const passingSpans = entries.filter((entry) => stride?.passing.includes(entry.phase as Phase)).map((entry) => entry.measure.lowerSpan * entry.scale);
   const passingSpan = passingSpans.length ? median(passingSpans) : null;
@@ -79,7 +85,7 @@ export async function checkFrames(entries: readonly QcEntry[], referenceHistogra
     const warnings: FrameWarning[] = [];
     const { measure } = entry;
     if (measure.touchesEdge) warnings.push({ code: "subject_cropped", message: "Part of the character touches the drawing’s edge and may be cut off." });
-    const relativeScale = medianScale ? entry.scale / medianScale : 1;
+    const relativeScale = medianScale ? drift[index] / medianScale : 1;
     if (Math.abs(relativeScale - 1) > 0.15) {
       warnings.push({ code: "scale_corrected", message: `Drawn ${relativeScale > 1 ? "smaller" : "larger"} than the others; resized by ${Math.round(Math.abs(relativeScale - 1) * 100)}% to match. Check the proportions.` });
     }
@@ -89,7 +95,7 @@ export async function checkFrames(entries: readonly QcEntry[], referenceHistogra
     if (measure.method === "key") warnings.push({ code: "key_extraction", message: "Cut out by its flat background color (SAM found no match). Check the edges." });
     if (measure.multiple) warnings.push({ code: "multiple_subjects", message: "More than one figure was found in this drawing; the largest was kept." });
     const previous = (index - 1 + entries.length) % entries.length;
-    if (entries.length > 1 && previous !== index && iou(shapes[index].mask, shapes[previous].mask) > 0.95) {
+    if (!spec.subtle && entries.length > 1 && previous !== index && iou(shapes[index].mask, shapes[previous].mask) > 0.95) {
       warnings.push({ code: "near_duplicate", message: `Almost identical to the frame before it (“${entries[previous].label}”). The pose may not have changed.` });
     }
     if (stride?.contact.includes(entry.phase as Phase) && passingSpan !== null && measure.lowerSpan * entry.scale < passingSpan * 1.25) {
@@ -172,7 +178,7 @@ export async function reviewFrames(input: {
   const started = Date.now();
   const instructions = `You review the drawings of a hand-drawn ${spec.label} for Focus Flipbook. Image 1 is the character reference. Image 2 is a contact sheet of ${input.labels.length} drawings in playback order, read left to right, top to bottom; frame 1 is at the top left. The cycle loops from the last frame back to frame 1.
 Frames: ${input.labels.map((label, index) => `${index + 1} = ${label}`).join(", ")}. The character should face ${input.direction} in every frame.
-For each frame, report only problems you can actually see: wrong_facing, identity_change (outfit, hair, colors or accessories differ from the reference), missing_limb, extra_limb, wrong_pose (does not match its phase), cropped, style_change, same_as_neighbor (pose barely differs from an adjacent frame), other. Keep each note under 20 words. ok=true when a frame has no visible problem.
+For each frame, report only problems you can actually see: wrong_facing, identity_change (outfit, hair, colors or accessories differ from the reference), missing_limb, extra_limb, wrong_pose (does not match its phase), cropped, style_change, same_as_neighbor (pose barely differs from an adjacent frame), other. Write every note and the summary in English. Keep each note under 20 words. ok=true when a frame has no visible problem.
 recognizableWalk: true when playing the frames in order would read as a ${spec.label}. summary: one or two sentences for the animator. Be honest; do not praise.`;
   try {
     const response = await plannerLimiter.run(() =>
@@ -201,7 +207,7 @@ recognizableWalk: true when playing the frames in order would read as a ${spec.l
     if (!(error instanceof AppError)) {
       await recordUsage({ model: config.plannerModel, kind: "flipbook_review", cached: false, ok: false, flipbookId: input.flipbookId, error: String(error), durationMs: Date.now() - started });
     }
-    throw metaError(error, "la revisión de los fotogramas");
+    throw metaError(error, "frame review");
   }
 }
 

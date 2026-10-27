@@ -19,10 +19,10 @@ async function signingKey(): Promise<Buffer> {
   if (secret) return secret;
   const configured = process.env.FOCUS_SESSION_SECRET;
   if (configured) {
-    if (configured.length < 32) throw new AppError("auth_not_configured", 503, "FOCUS_SESSION_SECRET debe tener al menos 32 caracteres.");
+    if (configured.length < 32) throw new AppError("auth_not_configured", 503, "FOCUS_SESSION_SECRET must contain at least 32 characters.");
     return (secret = Buffer.from(configured));
   }
-  if (process.env.NODE_ENV === "production") throw new AppError("auth_not_configured", 503, "Falta FOCUS_SESSION_SECRET en el servidor: el inicio de sesión no está disponible.");
+  if (process.env.NODE_ENV === "production") throw new AppError("auth_not_configured", 503, "Sign-in isn’t available because FOCUS_SESSION_SECRET is missing on the server.");
   const file = path.join(dataRoot(), "session-secret.key");
   const stored = await readFile(file).catch(() => null);
   if (stored && stored.length >= 32) return (secret = stored);

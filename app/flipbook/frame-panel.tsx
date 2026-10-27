@@ -5,6 +5,7 @@ import { ArrowLeft01Icon, ArrowRight01Icon, Refresh01Icon, Undo02Icon, Upload01I
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
+import { Skeleton } from "../../components/ui/skeleton";
 import { Switch } from "../../components/ui/switch";
 import { ToggleChip } from "../../components/ui/toggle-chip";
 import { IMAGE_ACCEPT_ATTRIBUTE, flipbookUrls, type Flipbook, type FlipbookFrame, type FrameAction } from "../../shared/flipbook";
@@ -71,7 +72,12 @@ export function FramePanel({
           // eslint-disable-next-line @next/next/no-img-element -- versioned media route
           <img src={shown} alt={`${frame.label}, ${view === "raw" ? "drawing as generated" : "aligned sprite"}`} />
         ) : (
-          <p className="text-xs text-muted-foreground">{working ? "Working on this drawing…" : "No drawing yet."}</p>
+          working ? (
+            <>
+              <Skeleton className={styles.working} />
+              <p className={styles.workingLabel}>{frame.status === "processing" ? "Cutting out this drawing…" : "Drawing this pose…"}</p>
+            </>
+          ) : <p className="text-xs text-muted-foreground">No drawing yet.</p>
         )}
       </div>
       <div className={styles.chips}>

@@ -5,6 +5,7 @@ import { AppError } from "../errors";
 import { guardAiRequest } from "../guard";
 import type { PaidWorkGate } from "../jobs";
 import { serveFile } from "../serve-file";
+import { ensureSceneLoop } from "./flipbooks";
 import { contactSheet } from "./quality-control";
 import { flipbookFiles, getFlipbook } from "./store";
 
@@ -52,6 +53,19 @@ export async function flipbookMedia(request: Request, id: string): Promise<Respo
     case "scene":
     case "custom":
       if (!flipbook.backgrounds[kind]) throw new AppError("media_not_found", 404, "This file is no longer available.");
+      return png(flipbookFiles.background(flipbook.id, kind));
+    case "scene-loop":
+      if (!flipbook.backgrounds.scene) throw new AppError("media_not_found", 404, "This file is no longer available.");
+      return png(await ensureSceneLoop(flipbook.id));
+    case "generated":
+    case "generated-loop":
+      if (!flipbook.backgrounds.generated) throw new AppError("media_not_found", 404, "This file is no longer available.");
+      return png(flipbookFiles.background(flipbook.id, kind));
+    case "scene-far":
+    case "scene-near":
+    case "generated-far":
+    case "generated-near":
+      if (!flipbook.backgrounds.depth[kind.startsWith("scene") ? "scene" : "generated"]) throw new AppError("media_not_found", 404, "This file is no longer available.");
       return png(flipbookFiles.background(flipbook.id, kind));
     case "export": {
       const record = flipbook.exports.find((entry) => entry.key === search.get("x"));

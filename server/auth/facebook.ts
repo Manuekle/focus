@@ -66,13 +66,13 @@ async function graph<T>(fetcher: Fetch, url: URL, schema: z.ZodType<T>): Promise
   try {
     response = await fetcher(url.toString(), { signal: AbortSignal.timeout(15_000) });
   } catch {
-    throw new AppError("facebook_unreachable", 502, "No pudimos conectar con Facebook. Vuelve a intentarlo.");
+    throw new AppError("facebook_unreachable", 502, "We couldn’t connect to Facebook. Try again.");
   }
   const body = await response.json().catch(() => null);
   const parsed = schema.safeParse(body);
   if (!response.ok || !parsed.success) {
     const message = (body as { error?: { message?: string } } | null)?.error?.message;
-    throw new AppError("facebook_rejected", 502, "Facebook no confirmó el inicio de sesión. Vuelve a intentarlo.", message);
+    throw new AppError("facebook_rejected", 502, "Facebook couldn’t confirm your sign-in. Try again.", message);
   }
   return parsed.data;
 }
@@ -102,7 +102,7 @@ export async function exchangeCode(config: FacebookConfig, code: string, redirec
 /** The local stand-in: the same name always maps to the same simulated account. */
 export function simulatedProfile(name: string): FacebookProfile {
   const clean = name.trim().replace(/\s+/g, " ").slice(0, 60);
-  if (clean.length < 2) throw new AppError("invalid_name", 400, "Escribe un nombre de al menos 2 caracteres.");
+  if (clean.length < 2) throw new AppError("invalid_name", 400, "Enter a name with at least 2 characters.");
   return {
     providerId: `sim-${createHash("sha256").update(clean.toLowerCase()).digest("hex").slice(0, 24)}`,
     name: clean,

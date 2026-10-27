@@ -17,9 +17,9 @@ export async function POST(request: Request) {
   try {
     const parsed = EditRequestSchema.safeParse(await readJsonBody(request));
     if (!parsed.success) {
-      throw new AppError("invalid_edit", 400, "Describe el cambio con al menos 3 caracteres y elige un efecto.");
+      throw new AppError("invalid_edit", 400, "Describe your change in at least 3 characters and choose an effect.");
     }
-    if (!effectEnabled(parsed.data.effect)) throw new AppError("effect_disabled", 400, "Ese efecto no está disponible.");
+    if (!effectEnabled(parsed.data.effect)) throw new AppError("effect_disabled", 400, "That effect isn’t available.");
     const user = await currentUser(request);
     const anon = user ? null : anonymousId(request);
     const job = await createJob(parsed.data, async (cost) => {

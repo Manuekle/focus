@@ -61,12 +61,12 @@ export function resetRateLimits(): void {
 
 function tooMany(waitSeconds: number, what: string): AppError {
   const minutes = Math.max(1, Math.ceil(waitSeconds / 60));
-  return new AppError("rate_limited", 429, `Llegaste al límite de ${what} por hora. Vuelve a intentarlo en ${minutes} min.`);
+  return new AppError("rate_limited", 429, `You’ve reached the hourly limit for ${what}. Try again in ${minutes} min.`);
 }
 
 export function guardUpload(request: Request): void {
   const wait = takeSlot("upload", clientKey(request), guardConfig().uploadsPerHour);
-  if (wait !== null) throw tooMany(wait, "subidas");
+  if (wait !== null) throw tooMany(wait, "uploads");
 }
 
 /**
@@ -76,21 +76,21 @@ export function guardUpload(request: Request): void {
 export async function guardAiRequest(request: Request, input: { activeJobs: number; estimatedFrames: number }): Promise<void> {
   const config = guardConfig();
   if (config.aiDisabled) {
-    throw new AppError("ai_disabled", 503, "La edición con IA está pausada temporalmente en esta instalación. Vuelve a intentarlo más tarde.");
+    throw new AppError("ai_disabled", 503, "AI editing is temporarily paused. Try again later.");
   }
   if (config.maxActiveJobs > 0 && input.activeJobs >= config.maxActiveJobs) {
-    throw new AppError("busy", 503, "Hay demasiados videos procesándose ahora mismo. Vuelve a intentarlo en un minuto.");
+    throw new AppError("busy", 503, "Too many videos are processing right now. Try again in a minute.");
   }
   if (config.samDailyFrames > 0) {
     const midnight = new Date();
     midnight.setUTCHours(0, 0, 0, 0);
     const used = await samFramesSince(midnight);
     if (used + Math.max(50, input.estimatedFrames) > config.samDailyFrames) {
-      throw new AppError("budget_exhausted", 503, "Se alcanzó el presupuesto diario de procesamiento con IA. Vuelve a intentarlo mañana.");
+      throw new AppError("budget_exhausted", 503, "The daily AI processing limit has been reached. Try again tomorrow.");
     }
   }
   const wait = takeSlot("ai", clientKey(request), config.aiPerHour);
-  if (wait !== null) throw tooMany(wait, "ediciones con IA");
+  if (wait !== null) throw tooMany(wait, "AI edits");
 }
 
 /**
@@ -100,10 +100,10 @@ export async function guardAiRequest(request: Request, input: { activeJobs: numb
 export function guardChatRequest(request: Request): void {
   const config = guardConfig();
   if (config.aiDisabled) {
-    throw new AppError("ai_disabled", 503, "La edición con IA está pausada temporalmente en esta instalación. Vuelve a intentarlo más tarde.");
+    throw new AppError("ai_disabled", 503, "AI editing is temporarily paused. Try again later.");
   }
   const wait = takeSlot("chat", clientKey(request), config.chatPerHour);
-  if (wait !== null) throw tooMany(wait, "mensajes al editor de IA");
+  if (wait !== null) throw tooMany(wait, "AI editor messages");
 }
 
 const MAX_JSON_BYTES = 16 * 1024;
@@ -111,13 +111,13 @@ const MAX_JSON_BYTES = 16 * 1024;
 /** Reads a small JSON body; anything larger or malformed is rejected before parsing. */
 export async function readJsonBody(request: Request): Promise<unknown> {
   const declared = Number(request.headers.get("content-length"));
-  if (Number.isFinite(declared) && declared > MAX_JSON_BYTES) throw new AppError("body_too_large", 413, "La solicitud es demasiado grande.");
+  if (Number.isFinite(declared) && declared > MAX_JSON_BYTES) throw new AppError("body_too_large", 413, "This request is too large.");
   const text = await request.text();
-  if (text.length > MAX_JSON_BYTES) throw new AppError("body_too_large", 413, "La solicitud es demasiado grande.");
+  if (text.length > MAX_JSON_BYTES) throw new AppError("body_too_large", 413, "This request is too large.");
   if (!text) return {};
   try {
     return JSON.parse(text);
   } catch {
-    throw new AppError("invalid_json", 400, "No pudimos leer la solicitud.");
+    throw new AppError("invalid_json", 400, "We couldn’t read this request. Try again.");
   }
 }

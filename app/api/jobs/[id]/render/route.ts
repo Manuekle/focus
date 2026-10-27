@@ -10,7 +10,7 @@ export async function POST(request: Request, { params }: Context) {
   try {
     const { id } = await params;
     const parsed = RenderRequestSchema.safeParse(await readJsonBody(request));
-    if (!parsed.success) throw new AppError("invalid_params", 400, "Los ajustes del efecto no son válidos.");
+    if (!parsed.success) throw new AppError("invalid_params", 400, "The effect settings aren’t valid.");
     return Response.json(await startRender(id, parsed.data.params), { status: 202 });
   } catch (error) {
     return errorResponse(error);

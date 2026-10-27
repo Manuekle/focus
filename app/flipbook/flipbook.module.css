@@ -1,31 +1,11 @@
 /* Focus Flipbook. Same shell, tokens and quiet surfaces as the video editor
    (app/editor/studio.module.css, app/_editor/composer.module.css): panels sit
-   flat on the page, fields use the composer's inset surface. */
+   flat on the page, fields use the composer's inset surface. Layout inside the
+   main column answers to its own width (container queries), since the sidebar
+   takes part of the viewport. */
 
-.studio { display: flex; min-height: 100dvh; flex-direction: column; background: var(--background); color: var(--foreground); color-scheme: dark; }
-
-.header {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 16px;
-  height: 60px;
-  padding-inline: 20px;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in srgb, var(--background) 88%, transparent);
-  backdrop-filter: blur(12px);
-}
-.headerStart, .headerEnd { display: flex; min-width: 0; align-items: center; gap: 16px; }
-.headerEnd { gap: 8px; }
-.brand { display: inline-flex; flex-shrink: 0; align-items: center; gap: 8px; color: var(--foreground); text-decoration: none; }
-.brand > span { font-family: var(--font-porkys), sans-serif; font-size: 25px; line-height: 1; letter-spacing: -1px; }
-.brand img { border: 1px solid var(--border); border-radius: 9px; }
-.brandDot { color: var(--primary); }
-
-.main { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 20px; padding: 24px clamp(16px, 3vw, 36px) 56px; }
+/* The page shell (header, sidebar, main) is the editor's own: app/editor/studio.module.css. */
+.posterContain { object-fit: contain; }
 
 /* ── Shared bits ─────────────────────────────────────────────────────── */
 .hint { color: var(--muted-foreground); font-size: 12px; line-height: 1.55; }
@@ -74,39 +54,21 @@
 .fieldInput:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ── Create ──────────────────────────────────────────────────────────── */
-.create { display: flex; width: 100%; max-width: 960px; flex-direction: column; gap: 28px; margin: 4vh auto 0; }
-.createHead { display: flex; flex-direction: column; gap: 8px; text-align: center; }
-.createTitle { font-family: var(--font-sn-pro); font-size: clamp(28px, 4vw, 40px); font-weight: 600; letter-spacing: -0.03em; line-height: 1.1; }
-.createSubtitle { color: var(--muted-foreground); font-size: 15px; line-height: 1.5; }
-.createBody { display: grid; grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: start; gap: 32px; }
-.createDrop { display: flex; min-width: 0; flex-direction: column; gap: 10px; }
-.createForm { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
-.createPreview { display: flex; flex-direction: column; gap: 10px; }
-.fileRow { display: flex; min-width: 0; align-items: center; gap: 10px; }
-.fileRow > span:first-child { flex: 1; }
-.upload { margin: 0; }
-.upload .dropzone {
-  min-height: 300px;
-  gap: 14px;
-  padding: 22px 16px 16px;
-  border: 0;
-  border-radius: 24px;
-  background: linear-gradient(180deg, #ffffff04, #ffffff01);
-  box-shadow: inset 0 0 0 1px #ffffff0d;
-  cursor: pointer;
+/* The drop icon: the glass feather re-tinted with the app blue, like the home page steps. */
+.dropIcon {
+  --nc-gradient-1-color-1: #b6c9ff;
+  --nc-gradient-1-color-2: #2b56f5;
+  --nc-gradient-2-color-1: #cfdcffcc;
+  --nc-gradient-2-color-2: #6e8dffcc;
+  --nc-light: #ffffff;
+  display: block;
+  margin-inline: auto;
+  overflow: visible;
+  filter: drop-shadow(0 5px 16px #2f5bff3d);
 }
-.upload .dropzone[data-dragging="true"] {
-  background: color-mix(in srgb, var(--primary) 5%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 36%, transparent), 0 0 60px -24px #2853e945;
-}
-.dropzone > span:nth-child(2) > span:first-child { font-family: var(--font-sn-pro); font-size: 18px; font-weight: 600; letter-spacing: -0.02em; }
-.uploading { display: flex; min-height: 300px; align-items: center; justify-content: center; gap: 10px; border-radius: 24px; box-shadow: inset 0 0 0 1px #ffffff0d; color: var(--muted-foreground); font-size: 13px; font-variant-numeric: tabular-nums; }
-.idea { min-height: 26px; padding: 3px 10px; border: 0; border-radius: 999px; background: transparent; box-shadow: inset 0 0 0 1px #ffffff14; color: var(--foreground); font: inherit; font-size: 12px; cursor: pointer; transition: background-color 140ms ease-out, box-shadow 140ms ease-out; }
-.idea:hover { background: #ffffff08; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 45%, transparent); }
-.idea:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
 /* ── Editor ──────────────────────────────────────────────────────────── */
-.editor { display: flex; min-width: 0; flex-direction: column; gap: 16px; }
+.editor { display: flex; min-width: 0; flex-direction: column; gap: 16px; container-type: inline-size; }
 .editorHead { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
 .editorTitle { overflow: hidden; margin-top: 4px; font-family: var(--font-sn-pro); font-size: 20px; font-weight: 600; letter-spacing: -0.02em; text-overflow: ellipsis; white-space: nowrap; max-width: min(70vw, 720px); }
 .headActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
@@ -123,17 +85,19 @@
 .columnMain { position: sticky; top: 76px; }
 
 .panel { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
-.panel + .panel { padding-top: 20px; border-top: 1px solid var(--border); }
+.panel ~ .panel { padding-top: 20px; border-top: 1px solid var(--border); }
 .panelHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
 .panelTitle { font-family: var(--font-sn-pro); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
 .cta { display: flex; flex-direction: column; gap: 10px; }
+.generate, .handoff { display: flex; flex-direction: column; gap: 8px; }
+.generate { padding-top: 4px; }
+.handoff { padding-top: 12px; border-top: 1px solid var(--border); }
 
 .referencePair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
 .referencePair[data-single] { grid-template-columns: minmax(0, 200px); }
 .referencePair figure { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
 .referencePair figcaption { display: inline-flex; align-items: center; gap: 4px; color: var(--muted-foreground); font-size: 11px; }
 .referenceImage { position: relative; display: grid; aspect-ratio: 2 / 3; place-items: center; overflow: hidden; border-radius: 12px; background: #ffffff04; box-shadow: inset 0 0 0 1px #ffffff0a; }
-.createPreview .referenceImage { aspect-ratio: 4 / 3; border-radius: 20px; }
 /* Absolutely placed: a percentage height inside an aspect-ratio grid cell would overflow and crop the feet. */
 .referenceImage img, .stripThumb img, .inspect img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .palette { display: flex; gap: 4px; }
@@ -194,28 +158,59 @@
 .exportsList li { display: flex; flex-direction: column; gap: 2px; }
 .exportFiles { display: flex; flex-wrap: wrap; gap: 10px; }
 
-@media (max-width: 1240px) {
+@container (max-width: 1080px) {
   .grid { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); }
   .grid > .columnSide:first-child { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
-  .grid > .columnSide:first-child > .panel { grid-column: 1 / -1; }
+  .grid > .columnSide:first-child > .panel ~ .panel { padding-top: 0; border-top: 0; }
 }
-@media (max-width: 900px) {
-  .createBody { grid-template-columns: 1fr; }
+@container (max-width: 760px) {
   .grid { grid-template-columns: 1fr; }
   .grid > .columnSide:first-child { display: flex; }
+  .grid > .columnSide:first-child > .panel ~ .panel { padding-top: 20px; border-top: 1px solid var(--border); }
   .columnMain { position: static; }
   .strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
 @media (max-width: 680px) {
-  .header { padding-inline: 12px; }
   .fieldInput { font-size: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .stripFrame, .field, .idea { transition: none; }
+  .stripFrame, .field { transition: none; }
 }
 
-/* Narrow screens: the cat mark alone, so the mode switch and actions fit. */
-@media (max-width: 520px) {
-  .brand > span { display: none; }
-  .header { gap: 10px; }
+/* Skeletons: the same boxes as the real panels, so nothing moves when they fill in. */
+.skeletonLines { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
+.skeletonReference { width: min(100%, 200px); aspect-ratio: 2 / 3; border-radius: 12px; }
+.skeletonStage { width: min(100%, calc(min(56vh, 600px) * 2 / 3)); aspect-ratio: 2 / 3; margin-inline: auto; border-radius: 14px; }
+.skeletonThumb { display: flex; flex-direction: column; gap: 6px; padding: 4px; }
+/* A drawing in progress: the sheen sits where the drawing will appear. */
+.working { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; box-shadow: none; }
+.workingLabel { position: relative; z-index: 1; color: var(--muted-foreground); font-size: 12px; }
+
+/* ── With a drawing: the video editor's layout (editor-view.module.css) ── */
+/* The drawing like the editor's clip: its own proportions, edge to edge, on the stage color. */
+.drawingFigure { display: flex; min-width: 0; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--card); box-shadow: var(--shadow-soft); }
+.drawingStage { position: relative; display: grid; place-items: center; background: var(--editor-stage); }
+.drawingStage img { display: block; width: auto; max-width: 100%; height: auto; max-height: min(62vh, 620px); }
+.drawingStage[data-transparent] {
+  background-color: #1d1f27;
+  background-image: linear-gradient(45deg, #ffffff08 25%, transparent 25%), linear-gradient(-45deg, #ffffff08 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ffffff08 75%), linear-gradient(-45deg, transparent 75%, #ffffff08 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
 }
+.detailInput { min-height: 84px; }
+
+/* Reading the upload: what Focus saw, said plainly before anything is drawn. */
+.reading { display: flex; flex-direction: column; gap: 8px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.readingSummary { color: var(--foreground); font-size: 13px; line-height: 1.55; text-wrap: pretty; }
+.readingSkeleton { display: flex; flex-direction: column; gap: 8px; }
+.readingNotes { display: flex; flex-direction: column; gap: 4px; color: var(--muted-foreground); font-size: 11px; line-height: 1.5; }
+.readingNotes li { position: relative; padding-left: 11px; }
+.readingNotes li::before { position: absolute; top: 0.6em; left: 0; width: 4px; height: 4px; border-radius: 999px; background: var(--alert-warning, #e0a43a); content: ""; }
+.fact { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 9px; border-radius: 999px; background: #ffffff06; box-shadow: inset 0 0 0 1px #ffffff0d; color: var(--foreground); font-size: 11px; line-height: 1.35; }
+/* A sheen over the drawing while it is being read. */
+.readingSweep { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; background: transparent; box-shadow: none; pointer-events: none; }
+.layerTabs { width: auto; align-self: center; }
+.layerCharacter { animation: lift 360ms cubic-bezier(0.22, 1, 0.36, 1) both; filter: drop-shadow(0 14px 18px #00000066); }
+@keyframes lift { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.keepScene { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 12px; background: linear-gradient(180deg, #ffffff06, #ffffff02); box-shadow: inset 0 0 0 1px #ffffff0d; cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .layerCharacter { animation: none; } }

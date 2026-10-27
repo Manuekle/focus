@@ -6,13 +6,17 @@ import {
   ExportRecordSchema,
   FlipbookImageSchema,
   FlipbookSchema,
+  FlipbookSummarySchema,
+  ImageLookSchema,
+  imageUrls,
+  type AnimationAction,
   type ExportRequest,
   type Flipbook,
   type FlipbookAction,
   type FlipbookImage,
   type FrameAction,
 } from "../../shared/flipbook";
-import { ApiErrorBodySchema } from "../../shared/schemas";
+import { ApiErrorBodySchema, VideoAssetSchema } from "../../shared/schemas";
 import { knownErrorMessage } from "../_editor/messages";
 
 // The browser side of Flipbook: typed calls to /api/flipbooks and a poller
@@ -50,7 +54,7 @@ async function call<T>(url: string, init: RequestInit | undefined, parse: (value
   return parse(body);
 }
 
-const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const json = (body: unknown, method = "POST"): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const parseFlipbook = (value: unknown) => FlipbookSchema.parse(value);
 const upload = (file: File, method: "PUT" | "POST" = "PUT"): RequestInit => ({
   method,
@@ -59,8 +63,22 @@ const upload = (file: File, method: "PUT" | "POST" = "PUT"): RequestInit => ({
 });
 
 export const flipbookApi = {
-  create: (imageId: string, prompt: string) => call("/api/flipbooks", json({ imageId, prompt }), parseFlipbook),
+  create: (imageId: string, prompt: string, options: { action?: AnimationAction; keepScene?: boolean } = {}) =>
+    call("/api/flipbooks", json({ imageId, prompt, ...options }), parseFlipbook),
+  /** What Focus sees in an upload; read once, then cached with it. */
+  look: (imageId: string) => call(imageUrls.look(imageId), { method: "POST" }, (value) => ImageLookSchema.parse(value)),
   get: (id: string) => call(`/api/flipbooks/${id}`, { cache: "no-store" }, parseFlipbook),
+  /** The signed-in user's saved animations. */
+  list: () => call("/api/flipbooks", { cache: "no-store" }, (value) => FlipbookSummarySchema.array().parse(value)),
+  /** Saves to the signed-in account, optionally renaming. */
+  save: (id: string, title?: string) => call(`/api/flipbooks/${id}`, json(title ? { title } : {}, "PATCH"), parseFlipbook),
+  unsave: (id: string) => call(`/api/flipbooks/${id}`, { method: "DELETE" }, () => undefined),
+  /** Opens the animation as a new clip in the video editor. */
+  toEditor: (id: string, request: Omit<ExportRequest, "format">) =>
+    call(`/api/flipbooks/${id}/editor`, json(request), (value) => {
+      const body = value as { flipbook?: unknown; video?: unknown };
+      return { flipbook: FlipbookSchema.parse(body.flipbook), video: VideoAssetSchema.parse(body.video) };
+    }),
   action: (id: string, action: FlipbookAction) => call(`/api/flipbooks/${id}`, json(action), parseFlipbook),
   frame: (id: string, frameId: string, action: FrameAction) => call(`/api/flipbooks/${id}/frames/${frameId}`, json(action), parseFlipbook),
   replaceFrame: (id: string, frameId: string, file: File) => call(`/api/flipbooks/${id}/frames/${frameId}`, upload(file), parseFlipbook),

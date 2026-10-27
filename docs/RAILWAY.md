@@ -123,6 +123,6 @@ La cuenta de Railway está conectada y existe el proyecto privado [focus](https:
 
 El usuario eligió probar primero la demo en el trial. El volumen solicitado coincide con el límite de 500 MB de la cuenta. Los límites de CPU/RAM y demás ajustes del servicio se aplican desde `railway.json` al desplegar el código. Consultar el panel de Railway para el estado y el dominio vigentes.
 
-La copia de despliegue está en `codex/railway-deploy`. Incluye los archivos locales de Flipbook que no estaban en `main`, sin secretos ni medios locales. El checkout de desarrollo permanece en su rama y conserva sus cambios. Verificar el dominio público asignado antes de registrar las URLs definitivas de Facebook.
+La copia de despliegue está en `codex/railway-deploy` e integra `main` con Flipbook V3. Conserva las páginas de privacidad y la configuración del trial, sin secretos ni medios locales. El servicio debe seguir esa rama sin fijar un `commitSha` antiguo; los cambios futuros en `main` deben integrarse en la rama de despliegue antes de publicarse. El checkout de desarrollo permanece en su rama y conserva sus cambios. El dominio activo es `focusmeta.up.railway.app`; usarlo también en `FOCUS_PUBLIC_URL` y las URLs de Facebook.
 
 Referencias adicionales: [configuración como código](https://docs.railway.com/config-as-code/reference), [esquema vigente](https://railway.com/railway.schema.json), [Docker y build args](https://docs.railway.com/builds/dockerfiles), [red y timeouts](https://docs.railway.com/networking/public-networking/specs-and-limits).

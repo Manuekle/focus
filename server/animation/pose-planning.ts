@@ -1,4 +1,5 @@
 import {
+  ANIMATION_ACTIONS,
   DirectionSchema,
   FlipbookPlanSchema,
   actionSpec,
@@ -12,16 +13,18 @@ import { metaClient, metaError, plannerLimiter, requireMetaConfig, withRetry } f
 import { nullable } from "../ai/finish-schema";
 import { recordUsage } from "../ai/usage";
 
-// The pose plan. The action itself (walk, run or fight) — which eight phases,
+// The pose plan. The action itself (walk, run, fight, jump, wave, idle) — which eight phases,
 // in which order, how the body rides on each — is fixed in code (shared/flipbook.ts),
 // so a model can never reorder, drop or invent a phase. Muse Spark reads the
 // instruction and the character analysis and returns the direction, timing
 // hints and, per phase, the character-specific detail a drawing needs
 // ("the scarf trails behind", "the tail swings opposite the arms").
 
-/** The action an analysis asks for: walk unless it names a run or a fight. */
+const PLANNED = new Set<string>(ANIMATION_ACTIONS);
+
+/** The action an analysis asks for: one Focus can animate, otherwise a walk. */
 export function actionFor(analysis: Pick<CharacterAnalysis, "requestedAction">): AnimationAction {
-  return analysis.requestedAction === "run" || analysis.requestedAction === "fight" ? analysis.requestedAction : "walk";
+  return PLANNED.has(analysis.requestedAction) ? analysis.requestedAction as AnimationAction : "walk";
 }
 
 export function planJsonSchema(action: AnimationAction) {
@@ -58,7 +61,7 @@ export function planInstructions(action: AnimationAction = "walk"): string {
   const travel = spec.travels
     ? `- motion: "across" when the instruction asks the character to move across the screen or travel somewhere, "in_place" otherwise (the ${spec.label} on the spot).`
     : `- motion: always "in_place" (a ${spec.label} stays on the spot).`;
-  return `You plan a hand-drawn ${spec.label} for Focus Flipbook. Eight drawings make one complete cycle and loop forever. You never draw and never execute anything; you return JSON.
+  return `You plan a hand-drawn ${spec.label} for Focus Flipbook. Eight drawings make one complete cycle and loop forever. You never draw and never execute anything; you return JSON. Write all text fields in English, regardless of the user’s language.
 
 The eight phases, always in this order, with their fixed body mechanics:
 ${spec.poses.map((pose, index) => `${index + 1}. ${pose.phase}: ${pose.constraints}`).join("\n")}
@@ -101,7 +104,7 @@ export function parsePlanOutput(text: string, analysis: CharacterAnalysis, actio
     action,
     direction,
     motion: raw.motion === "across" && spec.travels ? direction : "in_place",
-    drawingFps: raw.drawingFps === 12 ? 12 : raw.drawingFps === 8 || action === "walk" ? 8 : 12,
+    drawingFps: raw.drawingFps === 12 || raw.drawingFps === 8 ? raw.drawingFps : spec.drawingFps,
     durationSeconds: raw.durationSeconds === 2 || raw.durationSeconds === 6 ? raw.durationSeconds : 4,
     loop: true,
     poses: spec.poses.map((pose, index) => {
@@ -163,7 +166,7 @@ export async function planPoses(input: { readonly analysis: CharacterAnalysis; r
     if (!(error instanceof AppError)) {
       await recordUsage({ model: config.plannerModel, kind: "flipbook_plan", cached: false, ok: false, flipbookId: input.flipbookId, error: String(error), durationMs: Date.now() - started });
     }
-    throw metaError(error, "el plan de poses");
+    throw metaError(error, "pose planning");
   }
 }
 
@@ -229,7 +232,7 @@ export function posePrompt(input: {
     input.hasNeighbor ? `Image 2 is the neighboring drawing of the same ${spec.label}: match its size, line weight and colors, but do NOT copy its pose.` : "",
     spec.travels
       ? `View: strict side view (profile), facing ${input.plan.direction}, moving toward the ${input.plan.direction} edge of the image.`
-      : `View: strict side view (profile), facing ${input.plan.direction}, toward the ${input.plan.direction} edge of the image. Only one character: no opponent, no target, no impact effects.`,
+      : `View: strict side view (profile), facing ${input.plan.direction}, toward the ${input.plan.direction} edge of the image, staying on the spot.${input.plan.action === "fight" ? " Only one character: no opponent, no target, no impact effects." : ""}`,
     `Pose: ${pose.description}`,
     input.note ? `Correction requested by the animator: ${input.note}` : "",
     FRAMING(`${key.name} (${key.hex})`),
@@ -242,5 +245,21 @@ export function scenePrompt(analysis: CharacterAnalysis | null): string {
     `Remove ${analysis ? `the ${analysis.subject}` : "the character"} from Image 1 completely and redraw the empty scene behind it.`,
     "Keep everything else identical: composition, perspective, colors, lighting and illustration style. Fill the area where the character was with what would naturally be behind it.",
     "No characters, no people, no animals, no text.",
+  ].join("\n");
+}
+
+
+/**
+ * A new setting for a character drawn without one. One wide side-on plate
+ * with a level ground band, so the same picture works still and scrolling.
+ */
+export function backdropPrompt(analysis: CharacterAnalysis | null, request: string | undefined): string {
+  const setting = request?.trim() || `a simple setting that suits ${analysis ? `this ${analysis.subject}` : "this character"}`;
+  return [
+    `Draw an empty background scene for a 2D animation: ${setting}.`,
+    `Match the illustration style of Image 1${analysis?.style ? ` (${analysis.style})` : ""}: same line work, shading and color treatment, so the character from Image 1 could stand in it. Do not draw the character.`,
+    "Camera: straight side-on view at the height of a person, like a side-scrolling game. A flat, level ground runs across the whole width and fills the bottom fifth of the image; the horizon is horizontal.",
+    "The scene continues past both side edges: the left and right edges must line up so the picture can repeat horizontally. Nothing important sits only at the edges.",
+    "No characters, no people, no animals, no text, no border.",
   ].join("\n");
 }

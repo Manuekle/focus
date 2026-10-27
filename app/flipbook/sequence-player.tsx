@@ -9,17 +9,30 @@ import { ToggleChip } from "../../components/ui/toggle-chip";
 import { useReducedMotion } from "../../lib/hooks/use-reduced-motion";
 import {
   DRAWING_RATES,
+  PARALLAX_FAR,
   SPEED_BOUNDS,
+  backgroundShiftAt,
+  backgroundZoomAt,
   cellLeftAt,
   stageSize,
   tickCount,
   type Cell,
+  type FlipbookDirection,
   type PlaybackSettings,
 } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
 
 export type PlayerFrame = { readonly id: string; readonly label: string; readonly src: string | null };
-export type PlayerBackground = { readonly kind: "transparent" } | { readonly kind: "color"; readonly color: string } | { readonly kind: "image"; readonly src: string };
+export type PlayerBackground =
+  | { readonly kind: "transparent" }
+  | { readonly kind: "color"; readonly color: string }
+  | { readonly kind: "image"; readonly src: string }
+  /** A repeating strip that slides behind the cycle. */
+  | { readonly kind: "scroll"; readonly src: string }
+  /** Two repeating strips: the far one (the sky) slides slower than the near one. */
+  | { readonly kind: "parallax"; readonly far: string; readonly near: string }
+  /** One picture, slowly zooming in and back out over the length. */
+  | { readonly kind: "zoom"; readonly src: string };
 
 const RATES = [0.5, 1, 2] as const;
 const mod = (value: number, size: number) => ((value % size) + size) % size;
@@ -41,6 +54,7 @@ export function SequencePlayer({
   seekNonce,
   strideMeasured,
   travel,
+  facing,
   strip,
   onSelect,
 }: {
@@ -55,6 +69,8 @@ export function SequencePlayer({
   readonly strideMeasured: boolean;
   /** Whether this action can move across the stage, and the verb for it ("Walk", "Run"). */
   readonly travel: { readonly verb: string } | null;
+  /** Which way the character faces: a scrolling background slides against it. */
+  readonly facing: FlipbookDirection;
   /** The frame strip, placed right under the transport so it stays in view. */
   readonly strip?: ReactNode;
   readonly onSelect: (index: number) => void;
@@ -107,6 +123,29 @@ export function SequencePlayer({
         const height = plate.naturalHeight * scale;
         context.drawImage(plate, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
       }
+    } else if (background.kind === "scroll" || background.kind === "parallax") {
+      // Fitted to the stage height and wrapped, the same as the exporter.
+      const shift = backgroundShiftAt(at, settings, cell, count, facing);
+      const strip = (src: string, by: number) => {
+        const plate = imageFor(src, again);
+        if (!plate) return;
+        const width = Math.round((plate.naturalWidth * canvas.height) / plate.naturalHeight);
+        for (let x = -mod(by, width); x < canvas.width; x += width) context.drawImage(plate, x, 0, width, canvas.height);
+      };
+      if (background.kind === "scroll") strip(background.src, shift);
+      else {
+        strip(background.far, Math.round(shift * PARALLAX_FAR));
+        strip(background.near, shift);
+      }
+    } else if (background.kind === "zoom") {
+      const plate = imageFor(background.src, again);
+      if (plate) {
+        // Cover-fit, then zoomed about the center, the same as the exporter.
+        const scale = Math.max(canvas.width / plate.naturalWidth, canvas.height / plate.naturalHeight) * backgroundZoomAt(at, settings);
+        const width = plate.naturalWidth * scale;
+        const height = plate.naturalHeight * scale;
+        context.drawImage(plate, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
+      }
     }
     const index = mod(at, count);
     const left = cellLeftAt(at, settings, cell, count);
@@ -122,12 +161,13 @@ export function SequencePlayer({
     }
     const current = imageFor(frames[index].src, again);
     if (current) context.drawImage(current, left, 0, cell.width, cell.height);
-  }, [background, cell, count, frames, imageFor, onion, onionNext, onionOpacity, settings]);
+  }, [background, cell, count, facing, frames, imageFor, onion, onionNext, onionOpacity, settings]);
 
   // Preload every drawing of the cycle (eight images), nothing else.
   useEffect(() => {
     const wanted = new Set(frames.map((frame) => frame.src).filter((src): src is string => Boolean(src)));
-    if (background.kind === "image") wanted.add(background.src);
+    if (background.kind === "image" || background.kind === "scroll" || background.kind === "zoom") wanted.add(background.src);
+    if (background.kind === "parallax") { wanted.add(background.far); wanted.add(background.near); }
     for (const src of [...images.current.keys()]) if (!wanted.has(src)) images.current.delete(src);
     for (const src of wanted) imageFor(src, () => draw(tickRef.current));
   }, [frames, background, imageFor, draw]);

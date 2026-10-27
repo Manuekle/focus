@@ -1,8 +1,15 @@
 import { describe, expect, it } from "vitest";
 import {
+  ACTION_SPECS,
+  ANIMATION_ACTIONS,
+  ZOOM_DEPTH,
+  backgroundMoves,
+  backgroundScrolls,
+  backgroundZoomAt,
   FlipbookPlanSchema,
   WALK_PHASES,
   WALK_POSES,
+  backgroundShiftAt,
   cellLeftAt,
   holdFrames,
   outputFrameCount,
@@ -80,5 +87,58 @@ describe("placement", () => {
       expect(left).toBeGreaterThanOrEqual(-cell.width);
       expect(left).toBeLessThan(stage.width + 1);
     }
+  });
+});
+
+describe("moving backgrounds", () => {
+  it("slide back by exactly one stride per cycle in place, against the facing", () => {
+    const inPlace = { motion: "in_place" as const, speed: 1.4 };
+    expect(backgroundShiftAt(0, inPlace, cell, 8, "right")).toBe(0);
+    // The speed slider only applies to travel: in place the feet stay planted.
+    expect(backgroundShiftAt(8, inPlace, cell, 8, "right")).toBe(400);
+    expect(backgroundShiftAt(8, inPlace, cell, 8, "left")).toBe(-400);
+  });
+
+  it("pan slowly in the travel direction, and drift when there is no stride", () => {
+    expect(backgroundShiftAt(8, { motion: "left", speed: 1 }, cell, 8, "right")).toBe(-140);
+    expect(backgroundShiftAt(10, { motion: "in_place", speed: 1 }, { ...cell, strideX: 0 }, 8, "right")).toBe(180);
+  });
+});
+
+describe("action library", () => {
+  it("gives every action eight distinct phases that no other action uses", () => {
+    const all = ANIMATION_ACTIONS.flatMap((action) => ACTION_SPECS[action].poses.map((pose) => pose.phase));
+    expect(new Set(all).size).toBe(all.length);
+    for (const action of ANIMATION_ACTIONS) expect(ACTION_SPECS[action].poses).toHaveLength(8);
+  });
+
+  it("keeps the jump inside the cell and draws its crouches shorter", () => {
+    const jump = ACTION_SPECS.jump;
+    expect(jump.travels).toBe(false);
+    expect(Math.max(...jump.poses.map((pose) => pose.lift))).toBeLessThanOrEqual(0.15);
+    expect(jump.poses.find((pose) => pose.phase === "jump_crouch")!.relativeRootY).toBeLessThan(-0.15);
+    expect(jump.poses.filter((pose) => pose.lift > 0).map((pose) => pose.phase)).toEqual(["jump_rise", "jump_apex", "jump_fall"]);
+  });
+
+  it("marks the quiet motions as subtle", () => {
+    expect(ANIMATION_ACTIONS.filter((action) => ACTION_SPECS[action].subtle)).toEqual(["wave", "idle"]);
+  });
+});
+
+describe("scene motion", () => {
+  it("zooms in and back out once over the length, so the export loops", () => {
+    const pace = { durationSeconds: 2 as const, drawingFps: 8 as const };
+    expect(backgroundZoomAt(0, pace)).toBe(1);
+    expect(backgroundZoomAt(8, pace)).toBeCloseTo(1 + ZOOM_DEPTH, 6);
+    expect(backgroundZoomAt(16, pace)).toBe(1);
+    expect(backgroundZoomAt(4, pace)).toBeCloseTo(backgroundZoomAt(12, pace), 6);
+  });
+
+  it("knows which backgrounds slide and which move at all", () => {
+    expect(backgroundScrolls({ kind: "scene", motion: "parallax" })).toBe(true);
+    expect(backgroundScrolls({ kind: "scene", motion: "zoom" })).toBe(false);
+    expect(backgroundMoves({ kind: "generated", motion: "zoom" })).toBe(true);
+    expect(backgroundMoves({ kind: "scene" })).toBe(false);
+    expect(backgroundMoves({ kind: "color", color: "#ffffff" })).toBe(false);
   });
 });

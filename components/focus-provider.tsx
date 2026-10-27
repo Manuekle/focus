@@ -9,7 +9,7 @@ import { TooltipProvider } from "./ui/tooltip";
 import { I18nProvider, type Locale } from "../lib/i18n/provider";
 
 /** Mount once above your app. Every optional feedback channel is user-controllable. */
-export function FocusProvider({ children, locale = "es", messages, forcedTheme }: {
+export function FocusProvider({ children, locale = "en", messages, forcedTheme }: {
   readonly children: ReactNode;
   readonly locale?: Locale;
   readonly messages?: Partial<Record<Locale, Record<string,string>>>;

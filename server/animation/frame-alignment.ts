@@ -204,6 +204,12 @@ function refineEdges(mask: Uint8Array, width: number, height: number): Uint8Arra
 
 export type Extraction = { readonly cutout: Buffer; readonly measure: Measure };
 
+/** The concepts tried in order: the phrase, its head noun ("boy in red hoodie" → "boy"), then "character". */
+export function segmentationConcepts(concept: string): string[] {
+  const head = concept.split(/\s+(?:with|in|wearing|holding|on|and|of)\s+/i)[0].trim().split(/\s+/).at(-1) ?? "";
+  return [...new Set([concept.trim(), head, "character"].filter(Boolean))];
+}
+
 /** Replaceable in tests: null means no SAM call ever runs. */
 export const segmentation: { segment: typeof segmentImage | null } = { segment: segmentImage };
 
@@ -242,12 +248,15 @@ export async function extractSubject(input: {
 
   if (!mask && segmentation.segment && readMetaConfig()) {
     try {
-      const masks = (await segmentation.segment({ png: input.png, width, height, concept: input.concept, flipbookId: input.flipbookId, signal: input.signal }))
-        .filter((candidate) => candidate.area > total * 0.005 && candidate.area < total * 0.92);
-      if (masks.length) {
+      // A detailed phrase ("girl with horse ears") can match nothing: fall back to its head noun, then to "character".
+      for (const concept of segmentationConcepts(input.concept)) {
+        const masks = (await segmentation.segment({ png: input.png, width, height, concept, flipbookId: input.flipbookId, signal: input.signal }))
+          .filter((candidate) => candidate.area > total * 0.005 && candidate.area < total * 0.92);
+        if (!masks.length) continue;
         mask = masks[0].alpha;
         method = "sam";
         multiple = masks.length > 1 && masks[1].area > masks[0].area * 0.15;
+        break;
       }
     } catch (error) {
       if (input.signal?.aborted || (error instanceof AppError && error.code === "canceled")) throw error;

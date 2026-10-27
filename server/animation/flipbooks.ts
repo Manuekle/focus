@@ -1,33 +1,48 @@
 import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
+import { createReadStream } from "node:fs";
+import sharp from "sharp";
 import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { Readable } from "node:stream";
 import {
   FRAME_IDS,
   WALK_POSES,
   actionSpec,
+  flipbookTitle,
   flipbookUrls,
   orderedFrames,
   type ExportRecord,
   type ExportRequest,
   type Flipbook,
+  type FlipbookBackground,
+  type FlipbookSummary,
+  type ImageLook,
+  type PlaybackSettings,
+  ImageLookSchema,
   type FlipbookFrame,
+  type AnimationAction,
+  type BackgroundMotion,
   type FrameAction,
   type FrameId,
 } from "../../shared/flipbook";
 import { AppError } from "../errors";
 import { Limiter } from "../ai/meta";
 import { activeWorkCount, type PaidWorkGate } from "../jobs";
-import { assessInput, analyzeCharacter } from "./character-analysis";
+import { assessInput, analyzeCharacter, lookAtImage } from "./character-analysis";
 import { computeAlignment, extractSubject, MeasureSchema, renderSprite, type AlignInput, type Measure } from "./frame-alignment";
 import { renderExport } from "./export";
 import { drawPose } from "./frame-generation";
-import { decodeImage, getCharacterImage, readUpload } from "./image-input";
+import { decodeImage, getCharacterImage, imageFiles, readUpload } from "./image-input";
 import { actionFor, planPoses } from "./pose-planning";
 import { checkFrames, contactSheet, reviewFrames } from "./quality-control";
-import { decideReference, drawCleanReference, drawScenePlate, readReference, storeReference } from "./reference-manager";
+import { FAR_CONCEPTS, decideReference, growMask, drawBackdrop, drawCleanReference, drawScenePlate, readReference, seamlessPlate, splitDepth, storeReference } from "./reference-manager";
+import type { VideoAsset } from "../../shared/schemas";
+import { ingestVideo } from "../videos";
 import {
   abortWorker,
+  allFlipbooks,
   assertFlipbookEnabled,
+  type BackgroundFile,
   cleanupFlipbooks,
   createState,
   flipbookDir,
@@ -35,6 +50,7 @@ import {
   getFlipbook,
   isRunning,
   newVersionId,
+  parseFlipbookId,
   readJsonFile,
   startWorker,
   updateFlipbook,
@@ -54,11 +70,13 @@ import {
 
 /** Replaceable in tests so no paid request ever runs there. */
 export const services = {
+  describe: lookAtImage,
   analyze: analyzeCharacter,
   plan: planPoses,
   draw: drawPose,
   cleanReference: drawCleanReference,
   scene: drawScenePlate,
+  backdrop: drawBackdrop,
   review: reviewFrames,
 };
 
@@ -154,12 +172,19 @@ function refundImages(id: string, count: number): Promise<unknown> {
 
 // ── Create and run ─────────────────────────────────────────────────────────
 
-export async function createFlipbook(input: { readonly imageId: string; readonly prompt: string }, gate?: PaidWorkGate): Promise<Flipbook> {
+export async function createFlipbook(
+  input: { readonly imageId: string; readonly prompt: string; readonly ownerId?: string | null; readonly action?: AnimationAction; readonly keepScene?: boolean },
+  gate?: PaidWorkGate,
+): Promise<Flipbook> {
   assertFlipbookEnabled();
   const { image, png, flat } = await getCharacterImage(input.imageId);
   void cleanupFlipbooks();
-  // Analysis + plan + up to nine drawings, each cut out by SAM on one still frame.
-  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: WALK_POSES.length + 1 });
+  // A motion picked from the reading reuses its character facts: no second look.
+  const reading = input.action ? await readLook(image.id) : null;
+  const analysis = reading && input.action ? { ...reading.analysis, requestedAction: input.action } : null;
+  const keepScene = Boolean(input.keepScene && !image.hasAlpha && (reading ? reading.layers.scene : true));
+  // Analysis + plan + up to nine drawings, each cut out by SAM on one still frame; with the scene, its plate and depth layers too.
+  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: WALK_POSES.length + 1 + (keepScene ? 1 + FAR_CONCEPTS.length : 0) });
   const id = randomUUID();
   await mkdir(flipbookDir(id), { recursive: true });
   await copyFile(png, flipbookFiles.source(id));
@@ -168,12 +193,14 @@ export async function createFlipbook(input: { readonly imageId: string; readonly
   const flipbook = await createState({
     id,
     imageId: image.id,
+    ownerId: input.ownerId ?? null,
+    title: flipbookTitle({ title: "", prompt: input.prompt }),
     prompt: input.prompt,
     status: "analyzing",
-    detail: "Analyzing your character with Muse Spark",
+    detail: analysis ? "Planning the poses" : "Analyzing your character with Muse Spark",
     progress: null,
     source: { width: image.width, height: image.height, hasAlpha: image.hasAlpha },
-    analysis: null,
+    analysis,
     plan: null,
     warnings: [],
     reference: null,
@@ -181,22 +208,23 @@ export async function createFlipbook(input: { readonly imageId: string; readonly
     order: [...FRAME_IDS],
     alignment: null,
     budget: { limit: imageBudget(), used: 0 },
-    backgrounds: { scene: false, custom: false },
+    backgrounds: { scene: false, custom: false, generated: null, depth: { scene: false, generated: false } },
+    look: null,
     review: null,
     exports: [],
     error: null,
     createdAt: now,
     updatedAt: now,
   });
-  startWorker(id, (signal) => runPipeline(id, signal), failWith);
+  startWorker(id, (signal) => runPipeline(id, signal, { keepScene, fromReading: Boolean(analysis) }), failWith);
   return flipbook;
 }
 
-async function runPipeline(id: string, signal: AbortSignal): Promise<void> {
+async function runPipeline(id: string, signal: AbortSignal, options: { keepScene: boolean; fromReading: boolean }): Promise<void> {
   const flipbook = await getFlipbook(id);
   const sourceFlat = await readFile(flipbookFiles.sourceFlat(id));
 
-  const analysis = await services.analyze({ imagePng: sourceFlat, prompt: flipbook.prompt, flipbookId: id, signal });
+  const analysis = flipbook.analysis ?? await services.analyze({ imagePng: sourceFlat, prompt: flipbook.prompt, flipbookId: id, signal });
   if (signal.aborted) return;
   const assessed = assessInput(analysis);
   if (!assessed.supported) {
@@ -215,19 +243,101 @@ async function runPipeline(id: string, signal: AbortSignal): Promise<void> {
     detail: "Preparing the character reference",
   }));
 
-  const decision = decideReference(analysis);
-  if (decision.kind === "clean") await reserveImages(id, 1, false);
-  await prepareReference(id, decision, signal);
-  if (signal.aborted) return;
+  // The scene is redrawn without the character alongside the poses.
+  const scene = options.keepScene ? separateScene(id, signal, plan) : Promise.resolve();
+  try {
+    const decision = decideReference(analysis);
+    if (decision.kind === "clean") await reserveImages(id, 1, false);
+    await prepareReference(id, decision, signal);
+    if (signal.aborted) return;
 
-  // Caveats about the input: let the person check the reference before
-  // eight drawings are paid for. Otherwise keep going.
-  if (assessed.warnings.length) {
-    await workerUpdate(id, signal, (current) => ({ ...current, status: "reference_ready", detail: "Check the reference, then generate the frames." }));
-    return;
+    // Caveats about the input: let the person check the reference before
+    // eight drawings are paid for, unless they already read them on the
+    // upload. Otherwise keep going.
+    if (assessed.warnings.length && !options.fromReading) {
+      await workerUpdate(id, signal, (current) => ({ ...current, status: "reference_ready", detail: "Check the reference, then generate the frames." }));
+      return;
+    }
+    await reserveImages(id, WALK_POSES.length, false);
+    await drawFrames(id, signal, [...FRAME_IDS], {});
+  } finally {
+    await scene;
   }
-  await reserveImages(id, WALK_POSES.length, false);
-  await drawFrames(id, signal, [...FRAME_IDS], {});
+}
+
+/**
+ * The uploaded scene without the character, drawn once and made the
+ * animation's background: scrolling for a cycle in place, still for one that
+ * travels. A failure is a caveat, never a failed animation.
+ */
+async function separateScene(id: string, signal: AbortSignal, plan: NonNullable<Flipbook["plan"]>): Promise<void> {
+  try {
+    await reserveImages(id, 1, true);
+    const flipbook = await getFlipbook(id);
+    let plate;
+    try {
+      plate = await services.scene({ sourceFlat: await readFile(flipbookFiles.sourceFlat(id)), analysis: flipbook.analysis, width: flipbook.source.width, height: flipbook.source.height, flipbookId: id, signal });
+    } catch (error) {
+      if (unbilled(error)) await refundImages(id, 1);
+      throw error;
+    }
+    if (signal.aborted) return;
+    const depth = await storePlate(id, "scene", plate.png, signal);
+    const background: FlipbookBackground = { kind: "scene", motion: defaultMotion(plan, depth) };
+    await workerUpdate(id, signal, (current) => ({
+      ...current,
+      backgrounds: { ...current.backgrounds, scene: true, depth: { ...current.backgrounds.depth, scene: depth } },
+      // The scene was asked for: it becomes the background, whatever was picked while it was drawn.
+      look: { settings: current.look?.settings ?? { drawingFps: plan.drawingFps, durationSeconds: plan.durationSeconds, motion: plan.motion, speed: 1 }, background },
+    }));
+  } catch (error) {
+    if (signal.aborted) return;
+    if (!(error instanceof AppError)) console.error("[focus] flipbook scene separation failed", error);
+    await workerUpdate(id, signal, (current) => ({ ...current, warnings: [...current.warnings, "The scene couldn’t be separated from the character. Use “Use your scene” to try again, or pick another background."].slice(-8) })).catch(() => undefined);
+  }
+}
+
+/**
+ * How a separated scene moves by default: in two depths (or sliding) behind
+ * a walk or run on the spot, still behind one that travels, and a slow zoom
+ * behind the motions that never travel (a jump, a wave, a breath, a fight).
+ */
+export function defaultMotion(plan: Pick<NonNullable<Flipbook["plan"]>, "action" | "motion">, depth: boolean): BackgroundMotion {
+  if (!actionSpec(plan.action).travels) return "zoom";
+  if (plan.motion !== "in_place") return "static";
+  return depth ? "parallax" : "scroll";
+}
+
+/**
+ * A scene or generated plate as drawn (still, zoom), as a seamless strip
+ * (scrolling), and, when SAM finds a sky in the strip, as far and near
+ * layers (parallax). Returns whether the layers exist; a failed split only
+ * means no parallax.
+ */
+async function storePlate(id: string, which: "scene" | "generated", png: Buffer, signal?: AbortSignal): Promise<boolean> {
+  const flat = (await decodeImage(png)).flat;
+  const strip = await seamlessPlate(flat);
+  await writeAtomic(flipbookFiles.background(id, which), flat);
+  await writeAtomic(flipbookFiles.background(id, `${which}-loop`), strip);
+  try {
+    const layers = await splitDepth({ strip, flipbookId: id, signal });
+    if (!layers) return false;
+    await writeAtomic(flipbookFiles.background(id, `${which}-far`), layers.far);
+    await writeAtomic(flipbookFiles.background(id, `${which}-near`), layers.near);
+    return true;
+  } catch (error) {
+    if (signal?.aborted || (error instanceof AppError && error.code === "canceled")) throw error;
+    console.warn("[focus] flipbook depth split failed", error instanceof Error ? error.message : error);
+    return false;
+  }
+}
+
+/** Scenes made before scrolling existed get their strip on first use. */
+export async function ensureSceneLoop(id: string): Promise<string> {
+  const loop = flipbookFiles.background(id, "scene-loop");
+  if (await stat(loop).catch(() => null)) return loop;
+  await writeAtomic(loop, await seamlessPlate(await readFile(flipbookFiles.background(id, "scene"))));
+  return loop;
 }
 
 async function prepareReference(id: string, decision: { kind: "original" | "clean" | "uploaded"; reason: string }, signal: AbortSignal, uploaded?: Buffer): Promise<void> {
@@ -413,7 +523,15 @@ async function finalize(id: string, signal?: AbortSignal): Promise<Flipbook> {
   const order = orderedFrames(flipbook).filter((frame) => sprites.has(frame.id));
   const byId = new Map(measured.map((entry) => [entry.frame.id, entry.measure]));
   const checks = alignment
-    ? await checkFrames(order.map((frame) => ({ frameId: frame.id, label: frame.label, phase: frame.phase, measure: byId.get(frame.id)!, scale: alignment.transforms[frame.id]!.scale, sprite: sprites.get(frame.id)! })), reference?.measure?.histogram ?? null, plan?.action)
+    ? await checkFrames(order.map((frame) => ({
+      frameId: frame.id,
+      label: frame.label,
+      phase: frame.phase,
+      measure: byId.get(frame.id)!,
+      scale: alignment.transforms[frame.id]!.scale,
+      relativeRootY: plan?.poses[frame.poseIndex].relativeRootY ?? WALK_POSES[frame.poseIndex].relativeRootY,
+      sprite: sprites.get(frame.id)!,
+    })), reference?.measure?.histogram ?? null, plan?.action)
     : new Map();
   const update = (current: Flipbook): Flipbook => ({
     ...current,
@@ -581,16 +699,18 @@ export async function createScene(id: string, confirmExtra: boolean, gate?: Paid
   assertFlipbookEnabled();
   const flipbook = await getFlipbook(id);
   if (flipbook.analysis?.background === "plain") throw new AppError("scene_unavailable", 409, "Your illustration has a plain background, so there is no scene to keep. Choose a color or upload a background.");
-  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 });
+  // The plate, then SAM on its strip for the depth layers.
+  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 + FAR_CONCEPTS.length });
   await reserveImages(id, 1, confirmExtra);
+  let depth: boolean;
   try {
     const plate = await services.scene({ sourceFlat: await readFile(flipbookFiles.sourceFlat(id)), analysis: flipbook.analysis, width: flipbook.source.width, height: flipbook.source.height, flipbookId: id });
-    await writeAtomic(flipbookFiles.background(id, "scene"), plate.png);
+    depth = await storePlate(id, "scene", plate.png);
   } catch (error) {
     if (unbilled(error)) await refundImages(id, 1);
     throw error;
   }
-  return updateFlipbook(id, (current) => ({ ...current, backgrounds: { ...current.backgrounds, scene: true } }));
+  return updateFlipbook(id, (current) => ({ ...current, backgrounds: { ...current.backgrounds, scene: true, depth: { ...current.backgrounds.depth, scene: depth } } }));
 }
 
 export async function uploadBackground(id: string, body: ReadableStream<Uint8Array> | null, declaredBytes: number | undefined): Promise<Flipbook> {
@@ -599,6 +719,159 @@ export async function uploadBackground(id: string, body: ReadableStream<Uint8Arr
   const decoded = await decodeImage(await readUpload(body, declaredBytes), { minDimension: 64 });
   await writeAtomic(flipbookFiles.background(id, "custom"), decoded.flat);
   return updateFlipbook(id, (current) => ({ ...current, backgrounds: { ...current.backgrounds, custom: true } }));
+}
+
+/**
+ * A setting for a character that came without one: one Muse Image drawing in
+ * the character's style, stored as drawn (still) and as a seamless strip
+ * (scrolling). Drawing again replaces both.
+ */
+export async function generateBackground(id: string, input: { prompt?: string; confirmExtra: boolean }, gate?: PaidWorkGate): Promise<Flipbook> {
+  assertFlipbookEnabled();
+  const flipbook = await getFlipbook(id);
+  // The drawing, then SAM on its strip for the depth layers.
+  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 + FAR_CONCEPTS.length });
+  await reserveImages(id, 1, input.confirmExtra);
+  let depth: boolean;
+  try {
+    const plate = await services.backdrop({ sourceFlat: await readFile(flipbookFiles.sourceFlat(id)), analysis: flipbook.analysis, prompt: input.prompt, flipbookId: id });
+    depth = await storePlate(id, "generated", plate.png);
+  } catch (error) {
+    if (unbilled(error)) await refundImages(id, 1);
+    throw error;
+  }
+  return updateFlipbook(id, (current) => ({
+    ...current,
+    backgrounds: { ...current.backgrounds, generated: { prompt: input.prompt ?? "", createdAt: new Date().toISOString() }, depth: { ...current.backgrounds.depth, generated: depth } },
+  }));
+}
+
+/** The playback settings and background last picked, kept for the next visit. No AI, allowed any time. */
+export function saveLook(id: string, look: { settings: PlaybackSettings; background: FlipbookBackground }): Promise<Flipbook> {
+  assertFlipbookEnabled();
+  return updateFlipbook(parseFlipbookId(id), (current) => ({ ...current, look }), { evenIfCanceled: true });
+}
+
+// ── Reading an upload ──────────────────────────────────────────────────────
+
+async function readLook(imageId: string): Promise<ImageLook | null> {
+  return readJsonFile(imageFiles(imageId).look, (value) => ImageLookSchema.parse(value));
+}
+
+/**
+ * What the upload shows, read once and kept with it: the character facts,
+ * the scene, motions that suit it, and its layers (the character cut out by
+ * SAM; the scene with the character's place emptied, as a preview of what the
+ * redrawn plate will replace). One Muse Spark call and one SAM frame.
+ */
+export async function readUploadedImage(imageId: string, gate?: PaidWorkGate): Promise<ImageLook> {
+  assertFlipbookEnabled();
+  const { image, png, flat } = await getCharacterImage(imageId);
+  const cached = await readLook(image.id);
+  if (cached) return cached;
+  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 });
+  const reading = await services.describe({ imagePng: await readFile(flat), imageId: image.id });
+  const files = imageFiles(image.id);
+  let layers = { character: false, scene: false };
+  try {
+    const source = await readFile(png);
+    const extraction = await extractSubject({ png: source, concept: reading.analysis.subject, flipbookId: image.id, allowAlpha: image.hasAlpha });
+    await writeAtomic(files.character, extraction.cutout);
+    layers = { character: true, scene: false };
+    if (!image.hasAlpha && reading.analysis.background !== "plain") {
+      await writeAtomic(files.scene, await emptiedScene(source, extraction.cutout, extraction.measure));
+      layers = { character: true, scene: true };
+    }
+  } catch (error) {
+    if (!(error instanceof AppError)) console.error("[focus] flipbook layer separation failed", error);
+  }
+  const look: ImageLook = {
+    imageId: image.id,
+    summary: reading.summary,
+    setting: reading.setting,
+    analysis: reading.analysis,
+    warnings: assessInput(reading.analysis).warnings,
+    ideas: [...reading.ideas],
+    layers,
+  };
+  await writeAtomic(files.look, JSON.stringify(look));
+  return look;
+}
+
+/** The upload with the character's pixels made transparent (grown a little, so no outline is left behind). */
+export async function emptiedScene(source: Buffer, cutout: Buffer, measure: Pick<Measure, "crop" | "rawWidth" | "rawHeight">): Promise<Buffer> {
+  const { crop, rawWidth: width, rawHeight: height } = measure;
+  const alpha = await sharp(cutout).ensureAlpha().extractChannel(3).raw().toBuffer();
+  const mask = new Uint8Array(width * height);
+  for (let y = 0; y < crop.height; y++) mask.set(alpha.subarray(y * crop.width, (y + 1) * crop.width), (crop.top + y) * width + crop.left);
+  const grown = growMask(mask, width, height, 4);
+  const rgb = await sharp(source).removeAlpha().raw().toBuffer();
+  const rgba = Buffer.alloc(width * height * 4);
+  for (let index = 0; index < width * height; index++) {
+    rgba[index * 4] = rgb[index * 3];
+    rgba[index * 4 + 1] = rgb[index * 3 + 1];
+    rgba[index * 4 + 2] = rgb[index * 3 + 2];
+    rgba[index * 4 + 3] = 255 - grown[index];
+  }
+  return sharp(rgba, { raw: { width, height, channels: 4 } }).png().toBuffer();
+}
+
+// ── Saved animations ───────────────────────────────────────────────────────
+
+export function summarizeFlipbook(flipbook: Flipbook): FlipbookSummary {
+  return {
+    id: flipbook.id,
+    title: flipbookTitle(flipbook),
+    action: flipbook.plan?.action ?? null,
+    status: flipbook.status,
+    frames: flipbook.frames.filter((frame) => frame.status === "ready").length,
+    posterUrl: flipbookUrls.source(flipbook.id),
+    updatedAt: flipbook.updatedAt,
+  };
+}
+
+export async function listFlipbooks(ownerId: string): Promise<FlipbookSummary[]> {
+  assertFlipbookEnabled();
+  return (await allFlipbooks())
+    .filter((flipbook) => flipbook.ownerId === ownerId)
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt))
+    .map(summarizeFlipbook);
+}
+
+/**
+ * Saves an animation to the account (made before signing in, or just now)
+ * and renames it. Someone else's animation is "not found", never "forbidden".
+ */
+export async function saveFlipbook(id: string, ownerId: string, patch: { title?: string }): Promise<Flipbook> {
+  assertFlipbookEnabled();
+  const flipbook = await getFlipbook(id);
+  if (flipbook.ownerId && flipbook.ownerId !== ownerId) throw new AppError("flipbook_not_found", 404, "This animation no longer exists.");
+  return updateFlipbook(flipbook.id, (current) => ({ ...current, ownerId, ...(patch.title ? { title: patch.title } : {}) }), { evenIfCanceled: true });
+}
+
+/** Takes the animation off the account; it then expires like any unsaved one. */
+export async function unsaveFlipbook(id: string, ownerId: string): Promise<void> {
+  assertFlipbookEnabled();
+  const flipbook = await getFlipbook(id);
+  if (flipbook.ownerId !== ownerId) throw new AppError("flipbook_not_found", 404, "This animation no longer exists.");
+  await updateFlipbook(flipbook.id, (current) => ({ ...current, ownerId: null }), { evenIfCanceled: true });
+}
+
+/**
+ * Renders the cycle as a verified MP4 and opens it in the video editor as a
+ * new clip, the same as an upload: normalized once, then every effect works on it.
+ */
+export async function sendToEditor(id: string, look: { settings: PlaybackSettings; background: FlipbookBackground }): Promise<{ flipbook: Flipbook; video: VideoAsset }> {
+  if (look.background.kind === "transparent") throw new AppError("mp4_needs_background", 400, "The editor needs a background. Choose a color, a scene or an image.");
+  const { flipbook, record } = await exportFlipbook(id, { format: "mp4", ...look });
+  const file = record.files[0];
+  const name = flipbookTitle(flipbook).replace(/[^\p{L}\p{N} _-]+/gu, " ").replace(/\s+/g, " ").trim().slice(0, 60) || "Flipbook";
+  const video = await ingestVideo({
+    body: Readable.toWeb(createReadStream(path.join(flipbookFiles.exportDir(flipbook.id, record.key), file.name))) as ReadableStream<Uint8Array>,
+    fileName: `${name}.mp4`,
+    declaredBytes: file.bytes,
+  });
+  return { flipbook, video };
 }
 
 /** Muse Spark looks at the contact sheet next to the reference. An opinion, shown as one. */
@@ -655,6 +928,19 @@ export async function cancelFlipbook(id: string): Promise<Flipbook> {
 
 // ── Export ─────────────────────────────────────────────────────────────────
 
+/**
+ * The stored files a background is drawn from: the plate (the strip when it
+ * scrolls, the near layer in parallax) and, in parallax, the far layer. None
+ * for transparent and color.
+ */
+export function backgroundFiles(background: FlipbookBackground): { plate: BackgroundFile | null; far: BackgroundFile | null } {
+  if (background.kind === "custom") return { plate: "custom", far: null };
+  if (background.kind !== "scene" && background.kind !== "generated") return { plate: null, far: null };
+  const motion = background.motion ?? "static";
+  if (motion === "parallax") return { plate: `${background.kind}-near`, far: `${background.kind}-far` };
+  return { plate: motion === "scroll" ? `${background.kind}-loop` : background.kind, far: null };
+}
+
 function exportKey(value: unknown): string {
   return `x-${createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, 16)}`;
 }
@@ -668,11 +954,14 @@ export async function exportFlipbook(id: string, request: ExportRequest): Promis
   if (!alignment || missing.length) {
     throw new AppError("export_not_ready", 409, `Every frame needs a finished drawing before export. Not ready: ${missing.map((frame) => frame.label).join(", ") || "all frames"}.`);
   }
-  const backgroundStamp = request.background.kind === "scene" || request.background.kind === "custom"
-    ? (await stat(flipbookFiles.background(id, request.background.kind)).catch(() => null))?.mtimeMs ?? null
-    : null;
-  if ((request.background.kind === "scene" || request.background.kind === "custom") && backgroundStamp === null) {
-    throw new AppError("background_missing", 409, request.background.kind === "scene" ? "Create the scene background first." : "Upload a background image first.");
+  const { plate: plateFile, far: farFile } = backgroundFiles(request.background);
+  if (plateFile === "scene-loop" && flipbook.backgrounds.scene) await ensureSceneLoop(id);
+  if (farFile && !(request.background.kind === "scene" ? flipbook.backgrounds.depth.scene : flipbook.backgrounds.depth.generated)) {
+    throw new AppError("depth_unavailable", 409, "This background has no sky to separate, so it can’t move in depth. Choose Slide or Slow zoom instead.");
+  }
+  const backgroundStamp = plateFile ? (await stat(flipbookFiles.background(id, plateFile)).catch(() => null))?.mtimeMs ?? null : null;
+  if (plateFile && backgroundStamp === null) {
+    throw new AppError("background_missing", 409, request.background.kind === "scene" ? "Create the scene background first." : request.background.kind === "generated" ? "Generate a background first." : "Upload a background image first.");
   }
   const key = exportKey({ v: EXPORT_VERSION, request, frames: frames.map((frame) => [frame.id, alignment.transforms[frame.id]!.key]), strideX: alignment.strideX, backgroundStamp });
   const existing = flipbook.exports.find((entry) => entry.key === key);
@@ -686,10 +975,9 @@ export async function exportFlipbook(id: string, request: ExportRequest): Promis
         request,
         frames: frames.map((frame) => ({ frameId: frame.id, label: frame.label, phase: frame.phase, spritePath: flipbookFiles.sprite(id, frame.id, alignment.transforms[frame.id]!.key) })),
         alignment,
-        backgrounds: {
-          scene: flipbook.backgrounds.scene ? flipbookFiles.background(id, "scene") : null,
-          custom: flipbook.backgrounds.custom ? flipbookFiles.background(id, "custom") : null,
-        },
+        plate: plateFile ? flipbookFiles.background(id, plateFile) : null,
+        far: farFile ? flipbookFiles.background(id, farFile) : null,
+        facing: flipbook.plan?.direction ?? "right",
         outputDir: temp,
         baseName: `focus-flipbook-${flipbook.plan?.action ?? "walk"}`,
         action: flipbook.plan?.action ?? "walk",

@@ -314,10 +314,10 @@ describe("Time Freeze render", () => {
     await verifyOutput(out.file, expected);
     const truncated = path.join(out.dir, "truncated.mp4");
     await ffmpeg(["-i", out.file, "-filter_complex", "[0:a]atrim=end=0.5[a]", "-map", "0:v", "-map", "[a]", "-c:v", "copy", "-c:a", "aac", truncated]);
-    await expect(verifyOutput(truncated, expected)).rejects.toMatchObject({ code: "export_invalid", detail: expect.stringContaining("duración de audio") });
+    await expect(verifyOutput(truncated, expected)).rejects.toMatchObject({ code: "export_invalid", detail: expect.stringContaining("audio duration") });
     const delayed = path.join(out.dir, "delayed.mp4");
     await ffmpeg(["-i", out.file, "-itsoffset", "0.25", "-i", out.file, "-map", "0:v", "-map", "1:a", "-c", "copy", delayed]);
-    await expect(verifyOutput(delayed, expected)).rejects.toMatchObject({ code: "export_invalid", detail: expect.stringContaining("inicio de audio") });
+    await expect(verifyOutput(delayed, expected)).rejects.toMatchObject({ code: "export_invalid", detail: expect.stringContaining("audio start") });
   });
 
   it("holds the original half of the comparison for the same frames", async () => {

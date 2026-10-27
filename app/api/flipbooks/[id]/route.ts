@@ -1,14 +1,19 @@
-import { FlipbookActionSchema } from "../../../../shared/flipbook";
+import { FlipbookActionSchema, UpdateFlipbookRequestSchema } from "../../../../shared/flipbook";
 import { AppError, errorResponse } from "../../../../server/errors";
 import { guardChatRequest, readJsonBody } from "../../../../server/guard";
+import { requireUser } from "../../../../server/auth/require";
 import { paidGate } from "../../../../server/animation/http";
 import {
   cancelFlipbook,
   changeReference,
   createScene,
+  generateBackground,
   generateMissing,
   reorderFrames,
   reviewFlipbook,
+  saveFlipbook,
+  saveLook,
+  unsaveFlipbook,
 } from "../../../../server/animation/flipbooks";
 import { assertFlipbookEnabled, getFlipbook } from "../../../../server/animation/store";
 
@@ -38,9 +43,36 @@ export async function POST(request: Request, { params }: Context) {
       : action.action === "reorder" ? await reorderFrames(id, action.order)
       : action.action === "reference" ? await changeReference(id, action.kind, { confirmExtra: action.confirmExtra }, gate)
       : action.action === "scene" ? await createScene(id, action.confirmExtra === true, gate)
+      : action.action === "background" ? await generateBackground(id, { prompt: action.prompt || undefined, confirmExtra: action.confirmExtra === true }, gate)
+      : action.action === "look" ? await saveLook(id, { settings: action.settings, background: action.background })
       : action.action === "review" ? (guardChatRequest(request), await reviewFlipbook(id))
       : await cancelFlipbook(id);
     return Response.json(flipbook, { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+/** Saves the animation to the signed-in account (claiming one made before signing in) and renames it. */
+export async function PATCH(request: Request, { params }: Context) {
+  try {
+    assertFlipbookEnabled();
+    const user = await requireUser(request);
+    const parsed = UpdateFlipbookRequestSchema.safeParse(await readJsonBody(request));
+    if (!parsed.success) throw new AppError("invalid_flipbook", 400, "That name isn’t valid.");
+    return Response.json(await saveFlipbook((await params).id, user.id, parsed.data), { headers: { "Cache-Control": "no-store" } });
+  } catch (error) {
+    return errorResponse(error);
+  }
+}
+
+/** Removes the animation from the account; it then expires within a day. */
+export async function DELETE(request: Request, { params }: Context) {
+  try {
+    assertFlipbookEnabled();
+    const user = await requireUser(request);
+    await unsaveFlipbook((await params).id, user.id);
+    return new Response(null, { status: 204 });
   } catch (error) {
     return errorResponse(error);
   }

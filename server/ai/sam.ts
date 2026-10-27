@@ -158,7 +158,7 @@ export async function segmentVideo(input: SegmentInput): Promise<Tracking> {
     if (!(error instanceof AppError)) {
       await recordUsage({ model: config.segmentationModel, kind: "segment", cached: false, ok: false, videoId: input.videoId, error: String(error), durationMs: Date.now() - started });
     }
-    throw metaError(error, "la segmentación");
+    throw metaError(error, "subject tracking");
   }
 }
 
@@ -250,6 +250,6 @@ export async function segmentImage(input: {
     if (!(error instanceof AppError)) {
       await recordUsage({ model: config.segmentationModel, kind: "segment_image", cached: false, ok: false, flipbookId: input.flipbookId, error: String(error), durationMs: Date.now() - started });
     }
-    throw metaError(error, "la segmentación de la imagen");
+    throw metaError(error, "image segmentation");
   }
 }

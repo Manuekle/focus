@@ -3,7 +3,7 @@
 import type { KeyboardEvent } from "react";
 import { Alert02Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
-import { Spinner } from "../../components/ui/spinner";
+import { Skeleton } from "../../components/ui/skeleton";
 import { cn } from "../../lib/utils";
 import { flipbookUrls, type Flipbook, type FlipbookFrame } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
@@ -76,7 +76,7 @@ export function FrameStrip({
                   // eslint-disable-next-line @next/next/no-img-element -- versioned sprite from the media route
                   <img src={thumb} alt="" draggable={false} />
                 ) : frame.status === "generating" || frame.status === "processing" ? (
-                  <Spinner className="size-4 text-muted-foreground" />
+                  <Skeleton className={styles.working} delay={index * 90} />
                 ) : (
                   <span className={styles.stripEmpty}>{frame.status === "failed" ? "Failed" : "—"}</span>
                 )}

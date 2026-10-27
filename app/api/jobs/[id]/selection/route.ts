@@ -10,7 +10,7 @@ export async function POST(request: Request, { params }: Context) {
   try {
     const { id } = await params;
     const parsed = SelectionRequestSchema.safeParse(await readJsonBody(request));
-    if (!parsed.success) throw new AppError("invalid_selection", 400, "Elige al menos un objeto.");
+    if (!parsed.success) throw new AppError("invalid_selection", 400, "Choose at least one subject.");
     return Response.json(await setSelection(id, parsed.data.objectIds));
   } catch (error) {
     return errorResponse(error);

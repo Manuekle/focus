@@ -4,9 +4,10 @@ import { useRef } from "react";
 import { Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { Skeleton } from "../../components/ui/skeleton";
 import { Spinner } from "../../components/ui/spinner";
 import { cn } from "../../lib/utils";
-import { IMAGE_ACCEPT_ATTRIBUTE, flipbookUrls, type Flipbook } from "../../shared/flipbook";
+import { IMAGE_ACCEPT_ATTRIBUTE, actionSpec, flipbookUrls, type Flipbook } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
 
 const KIND_LABEL = { original: "Your illustration", clean: "Clean side view", uploaded: "Uploaded reference" } as const;
@@ -43,7 +44,7 @@ export function ReferencePanel({
             {reference ? (
               // eslint-disable-next-line @next/next/no-img-element -- media route
               <img src={flipbookUrls.reference(flipbook.id, reference.version)} alt="Character reference used for every drawing" />
-            ) : flipbook.status === "referencing" ? <Spinner className="size-4 text-muted-foreground" /> : <span className="text-xs text-muted-foreground">—</span>}
+            ) : flipbook.status === "referencing" ? <Skeleton className={styles.working} /> : <span className="text-xs text-muted-foreground">—</span>}
           </div>
           <figcaption>{reference ? <><HugeiconsIcon icon={Tick02Icon} size={11} strokeWidth={2} /> Reference · {KIND_LABEL[reference.kind]}</> : "Reference"}</figcaption>
         </figure>
@@ -73,7 +74,7 @@ export function ReferencePanel({
         <dl className={styles.metrics}>
           <div><dt>Subject</dt><dd>{analysis.subject}</dd></div>
           <div><dt>View</dt><dd>{analysis.view.replace("_", " ")} · facing {analysis.facing}</dd></div>
-          <div><dt>Walk</dt><dd>{flipbook.plan ? `facing ${flipbook.plan.direction}` : "—"}</dd></div>
+          <div><dt>Motion</dt><dd>{flipbook.plan ? `${actionSpec(flipbook.plan.action).label} · facing ${flipbook.plan.direction}` : "—"}</dd></div>
         </dl>
       ) : null}
       {analysis?.palette.length ? (

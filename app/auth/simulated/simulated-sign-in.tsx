@@ -84,7 +84,7 @@ export function SimulatedSignIn({ state }: { readonly state: string }) {
                 autoFocus
                 autoComplete="name"
                 className="h-10 rounded-[10px] border border-border bg-background px-3 text-sm text-foreground outline-none focus:border-[#1877F2]"
-                placeholder="Ana García"
+                placeholder="Alex Morgan"
               />
             </div>
             <button type="submit" disabled={busy || name.trim().length < 2} className="flex h-10 items-center justify-center gap-2 rounded-[10px] bg-[#1877F2] text-sm font-medium text-white hover:bg-[#166FE5] disabled:opacity-60">

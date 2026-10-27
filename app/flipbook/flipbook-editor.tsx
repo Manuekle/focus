@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { AiMagicIcon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Alert } from "../../components/ui/alert";
@@ -10,6 +11,8 @@ import { useToast } from "../../components/toast-provider";
 import {
   WALK_FRAME_COUNT,
   actionSpec,
+  backgroundMotion,
+  type BackgroundMedia,
   flipbookUrls,
   orderedFrames,
   type ExportFormat,
@@ -18,6 +21,7 @@ import {
   type FrameAction,
   type PlaybackSettings,
 } from "../../shared/flipbook";
+import { BackgroundPanel } from "./background-panel";
 import { ExportPanel, backgroundAllowed } from "./export-panel";
 import { FlipbookApiError, flipbookApi, isActive, messageFor } from "./flipbook-client";
 import { FramePanel } from "./frame-panel";
@@ -30,17 +34,19 @@ type Confirm = { readonly message: string; readonly run: () => Promise<Flipbook>
 
 export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly flipbook: Flipbook; readonly onChange: (flipbook: Flipbook) => void; readonly onStartOver: () => void }) {
   const { toast } = useToast();
+  const router = useRouter();
   const frames = useMemo(() => orderedFrames(flipbook), [flipbook]);
   const [selected, setSelected] = useState(0);
   const [seekNonce, setSeekNonce] = useState(0);
-  const [settings, setSettings] = useState<PlaybackSettings>(() => ({
+  // A saved animation reopens with the settings and background it was left with.
+  const [settings, setSettings] = useState<PlaybackSettings>(() => flipbook.look?.settings ?? {
     drawingFps: flipbook.plan?.drawingFps ?? 8,
     durationSeconds: flipbook.plan?.durationSeconds ?? 4,
     motion: flipbook.plan?.motion ?? "in_place",
     speed: 1,
-  }));
+  });
   // The plan arrives after the editor opens: its timing becomes the starting settings, once.
-  const planApplied = useRef(Boolean(flipbook.plan));
+  const planApplied = useRef(Boolean(flipbook.plan || flipbook.look));
   const plan = flipbook.plan;
   useEffect(() => {
     if (!plan || planApplied.current) return;
@@ -48,11 +54,21 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
     setSettings((current) => ({ ...current, drawingFps: plan.drawingFps, durationSeconds: plan.durationSeconds, motion: plan.motion }));
   }, [plan]);
   const [format, setFormat] = useState<ExportFormat>("mp4");
-  const [background, setBackground] = useState<FlipbookBackground>({ kind: "color", color: "#ffffff" });
+  const [background, setBackground] = useState<FlipbookBackground>(() => flipbook.look?.background ?? { kind: "color", color: "#ffffff" });
   const [backgroundStamp, setBackgroundStamp] = useState("1");
+  // A scene separated while the animation was being made becomes the background when it arrives, once.
+  const sceneLook = flipbook.look?.background.kind === "scene" ? flipbook.look.background : null;
+  const sceneAdopted = useRef(flipbook.look?.background.kind === "scene");
+  useEffect(() => {
+    if (!sceneLook || sceneAdopted.current) return;
+    sceneAdopted.current = true;
+    setBackground(sceneLook);
+  }, [sceneLook]);
   const [busy, setBusy] = useState(false);
   const [exporting, setExporting] = useState(false);
   const [creatingScene, setCreatingScene] = useState(false);
+  const [generatingBackground, setGeneratingBackground] = useState(false);
+  const [sending, setSending] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
 
@@ -98,13 +114,35 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   );
   const hasScene = flipbook.backgrounds.scene;
   const hasCustom = flipbook.backgrounds.custom;
+  const generatedAt = flipbook.backgrounds.generated?.createdAt ?? null;
   const backgroundColor = background.kind === "color" ? background.color : null;
-  const playerBackground = useMemo<PlayerBackground>(() =>
-    backgroundColor !== null ? { kind: "color", color: backgroundColor }
-    : background.kind === "scene" && hasScene ? { kind: "image", src: flipbookUrls.background(flipbook.id, "scene", backgroundStamp) }
-    : background.kind === "custom" && hasCustom ? { kind: "image", src: flipbookUrls.background(flipbook.id, "custom", backgroundStamp) }
-    : { kind: "transparent" },
-  [backgroundColor, background.kind, hasScene, hasCustom, flipbook.id, backgroundStamp]);
+  const motion = backgroundMotion(background);
+  const playerBackground = useMemo<PlayerBackground>(() => {
+    if (backgroundColor !== null) return { kind: "color", color: backgroundColor };
+    if (background.kind === "custom" && hasCustom) return { kind: "image", src: flipbookUrls.background(flipbook.id, "custom", backgroundStamp) };
+    const which = background.kind === "scene" && hasScene ? "scene" : background.kind === "generated" && generatedAt ? "generated" : null;
+    if (!which) return { kind: "transparent" };
+    const stamp = which === "scene" ? backgroundStamp : generatedAt!;
+    const url = (media: BackgroundMedia) => flipbookUrls.background(flipbook.id, media, stamp);
+    if (motion === "parallax") return { kind: "parallax", far: url(`${which}-far`), near: url(`${which}-near`) };
+    if (motion === "scroll") return { kind: "scroll", src: url(`${which}-loop`) };
+    if (motion === "zoom") return { kind: "zoom", src: url(which) };
+    return { kind: "image", src: url(which) };
+  }, [backgroundColor, background.kind, motion, hasScene, hasCustom, generatedAt, flipbook.id, backgroundStamp]);
+
+  // Keep what was picked with the animation, so it reopens the same way. Quietly: a missed save costs nothing.
+  const lookKey = JSON.stringify({ settings, background });
+  const savedLook = useRef(lookKey);
+  useEffect(() => {
+    if (savedLook.current === lookKey) return;
+    const timer = window.setTimeout(() => {
+      savedLook.current = lookKey;
+      void flipbookApi.action(flipbook.id, { action: "look", settings, background }).catch(() => undefined);
+    }, 700);
+    return () => window.clearTimeout(timer);
+    // lookKey captures settings and background.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [lookKey, flipbook.id]);
 
   const notReady = frames.filter((entry) => !frameThumb(flipbook, entry));
   const exportable = notReady.length
@@ -144,10 +182,31 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
     setCreatingScene(true);
     void run(async (confirmExtra) => {
       const next = await flipbookApi.action(flipbook.id, { action: "scene", confirmExtra });
-      setBackground({ kind: "scene" });
+      setBackground({ kind: "scene", motion: !spec.travels ? "zoom" : settings.motion === "in_place" ? (next.backgrounds.depth.scene ? "parallax" : "scroll") : "static" });
       setBackgroundStamp(String(Date.now()));
       return next;
     }).finally(() => setCreatingScene(false));
+  };
+
+  const generateBackground = (prompt: string) => {
+    setGeneratingBackground(true);
+    void run(async (confirmExtra) => {
+      const next = await flipbookApi.action(flipbook.id, { action: "background", prompt: prompt || undefined, confirmExtra });
+      // Moving suits a cycle in place; still suits one that already travels.
+      setBackground({ kind: "generated", motion: background.kind === "generated" ? background.motion : settings.motion === "in_place" ? "scroll" : "static" });
+      return next;
+    }).finally(() => setGeneratingBackground(false));
+  };
+
+  const sendToEditor = async () => {
+    setSending(true);
+    try {
+      const { video } = await flipbookApi.toEditor(flipbook.id, { settings, background: background.kind === "transparent" ? { kind: "color", color: "#ffffff" } : background });
+      router.push(`/editor?v=${video.id}`);
+    } catch (error) {
+      toast({ title: "Couldn’t open it in the editor", description: error instanceof Error ? error.message : "Try again.", status: "error" });
+      setSending(false);
+    }
   };
 
   const review = async () => {
@@ -216,7 +275,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
       ) : null}
 
       {flipbook.review && !active ? (
-        <Alert tone={flipbook.review.recognizableWalk ? "info" : "warning"} size="sm" title={flipbook.review.recognizableWalk ? "AI review: reads as a walk" : "AI review: may not read as a walk"}>
+        <Alert tone={flipbook.review.recognizableWalk ? "info" : "warning"} size="sm" title={`AI review: ${flipbook.review.recognizableWalk ? "reads as" : "may not read as"} a ${spec.label}`}>
           {flipbook.review.summary} This is Muse Spark’s opinion; trust your eyes on the preview.
         </Alert>
       ) : null}
@@ -237,6 +296,22 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
               </Button>
             </div>
           ) : null}
+          <BackgroundPanel
+            flipbook={flipbook}
+            background={background}
+            onBackgroundChange={setBackground}
+            busy={locked}
+            generating={generatingBackground}
+            onGenerate={generateBackground}
+            creatingScene={creatingScene}
+            onCreateScene={createScene}
+            onUploadBackground={(file) => void run(async () => {
+              const next = await flipbookApi.uploadBackground(flipbook.id, file);
+              setBackground({ kind: "custom" });
+              setBackgroundStamp(String(Date.now()));
+              return next;
+            })}
+          />
         </div>
 
         <div className={styles.columnMain}>
@@ -250,6 +325,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             seekNonce={seekNonce}
             strideMeasured={flipbook.alignment?.strideMeasured ?? false}
             travel={spec.travels ? { verb: spec.action === "run" ? "Run" : "Walk" } : null}
+            facing={flipbook.plan?.direction ?? "right"}
             onSelect={setSelected}
             strip={<FrameStrip flipbook={flipbook} frames={frames} selected={selected} onSelect={select} onMove={move} disabled={locked} />}
           />
@@ -274,23 +350,13 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             settings={settings}
             onSettingsChange={setSettings}
             format={format}
-            onFormatChange={(next) => {
-              setFormat(next);
-              if (!backgroundAllowed(next, background.kind)) setBackground(next === "mp4" ? { kind: "color", color: "#ffffff" } : { kind: "transparent" });
-            }}
+            onFormatChange={setFormat}
             background={background}
-            onBackgroundChange={setBackground}
             exportable={exportable}
             exporting={exporting}
             onExport={() => void exportNow()}
-            onCreateScene={createScene}
-            creatingScene={creatingScene}
-            onUploadBackground={(file) => void run(async () => {
-              const next = await flipbookApi.uploadBackground(flipbook.id, file);
-              setBackground(backgroundAllowed(format, "custom") ? { kind: "custom" } : background);
-              setBackgroundStamp(String(Date.now()));
-              return next;
-            })}
+            sending={sending}
+            onSendToEditor={() => void sendToEditor()}
           />
         </div>
       </div>

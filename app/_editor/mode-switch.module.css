@@ -1,9 +1,11 @@
-/* Video | Flipbook: the two creation modes, the same in every header. */
-.modes { display: flex; flex-shrink: 0; gap: 2px; padding: 2px; border-radius: 10px; background: #ffffff05; box-shadow: inset 0 0 0 1px #ffffff0a; }
-.mode { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; color: var(--muted-foreground); font-size: 13px; line-height: 20px; text-decoration: none; transition: background-color 150ms, color 150ms, box-shadow 150ms; }
-.mode:hover { color: var(--foreground); }
-.mode[aria-current="page"] { background: #ffffff0d; color: var(--foreground); box-shadow: 0 2px 5px #0000001a, inset 0 0 0 1px #ffffff08; }
+/* Video | Flipbook: the two creation modes, centered in every studio header. */
+.modes { position: relative; display: flex; flex-shrink: 0; gap: 2px; padding: 2px; border-radius: 10px; background: #ffffff05; box-shadow: inset 0 0 0 1px #ffffff0a; }
+/* One pill under the active tab; it slides when the mode changes. */
+.pill { position: absolute; top: 2px; bottom: 2px; left: 0; border-radius: 8px; background: #ffffff0d; box-shadow: 0 2px 5px #0000001a, inset 0 0 0 1px #ffffff08; pointer-events: none; }
+.pill[data-animate] { transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), width 260ms cubic-bezier(0.22, 1, 0.36, 1); }
+.mode { position: relative; z-index: 1; display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 8px; color: var(--muted-foreground); font-size: 13px; line-height: 20px; text-decoration: none; transition: color 200ms ease-out; }
+.mode:hover, .mode[data-active] { color: var(--foreground); }
 .mode:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .mode svg { opacity: 0.8; }
 @media (max-width: 680px) { .mode { padding: 4px 8px; } .mode svg { display: none; } }
-@media (prefers-reduced-motion: reduce) { .mode { transition: none; } }
+@media (prefers-reduced-motion: reduce) { .pill[data-animate], .mode { transition: none; } }

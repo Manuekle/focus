@@ -126,6 +126,12 @@ export async function ingestCharacterImage(input: { readonly body: ReadableStrea
   }
 }
 
+/** What an upload keeps beside its working copy once it has been read. */
+export function imageFiles(id: string) {
+  const dir = imageDir(parseImageId(id));
+  return { look: path.join(dir, "look.json"), character: path.join(dir, "character.png"), scene: path.join(dir, "scene.png") };
+}
+
 export async function getCharacterImage(id: string): Promise<{ image: FlipbookImage; png: string; flat: string }> {
   const dir = imageDir(parseImageId(id));
   const raw = await readFile(path.join(dir, "image.json"), "utf8").catch(() => null);

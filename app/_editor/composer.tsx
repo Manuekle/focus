@@ -4,10 +4,10 @@ import { useId, useMemo, useRef, useState } from "react";
 import { AiVideo01Icon, AiSearch02Icon } from "@hugeicons/core-free-icons";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
 import { Button } from "../../components/ui/button";
+import { Skeleton } from "../../components/ui/skeleton";
 import { Spinner } from "../../components/ui/spinner";
 import { SuggestionChip } from "../../components/ui/suggestion-chip";
 import { HugeiconsIcon } from "../../components/icons/icon";
-import { cn } from "../../lib/utils";
 import { availableEffects } from "../../shared/pipeline";
 import { PROMPT_MAX_LENGTH, PROMPT_MIN_LENGTH, type EffectId, type Suggestions } from "../../shared/schemas";
 import { completionCandidates, completionFor } from "./autocomplete";
@@ -170,7 +170,7 @@ export function Composer({
           </span>
           <div className={styles.chips}>
             {suggestionsLoading
-              ? [0, 1].map((index) => <span key={index} aria-hidden className={cn(styles.skeleton, index && styles.skeletonShort)} />)
+              ? [168, 124].map((width, index) => <Skeleton key={width} shape="round" style={{ width, height: 26 }} delay={index * 90} />)
               : ideas.map((idea) => (
                   <SuggestionChip size="xs" key={idea} onClick={() => onPromptChange(idea)} className={styles.chip}>
                     {idea}

@@ -8,6 +8,7 @@ import {
   FlipbookSchema,
   FrameIdSchema,
   VersionIdSchema,
+  type BackgroundMedia,
   type Flipbook,
 } from "../../shared/flipbook";
 import { flipbookEnabled } from "../../shared/features";
@@ -90,12 +91,14 @@ export const flipbookFiles = {
     if (!/^[0-9a-f]{16}$/.test(key)) throw new AppError("media_not_found", 404, "This file is no longer available.");
     return path.join(flipbookDir(id), "sprites", `${checkedFrame(frameId)}-${key}.png`);
   },
-  background: (id: string, which: "scene" | "custom") => path.join(flipbookDir(id), "backgrounds", `${which}.png`),
+  background: (id: string, which: BackgroundFile) => path.join(flipbookDir(id), "backgrounds", `${which}.png`),
   exportDir: (id: string, key: string) => {
     if (!/^x-[0-9a-f]{16}$/.test(key)) throw new AppError("media_not_found", 404, "This file is no longer available.");
     return path.join(flipbookDir(id), "exports", key);
   },
 };
+
+export type BackgroundFile = BackgroundMedia;
 
 export function newVersionId(): string {
   return `v-${randomUUID().replace(/-/g, "").slice(0, 12)}`;
@@ -188,6 +191,13 @@ export async function getFlipbook(id: string): Promise<Flipbook> {
   return flipbook;
 }
 
+/** Every stored flipbook, as last written. No recovery: for listing only. */
+export async function allFlipbooks(): Promise<Flipbook[]> {
+  const names = (await readdir(flipbooksRoot()).catch(() => [] as string[])).filter((name) => FlipbookIdSchema.safeParse(name).success);
+  const states = await Promise.all(names.map((name) => readJsonFile(flipbookFiles.state(name), (value) => FlipbookSchema.parse(value))));
+  return states.filter((state): state is Flipbook => state !== null);
+}
+
 // ── Workers ────────────────────────────────────────────────────────────────
 
 export function isRunning(id: string): boolean {
@@ -226,14 +236,16 @@ export function abortWorker(id: string): void {
 
 // ── Cleanup ────────────────────────────────────────────────────────────────
 
-/** Removes flipbooks and uploaded images untouched for a day, and stale temp files. */
+/** Removes flipbooks no account saved and uploaded images, once untouched for a day. */
 export async function cleanupFlipbooks(): Promise<void> {
   const now = Date.now();
   for (const name of await readdir(flipbooksRoot()).catch(() => [] as string[])) {
     if (!FlipbookIdSchema.safeParse(name).success || runtime.running.has(name)) continue;
     const dir = path.join(flipbooksRoot(), name);
     const info = await stat(path.join(dir, "flipbook.json")).catch(() => null) ?? await stat(dir).catch(() => null);
-    if (info && now - info.mtimeMs > TTL_MS) await rm(dir, { recursive: true, force: true });
+    if (!info || now - info.mtimeMs <= TTL_MS) continue;
+    const saved = await readJsonFile(path.join(dir, "flipbook.json"), (value) => FlipbookSchema.parse(value));
+    if (!saved?.ownerId) await rm(dir, { recursive: true, force: true });
   }
   for (const name of await readdir(imagesRoot()).catch(() => [] as string[])) {
     if (!FlipbookImageIdSchema.safeParse(name).success) continue;

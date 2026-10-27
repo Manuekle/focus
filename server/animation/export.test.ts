@@ -63,7 +63,7 @@ function alphaIou(a: Rgba, b: Rgba): number {
 const settings = (overrides: Partial<PlaybackSettings> = {}): PlaybackSettings => ({ drawingFps: 8, durationSeconds: 2, motion: "in_place", speed: 1, ...overrides });
 const request = (format: ExportRequest["format"], overrides: Partial<ExportRequest> = {}): ExportRequest => ({ format, settings: settings(), background: { kind: "color", color: "#ffffff" }, ...overrides });
 const exportTo = async (name: string, value: ExportRequest) =>
-  renderExport({ request: value, frames, alignment, backgrounds: { scene: null, custom: null }, outputDir: path.join(work, name), baseName: "walk" });
+  renderExport({ request: value, frames, alignment, plate: null, outputDir: path.join(work, name), baseName: "walk" });
 
 beforeAll(async () => {
   work = await mkdtemp(path.join(tmpdir(), "focus-flipbook-export-"));
@@ -220,7 +220,48 @@ describe("quality checks", () => {
     const results = await checkFrames(sprites.map((sprite, index) => entry(index, sprite, index === 0 ? { histogram: red, touchesEdge: true, lowerSpan: 1 } : { lowerSpan: 100 })), Array(64).fill(1 / 64));
     const codes = results.get("f0")!.warnings.map((warning) => warning.code);
     expect(codes).toEqual(expect.arrayContaining(["color_shift", "subject_cropped", "stride_unclear"]));
+    // A quiet motion: the same drawing twice is expected, not flagged.
+    const subtle = await checkFrames(sprites.map((sprite, index) => entry(index, index === 3 ? sprites[2] : sprite)), null, "idle");
+    expect(subtle.get("f3")!.warnings.map((warning) => warning.code)).not.toContain("near_duplicate");
+    // A crouch planned 20% shorter is scaled 20% less on purpose: no resize warning.
+    const crouched = await checkFrames(sprites.map((sprite, index) => ({ ...entry(index, sprite), scale: index === 5 ? 0.8 : 1, relativeRootY: index === 5 ? -0.2 : 0 })), null);
+    expect(crouched.get("f5")!.warnings.map((warning) => warning.code)).not.toContain("scale_corrected");
     const scaled = await checkFrames(sprites.map((sprite, index) => ({ ...entry(index, sprite), scale: index === 5 ? 2 : 1 })), null);
     expect(scaled.get("f5")!.warnings.map((warning) => warning.code)).toContain("scale_corrected");
+  });
+});
+
+describe("moving scenes", () => {
+  const plateWithMarks = async (name: string, alpha = false) => {
+    const width = 960, height = 540;
+    const data = Buffer.alloc(width * height * 4);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const at = (y * width + x) * 4;
+      data[at] = Math.round((x / width) * 255); data[at + 1] = Math.round((y / height) * 255); data[at + 2] = 120;
+      data[at + 3] = alpha && y < height / 2 ? 0 : 255;
+    }
+    const file = path.join(work, name);
+    await writeFile(file, await sharp(data, { raw: { width, height, channels: 4 } }).png().toBuffer());
+    return file;
+  };
+  const corner = (frame: Buffer, width: number) => [...frame.subarray((10 * width + 10) * 4, (10 * width + 10) * 4 + 3)];
+
+  it("zooms the scene in over the clip and back out, under the drawings", async () => {
+    const value = request("mp4", { background: { kind: "scene", motion: "zoom" } });
+    const result = await renderExport({ request: value, frames, alignment, plate: await plateWithMarks("zoom.png"), outputDir: path.join(work, "zoom"), baseName: "walk" });
+    const decoded: Buffer[] = [];
+    for await (const frame of readFrames(result.files[0].path, alignment.cellWidth, alignment.cellHeight)) decoded.push(frame);
+    expect(decoded).toHaveLength(48);
+    // The corner pixel moves toward the center as the picture zooms in, and comes back at the end.
+    const start = corner(decoded[0], alignment.cellWidth), middle = corner(decoded[24], alignment.cellWidth), end = corner(decoded[47], alignment.cellWidth);
+    expect(Math.abs(middle[0] - start[0]) + Math.abs(middle[1] - start[1])).toBeGreaterThan(4);
+    expect(Math.abs(end[0] - start[0]) + Math.abs(end[1] - start[1])).toBeLessThan(Math.abs(middle[0] - start[0]) + Math.abs(middle[1] - start[1]));
+  });
+
+  it("slides the far layer slower than the near one in parallax", async () => {
+    const value = request("gif", { background: { kind: "scene", motion: "parallax" } });
+    const result = await renderExport({ request: value, frames, alignment, plate: await plateWithMarks("near.png", true), far: await plateWithMarks("far.png"), outputDir: path.join(work, "parallax"), baseName: "walk" });
+    // A moving background takes the whole length, not one looping cycle.
+    expect(result.facts.frames).toBe(16);
   });
 });

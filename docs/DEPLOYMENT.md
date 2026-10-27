@@ -107,7 +107,7 @@ Run builds, TypeScript checks and video suites in sequence. Next regenerates sha
 
 ## Operations
 
-- **Health:** `GET /api/health` → 200 when FFmpeg, FFprobe and storage work; includes whether AI is enabled and today's SAM usage.
+- **Health:** `GET /api/health` → 200 when FFmpeg, FFprobe and storage work; includes whether AI is enabled. The result is cached for 10 s. SAM usage is in `GET /api/usage` (admin token).
 - **Expiry:** media, masks and renders older than 24 h are deleted when new uploads or jobs arrive.
 - **Restarts:** running jobs are marked "interrupted" after a restart; cached plans, masks and renders survive on the volume and are reused.
 - **Logs:** server errors are logged with codes; API keys are never logged.
