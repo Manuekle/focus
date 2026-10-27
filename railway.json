@@ -16,8 +16,8 @@
     "drainingSeconds": 30,
     "limitOverride": {
       "containers": {
-        "cpu": 2,
-        "memoryBytes": 2147483648
+        "cpu": 1,
+        "memoryBytes": 1073741824
       }
     }
   }

@@ -12,7 +12,9 @@ Railway permite conservar la arquitectura actual: un contenedor con Next.js, FFm
 
 Fuentes oficiales consultadas el 27 de octubre de 2026: [Vercel Functions](https://vercel.com/docs/functions/limitations), [volúmenes Railway](https://docs.railway.com/volumes), [discos Render](https://render.com/docs/disks).
 
-## Configuración preparada
+## Configuración de demo en el trial
+
+El perfil elegido es una demo para pruebas: **500 MB en `/data`, 1 vCPU, hasta 1 GiB de RAM y un trabajo activo a la vez**. Los videos admiten **15 segundos y 25 MB**. Las imágenes y exportaciones también ocupan el volumen; conservar una copia de los resultados importantes y evitar acumular proyectos. Los 5 GB de Hobby son una opción posterior con mayor margen, no un mínimo demostrado para Flipbook.
 
 `railway.json` define:
 
@@ -21,13 +23,15 @@ Fuentes oficiales consultadas el 27 de octubre de 2026: [Vercel Functions](https
 - Volumen obligatorio en `/data`. El archivo exige el montaje; el volumen se crea en Railway.
 - Salud en `/api/health`, con 120 segundos para iniciar.
 - Reinicio ante fallo, hasta cinco intentos; sin solapamiento entre versiones.
-- Límites máximos de 2 vCPU y 2 GiB de RAM. Son límites de consumo, no reservas ni un límite monetario.
+- Límites máximos de 1 vCPU y 1 GiB de RAM. Son límites de consumo, no reservas ni un límite monetario.
 
 `deploy/railway.env.example` contiene las variables para el servicio, sin secretos. Habilita Flipbook y mantiene Time Freeze deshabilitado. Los dos flags y los límites de upload se compilan: definirlos **antes** del primer deploy y reconstruir para cambiarlos. Railway transmite al Docker build las variables declaradas como `ARG`; el Dockerfile no declara argumentos para secretos.
 
 Railway monta el volumen como root. `RAILWAY_RUN_UID=0` permite que `deploy/docker-entrypoint.sh` cambie el dueño de `/data`; después ejecuta Next.js como `node` (UID 1000). El servidor y FFmpeg no permanecen como root. En Docker normal, la imagen sigue usando `USER node`.
 
 El healthcheck de Docker usa `PORT`, incluido cuando Railway lo asigna dinámicamente. No sobrescribir el Start Command: usar el `ENTRYPOINT` y `CMD` de la imagen.
+
+`FOCUS_PROVIDER_CONNECTIVITY_CHECK=1` ejecuta al arrancar, como usuario `node`, dos GET sin credenciales hacia Meta Model API y Graph API. Registra únicamente el proveedor, estado HTTP o código de error; nunca envía prompts ni ejecuta modelos. Respuestas 401/400 son esperables sin autenticación y permiten comprobar la salida HTTPS del Limited Trial. La prueba no bloquea el arranque si la red está restringida. Puede desactivarse después de verificarla.
 
 ## Configurar la cuenta y el servicio
 
@@ -41,7 +45,7 @@ El healthcheck de Docker usa `PORT`, incluido cuando Railway lo asigna dinámica
 
    Si ya existe el proyecto, usar `pnpm dlx @railway/cli link` y seleccionar el proyecto y servicio correspondientes.
 
-3. Adjuntar un volumen persistente al servicio, con montaje `/data`; configurar inicialmente **5 GB**. El volumen y su tamaño se configuran en Railway, no dentro de `railway.json`.
+3. Adjuntar un volumen persistente al servicio, con montaje `/data`; configurar **500 MB** para esta demo. El volumen y su tamaño se configuran en Railway, no dentro de `railway.json`.
 
    ```sh
    pnpm dlx @railway/cli volume add --service focus --mount-path /data
@@ -74,7 +78,7 @@ El healthcheck de Docker usa `PORT`, incluido cuando Railway lo asigna dinámica
 
    Verificar que `FOCUS_PUBLIC_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}` se resuelva al dominio asignado. Con un dominio propio, sustituirlo por ese origen HTTPS y actualizar Facebook.
 
-7. En la app de Meta, registrar `https://<dominio-del-servicio>/api/auth/facebook/callback` como **Valid OAuth Redirect URI**. Esta configuración de Facebook no se crea automáticamente al publicar en Railway.
+7. En la app de Meta, registrar `https://<dominio-del-servicio>/api/auth/facebook/callback` como **Valid OAuth Redirect URI**. Registrar también las páginas `/privacy` y `/data-deletion`. Ver los campos y el estado de acceso en [Facebook Login](FACEBOOK_LOGIN.md). Esta configuración de Facebook no se crea automáticamente al publicar en Railway.
 
 8. Comprobar `/api/health`, `/editor` y `/flipbook`. La salud debe indicar `storageWritable: true`, `metaConfigured: true` y `aiEnabled: true`. Una respuesta 200 por sí sola no certifica que las claves o Facebook estén configurados: `/api/health` comprueba principalmente FFmpeg y almacenamiento.
 
@@ -82,9 +86,11 @@ No crear réplicas, regiones adicionales ni habilitar suspensión. Un deploy/rei
 
 ## Costos
 
-[Railway Hobby](https://railway.com/pricing) tiene un mínimo mensual de **US$5**, que incluye US$5 de uso. El consumo adicional y la salida de datos se cobran aparte. Como referencia oficial, RAM cuesta aproximadamente US$10/GB-mes, CPU US$20/vCPU-mes y el volumen US$0,15/GB-mes; se factura el uso real. Los límites de 2 vCPU/2 GiB no significan que el total sea US$5 ni constituyen un tope de gasto.
+El trial consume su crédito disponible hasta agotarlo o vencer el plazo mostrado en la cuenta. Admite un volumen de 500 MB y hasta 1 GB de RAM. **Limited Trial restringe conexiones salientes**: comprobar desde el servicio el acceso HTTPS a Meta Model API y Graph API; conectar/verificar GitHub puede habilitar Full Trial. El perfil no activa una suscripción Hobby.
 
-El plan gratuito, con 0,5 GB de RAM después del trial y 0,5 GB de volumen, no alcanza los recursos y almacenamiento elegidos. Configurar alertas y, si se desea, un límite de gasto en la cuenta antes de habilitar tráfico. El costo de Meta es independiente de Railway; los límites `FOCUS_*` controlan solicitudes/trabajos, no garantizan un importe mensual.
+[Railway Hobby](https://railway.com/pricing) queda como alternativa posterior: mínimo de **US$5/mes**, con US$5 de uso incluidos y consumo adicional aparte. El plan Free posterior al trial reduce la RAM disponible a 0,5 GB y tiene crédito mensual menor: no equivale al trial que se está probando. El costo de Meta es independiente de Railway; los límites `FOCUS_*` controlan solicitudes/trabajos, no garantizan un importe mensual.
+
+Fuentes: [trial y restricciones de red](https://docs.railway.com/pricing/free-trial), [recursos por plan](https://docs.railway.com/pricing/plans).
 
 ## Prueba de producción local, sin créditos de IA
 
@@ -92,13 +98,13 @@ El plan gratuito, con 0,5 GB de RAM después del trial y 0,5 GB de volumen, no a
 docker build \
   --build-arg NEXT_PUBLIC_ENABLE_FLIPBOOK=true \
   --build-arg NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=false \
-  --build-arg FOCUS_MAX_VIDEO_DURATION_SECONDS=60 \
-  --build-arg FOCUS_MAX_UPLOAD_MB=150 \
+  --build-arg FOCUS_MAX_VIDEO_DURATION_SECONDS=15 \
+  --build-arg FOCUS_MAX_UPLOAD_MB=25 \
   -t focus:railway .
 pnpm test:deployment
 ```
 
-La prueba usa un volumen nuevo y aislado, reproduce los permisos de Railway, inicia en `PORT=8080`, comprueba que PID 1 sea `node`, prueba salud/sesiones/Flipbook, valida un upload real con FFmpeg y comprueba que los medios sobrevivan al reinicio. Deshabilita la IA y deja vacías las claves de proveedor. Elimina únicamente sus propios contenedores/volúmenes y escribe `.focus-data/deployment/report.json`.
+La prueba usa un volumen nuevo y aislado, limita el contenedor a **1 CPU / 1 GiB**, reproduce los permisos de Railway, inicia en `PORT=8080`, comprueba que PID 1 sea `node`, prueba salud/sesiones/Flipbook, valida un upload real con FFmpeg y comprueba que los medios sobrevivan al reinicio. Registra el pico de memoria cuando cgroup lo permite. Deshabilita la IA y deja vacías las claves de proveedor. Elimina únicamente sus propios contenedores/volúmenes y escribe `.focus-data/deployment/report.json`. El volumen local no impone una cuota de disco; los 500 MB se configuran en Railway.
 
 ## Estado
 
@@ -109,6 +115,14 @@ Configuración preparada en el repositorio. Verificado localmente el 27 de octub
 - `pnpm test:deployment`: **8 comprobaciones aprobadas**, incluidas escritura en el volumen de Railway, ejecución sin privilegios, puerto dinámico, FFmpeg y persistencia de imagen/video después de reiniciar.
 - ESLint, sintaxis del entrypoint/script y `git diff --check` sin errores.
 
-Esta prueba corrió en Docker Linux/arm64 local; el build y la verificación en la infraestructura de Railway quedan pendientes de la conexión de cuenta. La creación de proyecto, volumen, dominio y secretos requiere esa cuenta conectada. No hay una URL de producción verificada todavía.
+El perfil de demo también pasó las ocho comprobaciones con **1 CPU / 1 GiB**. El pico observado durante esas pruebas básicas de uploads/normalización fue de **265.936.896 bytes (unos 254 MiB)**; no es una medición de todas las generaciones de IA ni una prueba de carga. El diagnóstico opcional también se probó sin red: registra el fallo y permite ejecutar la aplicación como UID 1000.
+
+Esta prueba corrió en Docker Linux/arm64 local; el build y la verificación en la infraestructura de Railway siguen pendientes.
+
+La cuenta de Railway está conectada y existe el proyecto privado [focus](https://railway.com/project/f7e84859-2207-487c-b6f1-9dfc6a6d1e26) en el workspace `Manus projects`, con el entorno `production`. Se prepararon el servicio, el volumen de 500 MB y 25 variables, incluidas las dos credenciales y la versión de Graph API de Facebook Login. Los secretos se guardan en Railway y no forman parte de Git. La preparación inicial usa `FOCUS_AI_DISABLED=1`; habilitar la IA tras verificar el servicio y su conexión con Meta.
+
+El usuario eligió probar primero la demo en el trial. El volumen solicitado coincide con el límite de 500 MB de la cuenta. Los límites de CPU/RAM y demás ajustes del servicio se aplican desde `railway.json` al desplegar el código. Consultar el panel de Railway para el estado y el dominio vigentes.
+
+La copia de despliegue está en `codex/railway-deploy` e integra `main` con Flipbook V3. Conserva las páginas de privacidad y la configuración del trial, sin secretos ni medios locales. El servicio debe seguir esa rama sin fijar un `commitSha` antiguo; los cambios futuros en `main` deben integrarse en la rama de despliegue antes de publicarse. El checkout de desarrollo permanece en su rama y conserva sus cambios. El dominio activo es `focusmeta.up.railway.app`; usarlo también en `FOCUS_PUBLIC_URL` y las URLs de Facebook.
 
 Referencias adicionales: [configuración como código](https://docs.railway.com/config-as-code/reference), [esquema vigente](https://railway.com/railway.schema.json), [Docker y build args](https://docs.railway.com/builds/dockerfiles), [red y timeouts](https://docs.railway.com/networking/public-networking/specs-and-limits).

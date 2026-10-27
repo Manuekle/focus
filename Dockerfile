@@ -34,9 +34,10 @@ COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
 COPY --from=build --chown=node:node /app/public ./public
 COPY --chmod=755 deploy/docker-entrypoint.sh /usr/local/bin/focus-entrypoint
+COPY deploy/check-providers.mjs /usr/local/lib/focus/check-providers.mjs
 RUN mkdir -p /data && chown node:node /data
 USER node
-VOLUME ["/data"]
+# Mount /data through Railway Volumes or docker --volume.
 EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=10s --start-period=20s --retries=3 \
   CMD node -e "fetch('http://127.0.0.1:'+(process.env.PORT||3000)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"

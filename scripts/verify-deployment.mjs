@@ -15,7 +15,7 @@ const volume = `${name}-data`;
 const work = await mkdtemp(path.join(tmpdir(), "focus-deployment-"));
 const reportFile = path.resolve(process.env.FOCUS_DEPLOYMENT_REPORT ?? ".focus-data/deployment/report.json");
 const docker = (...args) => execFileSync("docker", args, { encoding: "utf8", maxBuffer: 1024 * 1024 }).trim();
-const report = { status: "running", image, providerCalls: 0, checks: [] };
+const report = { status: "running", image, providerCalls: 0, resources: { cpus: 1, memoryBytes: 1073741824 }, checks: [] };
 let ownsVolume = false;
 let ownsContainer = false;
 
@@ -39,6 +39,7 @@ try {
   await writeFile(envFile, [
     "PORT=8080", "FOCUS_AI_DISABLED=1", "MODEL_API_KEY=", "META_API_KEY=",
     "FOCUS_AUTH_SIMULATED=0", "FOCUS_DATA_DIR=/data", "RAILWAY_VOLUME_MOUNT_PATH=/data",
+    "FOCUS_MAX_VIDEO_DURATION_SECONDS=15", "FOCUS_MAX_UPLOAD_MB=25", "FOCUS_MAX_ACTIVE_JOBS=1",
     `FOCUS_SESSION_SECRET=${randomBytes(48).toString("base64url")}`, "",
   ].join("\n"), { mode: 0o600 });
 
@@ -49,7 +50,7 @@ try {
   docker("volume", "create", volume);
   ownsVolume = true;
   docker("run", "--rm", "--user", "0", "--volume", `${volume}:/data`, "--entrypoint", "sh", image, "-c", "chown 0:0 /data && chmod 755 /data");
-  docker("run", "--detach", "--name", name, "--user", "0", "--cpus", "2", "--memory", "2g", "--publish", "127.0.0.1::8080", "--env-file", envFile, "--volume", `${volume}:/data`, image);
+  docker("run", "--detach", "--name", name, "--user", "0", "--cpus", "1", "--memory", "1g", "--publish", "127.0.0.1::8080", "--env-file", envFile, "--volume", `${volume}:/data`, image);
   ownsContainer = true;
   const base = baseAddress();
   const health = await healthy(base);
@@ -91,6 +92,8 @@ try {
   assert.equal(video.normalized.frameCount, 24);
   assert.equal(video.normalized.fps, 24);
   report.checks.push("Container FFmpeg produces video; the upload API validates and normalizes all 24 frames.");
+
+  report.peakMemoryBytes = Number(docker("exec", name, "node", "-e", "try { console.log(require('node:fs').readFileSync('/sys/fs/cgroup/memory.peak', 'utf8').trim()) } catch { console.log('0') }")) || null;
 
   docker("restart", name);
   // Docker can allocate a different host port after restart when published

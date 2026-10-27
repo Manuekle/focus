@@ -1,6 +1,7 @@
 "use client";
 
 import { Dialog } from "radix-ui";
+import Link from "next/link";
 import { Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { FacebookButton } from "./facebook-button";
@@ -42,7 +43,14 @@ export function LoginDialog({
             </Dialog.Close>
           </div>
           <FacebookButton next={next} />
-          <p className="text-xs leading-5 text-muted-foreground">We only read your public name and profile picture.</p>
+          <div className="space-y-2 text-xs leading-5 text-muted-foreground">
+            <p>Facebook shares your name, profile picture and email address, if available.</p>
+            <p>
+              <Link href="/privacy" className="underline underline-offset-2">Privacy</Link>
+              {" · "}
+              <Link href="/data-deletion" className="underline underline-offset-2">Delete your data</Link>
+            </p>
+          </div>
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
