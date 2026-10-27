@@ -8,7 +8,10 @@ if [ "$(id -u)" = "0" ]; then
   data_dir="${FOCUS_DATA_DIR:-/data}"
   mkdir -p "$data_dir"
   chown node:node "$data_dir"
-  exec gosu node "$@"
+  exec gosu node "$0" "$@"
 fi
 
+if [ "${FOCUS_PROVIDER_CONNECTIVITY_CHECK:-0}" = "1" ]; then
+  node /usr/local/lib/focus/check-providers.mjs
+fi
 exec "$@"

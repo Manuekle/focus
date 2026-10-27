@@ -51,7 +51,7 @@ Después del deploy y de guardar el redirect exacto:
 2. Comprobar cancelar el consentimiento y cerrar sesión. El correo puede no estar disponible: Focus lo admite como opcional.
 3. Completar los requisitos de Meta y verificar de nuevo con un usuario sin rol antes de considerar habilitado el acceso público.
 
-El despliegue de Railway y su dominio siguen pendientes de la activación de Hobby y de aplicar los cambios preparados. Las credenciales pendientes no significan que el inicio de sesión de producción ya funcione.
+El perfil de Railway para la demo usa el trial con 500 MB de volumen y 1 GiB de RAM. Registrar las URLs después de desplegar y obtener el dominio HTTPS. Tener credenciales configuradas no significa que la ida y vuelta real por Facebook esté verificada.
 
 ## Comprobaciones locales
 

@@ -38,6 +38,8 @@ Measured on a laptop (Apple Silicon, native) for an 8 s, 1280×720, 191-frame cl
 
 Recommended: 2 vCPU, 2 GB RAM, 5 GB disk for `/data`. A render holds one decoded frame plus small buffers (< 100 MB). Renders run one at a time per instance, normalization two at a time, SAM one at a time.
 
+The selected [Railway demo profile](RAILWAY.md) is smaller: 1 vCPU / 1 GiB RAM, a 500 MB persistent volume, one active job, and 15 s / 25 MB uploads. The larger sizing above is a conservative general recommendation. The trial profile is for limited testing; verify provider connectivity on Limited Trial and measure disk/memory use before increasing traffic.
+
 **Clips up to 60 s / 150 MB** (`FOCUS_MAX_VIDEO_DURATION_SECONDS`, `FOCUS_MAX_UPLOAD_MB`). Stage times scale roughly linearly with frame count, so expect about 7× the figures above for a 60 s clip (1,440 frames at 24 fps). Normalization allows 10 s of FFmpeg time per second of clip (at least 2 min). SAM streams its answer, so the 180 s Meta request timeout covers only the start of the response; SAM accepts up to 15,000 frames per request. Per clip, `/data` holds the source (≤ 150 MB), the normalized copy and every render for 24 h: size the volume for that. A reverse proxy in front of the container must accept 150 MB request bodies (for nginx: `client_max_body_size 150m;`). Next.js itself adds no limit for these uploads: there is no `proxy.ts`, and the upload route streams the body to disk with its own cap.
 
 ## Environment

@@ -34,6 +34,7 @@ COPY --from=build --chown=node:node /app/.next/standalone ./
 COPY --from=build --chown=node:node /app/.next/static ./.next/static
 COPY --from=build --chown=node:node /app/public ./public
 COPY --chmod=755 deploy/docker-entrypoint.sh /usr/local/bin/focus-entrypoint
+COPY deploy/check-providers.mjs /usr/local/lib/focus/check-providers.mjs
 RUN mkdir -p /data && chown node:node /data
 USER node
 VOLUME ["/data"]
