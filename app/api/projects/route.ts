@@ -21,7 +21,7 @@ export async function POST(request: Request) {
   try {
     const user = await requireUser(request);
     const parsed = CreateProjectRequestSchema.safeParse(await readJsonBody(request));
-    if (!parsed.success) throw new AppError("invalid_project", 400, "Falta el video del proyecto.");
+    if (!parsed.success) throw new AppError("invalid_project", 400, "Choose a video for this project.");
     const video = await getVideo(parsed.data.videoId);
     const jobIds = (await jobsForVideo(video.id)).map((job) => job.id).reverse();
     const project = await projectForVideo(user.id, video.id, { title: video.originalName.replace(/\.[^.]+$/, ""), jobIds });

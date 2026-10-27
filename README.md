@@ -24,7 +24,7 @@ The interface is in Spanish. The three effects:
 Upload → Describe → Identify → Track → Transform → Preview → Export
 ```
 
-1. **Upload.** FFprobe validates the real media (MP4/MOV, ≤ 10 s, ≤ 50 MB). FFmpeg normalizes it once: ≤ 720p, 24 fps constant, H.264, rotation applied. This normalized file is the single source for segmentation *and* rendering, so masks and frames can never drift apart.
+1. **Upload.** FFprobe validates the real media (MP4/MOV, ≤ 60 s, ≤ 150 MB by default; `FOCUS_MAX_VIDEO_DURATION_SECONDS` / `FOCUS_MAX_UPLOAD_MB` in `.env.local`). FFmpeg normalizes it once: ≤ 720p, 24 fps constant, H.264, rotation applied. This normalized file is the single source for segmentation *and* rendering, so masks and frames can never drift apart.
 2. **Describe → Identify.** **Muse Spark 1.3** reads the instruction (any language) and the first frame and returns a strict JSON edit plan: a short English noun phrase for the subject, the effect, bounded parameters, or a clear "unsupported" / "needs clarification" verdict. Zod validates everything; the model never produces commands, paths or FFmpeg arguments.
 3. **Track.** **SAM 3.1** receives that noun phrase and the normalized video (Files API + streaming Responses API) and returns per-frame masks with stable object ids, parsed with `@meta-sam/parser`. When several objects match, the user clicks the right one on the video — a click on an existing mask costs nothing. Frames SAM missed can be completed with one explicit box-prompted pass.
 4. **Transform → Export.** A deterministic compositor decodes the normalized video frame by frame through an FFmpeg pipe, applies the selected masks of that same frame, and encodes H.264/yuv420p with the original audio. Every export is verified with FFprobe (codec, size, fps, exact frame count, duration, audio) before it is offered for download.
@@ -72,11 +72,13 @@ docker run -p 3000:3000 --env-file .env -v focus-data:/data focus
 
 Resources, abuse protection and environment variables: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
 
+Railway setup: [docs/RAILWAY.md](docs/RAILWAY.md). The repository includes `railway.json`, a production variable template and `pnpm test:deployment` to verify the Docker image with a persistent volume and AI disabled.
+
 Time Freeze is experimental and off by default. Enable it with `NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=true pnpm build`, then start that build. Docker uses `docker build --build-arg NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=true -t focus-temporal .`. This public boolean is compiled into both browser and API bundles; switching it on or off requires a rebuild. See [release and rollback checks](docs/DEPLOYMENT.md#temporal-release-flag).
 
 ## Known limitations
 
-- Clips up to 10 s / 50 MB, processed at ≤ 720p and 24 fps.
+- Clips up to 60 s / 150 MB (configurable), processed at ≤ 720p and 24 fps.
 - **Motion Echo assumes a static camera.** With a panning camera, trails stay where the subject *was on screen*, not in the world; there is no stabilization.
 - **Break the Frame** chooses its framing automatically. When the subject barely leaves the inner frame, the app says so; it never invents pixels beyond the source.
 - SAM may miss a subject on some frames (e.g. at the start of a shot or while partly hidden). Those frames are reported, never faked; "Completar el seguimiento" runs one extra paid SAM pass.
@@ -104,7 +106,7 @@ Time Freeze is experimental and off by default. Enable it with `NEXT_PUBLIC_ENAB
 
 **Real-world utility.** Creators, marketers and editors get rotoscope-grade isolation for short clips in seconds, with an MP4 ready to post.
 
-**Demo.** Use a short clip (≤ 10 s) of a person or object moving against a mostly static background:
+**Demo.** Use a short clip (≤ 60 s) of a person or object moving against a mostly static background:
 
 1. *Reality Shift* — "Deja a la persona en color y todo lo demás en blanco y negro".
 2. *Break the Frame* — "Haz que la persona salga del marco"; switch the background to *Claro* for dark subjects.

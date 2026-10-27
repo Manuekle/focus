@@ -27,7 +27,7 @@ shared/             Types and pure logic used on both sides (Zod schemas, tracki
 
 ## Data flow
 
-1. `POST /api/videos` streams the raw body to disk with a 50 MB cap, probes it, normalizes it (`normalized.mp4`, `poster.jpg`) and stores `asset.json`.
+1. `POST /api/videos` streams the raw body to disk with a 150 MB cap (`FOCUS_MAX_UPLOAD_MB`), rejects clips over 60 s (`FOCUS_MAX_VIDEO_DURATION_SECONDS`), probes it, normalizes it (`normalized.mp4`, `poster.jpg`) and stores `asset.json`.
 2. `POST /api/edits` creates a job (deduplicated by video + effect + normalized prompt) and runs it in the background:
    - **interpreting** — Muse Spark, cached per request in `plans/`.
    - **segmenting** — SAM 3.1, cached per concept in `segmentations/c-*.json`; a gap-filled variant (`c-*+g-*.json`) is preferred when it exists.
@@ -58,5 +58,5 @@ The encoder receives exactly `frameCount` frames at 24 fps; audio is copied from
 - The Meta key is read only in `server/ai/meta.ts`; no client module imports server code.
 - FFmpeg/FFprobe run with argument arrays, never a shell. Uploaded file names are sanitized and never used as paths.
 - Every id in a path (video UUID, job UUID, segmentation key) is validated by pattern before use.
-- JSON bodies are capped at 16 KB; uploads at 50 MB while streaming.
+- JSON bodies are capped at 16 KB; uploads at 150 MB while streaming (configurable).
 - Video ids are unguessable UUIDs and act as capability tokens: there are no accounts.

@@ -67,7 +67,7 @@ Return:
 - action "adjust" with only the knobs that must change (every other knob null). Set effect only to switch effect, else null. Interpret taste words: "more dramatic" → stronger values, darker look; "subtle" → smaller values; "undo the glow" → subject "none". Relative requests ("a bit more") move from the current value.
 - action "new_edit" when the request needs a different or additional subject, or a new tracking ("now the dog", "also the car"): put a complete standalone instruction for a new edit in newInstruction (English, imperative, names the subject and the effect), all knobs null.
 - action "none" for questions, greetings or anything Focus cannot do (removing objects, generating content, text, audio, changing faces, cutting or speeding the clip): explain briefly what you can do instead.
-reply: one or two short, warm sentences in the user's language saying what you changed or why not. No lists, no markdown, no knob names in code style.`;
+reply: one or two short, warm sentences in English saying what you changed or why not. Always reply in English, regardless of the user’s language. No lists, no markdown, no knob names in code style.`;
 }
 
 const TEMPORAL_EFFECT_LINE = `
@@ -119,11 +119,11 @@ export function parseAssistantOutput(text: string, options: { readonly temporal?
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new AppError("assistant_invalid_output", 502, "Muse Spark devolvió una respuesta ilegible. Vuelve a intentarlo.");
+    throw new AppError("assistant_invalid_output", 502, "Muse Spark returned an unreadable response. Try again.");
   }
   const parsed = AssistantOutputSchema.safeParse(stripNulls(raw));
   if (!parsed.success) {
-    throw new AppError("assistant_invalid_output", 502, "No pudimos entender la respuesta del editor de IA. Vuelve a intentarlo.", parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "));
+    throw new AppError("assistant_invalid_output", 502, "We couldn’t read the AI editor’s response. Try again.", parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "));
   }
   const turn = parsed.data;
   // Finish keys are validated one by one: one bad value drops itself, not the turn.
@@ -209,13 +209,13 @@ export async function assistEdit(input: {
       durationMs: Date.now() - started,
     });
     if (response.status !== "completed" || !response.output_text) {
-      throw new AppError("assistant_incomplete", 502, "El editor de IA no completó la respuesta. Vuelve a intentarlo.");
+      throw new AppError("assistant_incomplete", 502, "The AI editor didn’t finish its response. Try again.");
     }
     return parseAssistantOutput(response.output_text, { temporal });
   } catch (error) {
     if (!(error instanceof AppError)) {
       await recordUsage({ model: config.plannerModel, kind: "assist", cached: false, ok: false, videoId: input.videoId, error: String(error), durationMs: Date.now() - started });
     }
-    throw metaError(error, "el editor de IA");
+    throw metaError(error, "AI editing");
   }
 }

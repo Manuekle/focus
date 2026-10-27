@@ -9,7 +9,7 @@ const VARIANTS: readonly MediaVariant[] = ["normalized", "poster", "source"];
 export async function mediaResponse(request: Request, id: string): Promise<Response> {
   const requested = new URL(request.url).searchParams.get("variant") ?? "normalized";
   const variant = VARIANTS.find((name) => name === requested);
-  if (!variant) throw new AppError("invalid_variant", 400, "Variante de archivo desconocida.");
+  if (!variant) throw new AppError("invalid_variant", 400, "Unknown file variant.");
   const file = await mediaFile(parseVideoId(id), variant);
   return serveFile(request, file.path, file.type);
 }

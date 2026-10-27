@@ -1,0 +1,24 @@
+# railway up uploads source only, including uncommitted Flipbook files.
+# Keep credentials and local/generated media off Railway's build servers.
+.git/
+node_modules/
+.next/
+.focus-data/
+.focus-data-*/
+.env
+.env.*
+!.env.example
+*.env
+**/*.env
+.claude/
+.agents/
+.gstack/
+.codex/
+*.tsbuildinfo
+.DS_Store
+e2e/.fixtures/
+test-results/
+playwright-report/
+*.mp4
+!public/demo/*.mp4
+*.mov

@@ -59,7 +59,7 @@ export function consumeFreeEdit(request: Request, anonId: string): Promise<Quota
     const used = Math.max(...counts);
     const limit = freeEditLimit();
     if (used >= limit) {
-      throw new AppError("login_required", 401, `Ya usaste tus ${limit} ediciones gratis. Inicia sesión con Facebook para seguir editando y guardar tus proyectos.`);
+      throw new AppError("login_required", 401, `You’ve used all ${limit} free edits. Sign in with Facebook to keep editing and save your projects.`);
     }
     await Promise.all(keys.map((key) => writeCount(key, used + 1)));
     return { limit, used: used + 1, remaining: Math.max(0, limit - used - 1) };

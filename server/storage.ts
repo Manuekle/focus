@@ -20,7 +20,7 @@ export const VIDEO_FILES = {
 
 export function parseVideoId(value: string): VideoId {
   const parsed = VideoIdSchema.safeParse(value);
-  if (!parsed.success) throw new AppError("video_not_found", 404, "Ese video no existe o ya se eliminó.");
+  if (!parsed.success) throw new AppError("video_not_found", 404, "This video doesn’t exist or has been deleted.");
   return parsed.data;
 }
 

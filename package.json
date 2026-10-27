@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Focus: editor de video con Meta Muse Spark y SAM 3.1.",
+  "description": "Focus: video editor with Meta Muse Spark and SAM 3.1.",
   "sideEffects": [
     "**/*.css"
   ],
@@ -16,6 +16,7 @@
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "test": "vitest run",
     "test:load": "FOCUS_RUN_LOAD_TESTS=1 vitest run server/jobs.load.test.ts --maxWorkers=1",
+    "test:deployment": "node scripts/verify-deployment.mjs",
     "test:live": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run --config vitest.live.config.ts",
     "test:live:temporal": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run --config vitest.live.config.ts server/video/temporal.live.test.ts",
     "test:e2e": "playwright test"

@@ -76,7 +76,7 @@ const TEMPORAL_KEYS = ["triggerEvent", "echoCount", "echoSpacingMs", "freezeDura
 export const PLAN_JSON_SCHEMA = planJsonSchema(false);
 
 export function plannerInstructions(temporal: boolean): string {
-  return `You are the edit planner of Focus, a video editor. You read one user instruction about a short video and return a JSON edit plan. You never execute anything.
+  return `You are the edit planner of Focus, a video editor. You read one user instruction about a short video and return a JSON edit plan. You never execute anything. Write all user-facing text in English, regardless of the instruction’s language.
 
 Supported effects (and only these):
 - selective_color: the target stays in color, everything else becomes black and white.
@@ -95,9 +95,9 @@ target.concept is a segmentation prompt: ONE short English noun phrase naming th
 Use the simplest common noun SAM can recognise visually, plus at most one visible attribute (color, clothing). Never put actions, motion or position in the concept ("jumping rock", "running man", "car on the left" are wrong; use "rock", "man", "car"); put such details in target.description instead.
 target.selection:
 - "all" when the user wants more than one instance of the same kind: plurals, numbers or "both" ("the two people", "both dancers", "las personas", "everyone", "all the cars"). Use the singular noun as the concept ("person").
-- "several" when the user wants subjects of different kinds ("the girl and her dog"): concept names the main one; target.description tells the user, in their language, to click the other subject in the video to add it.
+- "several" when the user wants subjects of different kinds ("the girl and her dog"): concept names the main one; target.description tells the user, in English, to click the other subject in the video to add it.
 - "single" otherwise.
-target.description: a short note (in the user's language) to tell instances apart, or null.
+target.description: a short note (in English) to tell instances apart, or null.
 
 parameters: intensity 0–1 (default 0.8 when unspecified, or null; for spotlight it is how dark the background gets), trailCount 2–8 and trailSpacingMs 40–1000 only for motion_echo, otherwise null.${temporal ? TEMPORAL_PARAMETER_LINES : ""}
 parameters.finish: optional finishing touches on top of the effect, only when the instruction asks for them, otherwise null. Each key null unless asked:
@@ -105,8 +105,8 @@ parameters.finish: optional finishing touches on top of the effect, only when th
 - subject: "glow" (soft halo around the subject) or "outline" (clean stroke around its silhouette); accent: "white", "gold", "cyan", "magenta" or "lime"; accentStrength 0.2–1.
 - vignette 0–1, grain 0–1 (film grain), letterbox true for cinematic black bars.
 
-Set supported=false with unsupportedReason (one sentence in the user's language) only when the request needs something outside these effects: removing or adding objects, generating new content, changing faces or identity, text, audio. A color grade, glow, vignette, grain or letterbox alone is supported: pair it with the picked family's default effect and the most prominent subject. Still fill the other fields with your best guess.
-Set needsClarification=true with clarificationQuestion (one short question in the user's language) only when nothing in the instruction or the image could be the subject. Never ask which instance the user means: when several match, the user picks them on the video.
+Set supported=false with unsupportedReason (one sentence in English) only when the request needs something outside these effects: removing or adding objects, generating new content, changing faces or identity, text, audio. A color grade, glow, vignette, grain or letterbox alone is supported: pair it with the picked family's default effect and the most prominent subject. Still fill the other fields with your best guess.
+Set needsClarification=true with clarificationQuestion (one short question in English) only when nothing in the instruction or the image could be the subject. Never ask which instance the user means: when several match, the user picks them on the video.
 Use the attached frame to check the subject is visible and to pick the right noun phrase.
 If "Already segmented" lists a concept that names the same subject, return that exact string as target.concept: it reuses existing masks at no cost.`;
 }
@@ -125,7 +125,7 @@ export function parsePlanOutput(text: string, options: { readonly temporal?: boo
   try {
     raw = JSON.parse(text);
   } catch {
-    throw new AppError("planner_invalid_output", 502, "Muse Spark devolvió una respuesta ilegible. Vuelve a intentarlo.");
+    throw new AppError("planner_invalid_output", 502, "Muse Spark returned an unreadable response. Try again.");
   }
   const clean = stripNulls(raw) as { parameters?: Record<string, unknown> } | null;
   // A finishing value slightly out of range is clamped, not a failed plan.
@@ -142,7 +142,7 @@ export function parsePlanOutput(text: string, options: { readonly temporal?: boo
     throw new AppError(
       "planner_invalid_output",
       502,
-      "No pudimos convertir la instrucción en un plan válido. Nombra el sujeto con más claridad.",
+      "We couldn’t turn your instruction into a valid plan. Describe the subject more clearly.",
       parsed.success ? "effect: time_freeze_echo is disabled" : parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "),
     );
   }
@@ -235,13 +235,13 @@ export async function interpretInstruction(input: {
       durationMs: Date.now() - started,
     });
     if (response.status !== "completed" || !response.output_text) {
-      throw new AppError("planner_incomplete", 502, "Muse Spark no completó la interpretación. Vuelve a intentarlo.");
+      throw new AppError("planner_incomplete", 502, "Muse Spark didn’t finish interpreting your instruction. Try again.");
     }
     return parsePlanOutput(response.output_text, { temporal });
   } catch (error) {
     if (!(error instanceof AppError)) {
       await recordUsage({ model: config.plannerModel, kind: "plan", cached: false, ok: false, error: String(error), durationMs: Date.now() - started });
     }
-    throw metaError(error, "la interpretación");
+    throw metaError(error, "instruction interpretation");
   }
 }

@@ -22,7 +22,7 @@ export function errorResponse(error: unknown): Response {
   }
   console.error("[focus] unexpected error", error);
   const body: ApiErrorBody = {
-    error: { code: "internal_error", message: "Algo falló en el servidor. Vuelve a intentarlo en unos segundos." },
+    error: { code: "internal_error", message: "Something went wrong on the server. Try again in a few seconds." },
   };
   return Response.json(body, { status: 500 });
 }

@@ -14,7 +14,7 @@ function projectsDir(): string {
 }
 
 function projectFile(id: string): string {
-  if (!/^[0-9a-f-]{36}$/.test(id)) throw new AppError("project_not_found", 404, "Ese proyecto no existe.");
+  if (!/^[0-9a-f-]{36}$/.test(id)) throw new AppError("project_not_found", 404, "This project doesn’t exist.");
   return path.join(projectsDir(), `${id}.json`);
 }
 
@@ -53,7 +53,7 @@ function withLock<T>(key: string, task: () => Promise<T>): Promise<T> {
 /** A project the user owns; anything else is "not found", never "forbidden". */
 export async function getProject(id: string, ownerId: string): Promise<Project> {
   const project = await readProject(id);
-  if (!project || project.ownerId !== ownerId) throw new AppError("project_not_found", 404, "Ese proyecto no existe.");
+  if (!project || project.ownerId !== ownerId) throw new AppError("project_not_found", 404, "This project doesn’t exist.");
   return project;
 }
 
@@ -96,7 +96,7 @@ export async function attachJob(ownerId: string, videoId: string, jobId: string,
 export function updateProject(id: string, ownerId: string, patch: { title?: string; activeJobId?: string }): Promise<Project> {
   return withLock(id, async () => {
     const current = await getProject(id, ownerId);
-    if (patch.activeJobId && !current.jobIds.includes(patch.activeJobId)) throw new AppError("job_not_found", 404, "Esa edición no pertenece al proyecto.");
+    if (patch.activeJobId && !current.jobIds.includes(patch.activeJobId)) throw new AppError("job_not_found", 404, "That edit doesn’t belong to this project.");
     return save({ ...current, ...(patch.title ? { title: patch.title } : {}), ...(patch.activeJobId ? { activeJobId: patch.activeJobId } : {}) });
   });
 }

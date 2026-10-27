@@ -65,7 +65,7 @@ describe("parsePlanOutput", () => {
   });
 
   it("rejects non-JSON output", () => {
-    expect(() => parsePlanOutput("Sure! Here is your plan")).toThrowError(/ilegible/);
+    expect(() => parsePlanOutput("Sure! Here is your plan")).toThrowError(/unreadable/);
   });
 
   it("ships a strict schema the API accepts: every property required, no extra keys", () => {

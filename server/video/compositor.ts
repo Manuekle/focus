@@ -1,6 +1,7 @@
 import path from "node:path";
 import sharp from "sharp";
 import { BREAK_FRAME_CANVAS, type RenderParams, type RenderParamsOf } from "../../shared/render";
+import { BREAK_FRAME_WARNING, missingSubjectMaskWarning } from "../../shared/render-warnings";
 import type { NormalizedMedia } from "../../shared/schemas";
 import type { FreezePlan } from "../../shared/temporal";
 import { selectionTrack, type TrackPoint } from "../../shared/temporal-track";
@@ -173,7 +174,7 @@ export function breakFrameProcessor(media: NormalizedMedia, params: RenderParams
     },
     summary() {
       const ratio = framesWithSubject ? breakoutFrames / framesWithSubject : 0;
-      const warnings = ratio < 0.25 ? ["Con este encuadre el sujeto apenas sale del marco. Prueba otro tamaño de marco o un clip donde el sujeto ocupe más espacio."] : [];
+      const warnings = ratio < 0.25 ? [BREAK_FRAME_WARNING] : [];
       return { breakoutFrameRatio: ratio, warnings };
     },
   };
@@ -212,7 +213,7 @@ export type MaskSource = {
 
 export function trackingMaskSource(tracking: Tracking, selection: readonly string[], media: NormalizedMedia): MaskSource {
   if (tracking.width !== media.width || tracking.height !== media.height || tracking.frameCount !== media.frameCount) {
-    throw new AppError("tracking_mismatch", 409, "Las máscaras no corresponden a este video. Vuelve a generar la segmentación.");
+    throw new AppError("tracking_mismatch", 409, "The subject masks don’t match this video. Generate subject tracking again.");
   }
   const chosen = new Set(selection);
   return {
@@ -256,7 +257,7 @@ export function createProcessor(media: NormalizedMedia, params: RenderParams, ma
       );
     case "time_freeze_echo":
       // Changes the clip's length: rendered by renderTimeFreeze, never per frame.
-      throw new AppError("effect_unavailable", 500, "Time Freeze no es un efecto por fotograma.");
+      throw new AppError("effect_unavailable", 500, "Time Freeze isn’t a per-frame effect.");
   }
 }
 
@@ -301,7 +302,7 @@ export async function renderVideo(input: {
   let framesWithoutMask = 0;
   try {
     for await (const frame of readFrames(input.normalizedPath, media.width, media.height, signal)) {
-      if (signal?.aborted) throw new AppError("canceled", 499, "Proceso cancelado.");
+      if (signal?.aborted) throw new AppError("canceled", 499, "Processing canceled.");
       if (index >= media.frameCount) break;
       const raw = masks.alphaAt(index);
       if (!raw.box) framesWithoutMask++;
@@ -312,19 +313,19 @@ export async function renderVideo(input: {
       input.onProgress?.(index / media.frameCount);
     }
     if (index !== media.frameCount) {
-      throw new AppError("frame_count_mismatch", 500, `Se decodificaron ${index} de ${media.frameCount} fotogramas.`);
+      throw new AppError("frame_count_mismatch", 500, `Decoded ${index} of ${media.frameCount} frames.`);
     }
     await writer.finish();
   } catch (error) {
     writer.abort();
-    if (signal?.aborted) throw new AppError("canceled", 499, "Proceso cancelado.");
+    if (signal?.aborted) throw new AppError("canceled", 499, "Processing canceled.");
     throw error;
   }
 
   const summary = processor.summary();
   const warnings = [...summary.warnings];
   if (framesWithoutMask > 0) {
-    warnings.push(`${framesWithoutMask} de ${media.frameCount} fotogramas no tienen máscara del sujeto; ahí el efecto trata todo como fondo.`);
+    warnings.push(missingSubjectMaskWarning(framesWithoutMask, media.frameCount));
   }
   return { width: processor.width, height: processor.height, frameCount: index, framesWithoutMask, breakoutFrameRatio: summary.breakoutFrameRatio, warnings };
 }
@@ -347,7 +348,7 @@ export async function renderComparison(input: {
   const color = input.background === "dark" ? "0x14161e" : "0xf6f7fa";
   const { freeze } = input;
   const fps = freeze ? parseRate((await probe(input.outputPath)).streams.find((stream) => stream.codec_type === "video")?.avg_frame_rate) : 0;
-  if (freeze && fps <= 0) throw new AppError("export_invalid", 500, "No se pudo verificar la cadencia de la comparación.");
+  if (freeze && fps <= 0) throw new AppError("export_invalid", 500, "We couldn’t verify the comparison video’s frame rate.");
   // Concat uses a microsecond clock; the edited MP4 uses its track timebase.
   // Framesync can round the final EOF differently depending on input order.
   // Give both temporal halves exact integer frame timestamps before stacking.
@@ -383,32 +384,32 @@ export async function renderComparison(input: {
 /** Checks the encoded file against what was requested. Throws on any mismatch. */
 export async function verifyOutput(file: string, expected: { width: number; height: number; fps: number; frameCount: number; hasAudio: boolean; timingToleranceSeconds?: number }) {
   const facts = await probe(file).catch(() => null);
-  if (!facts) throw new AppError("export_invalid", 500, "El video exportado no se pudo leer.");
+  if (!facts) throw new AppError("export_invalid", 500, "The exported video couldn’t be read.");
   const video = facts.streams.find((stream) => stream.codec_type === "video");
   const problems: string[] = [];
-  if (!video) problems.push("sin pista de video");
+  if (!video) problems.push("missing video track");
   else {
-    if (video.codec_name !== "h264") problems.push(`códec ${video.codec_name}`);
-    if (video.width !== expected.width || video.height !== expected.height) problems.push(`tamaño ${video.width}×${video.height}`);
-    if (Math.abs(parseRate(video.avg_frame_rate) - expected.fps) > 0.01) problems.push(`cadencia ${video.avg_frame_rate}`);
-    if (Number(video.nb_frames) !== expected.frameCount) problems.push(`${video.nb_frames} fotogramas`);
-    if ((video as { pix_fmt?: string }).pix_fmt !== "yuv420p") problems.push(`formato ${(video as { pix_fmt?: string }).pix_fmt}`);
+    if (video.codec_name !== "h264") problems.push(`codec ${video.codec_name}`);
+    if (video.width !== expected.width || video.height !== expected.height) problems.push(`size ${video.width}×${video.height}`);
+    if (Math.abs(parseRate(video.avg_frame_rate) - expected.fps) > 0.01) problems.push(`frame rate ${video.avg_frame_rate}`);
+    if (Number(video.nb_frames) !== expected.frameCount) problems.push(`${video.nb_frames} frames`);
+    if ((video as { pix_fmt?: string }).pix_fmt !== "yuv420p") problems.push(`pixel format ${(video as { pix_fmt?: string }).pix_fmt}`);
   }
   const duration = Number(video?.duration ?? facts.format.duration);
-  if (!(Math.abs(duration - expected.frameCount / expected.fps) <= 1.5 / expected.fps)) problems.push(`duración ${duration}`);
+  if (!(Math.abs(duration - expected.frameCount / expected.fps) <= 1.5 / expected.fps)) problems.push(`duration ${duration}`);
   const hasAudio = facts.streams.some((stream) => stream.codec_type === "audio");
-  if (hasAudio !== expected.hasAudio) problems.push(hasAudio ? "audio inesperado" : "falta el audio");
+  if (hasAudio !== expected.hasAudio) problems.push(hasAudio ? "unexpected audio" : "missing audio");
   if (expected.timingToleranceSeconds !== undefined) {
     const tolerance = expected.timingToleranceSeconds;
-    if (!video || !(Math.abs(Number(video.start_time)) <= tolerance)) problems.push("inicio de video desalineado");
-    if (video && Math.abs(parseRate(video.r_frame_rate) - expected.fps) > 0.01) problems.push("cadencia de video irregular");
+    if (!video || !(Math.abs(Number(video.start_time)) <= tolerance)) problems.push("misaligned video start");
+    if (video && Math.abs(parseRate(video.r_frame_rate) - expected.fps) > 0.01) problems.push("irregular video frame rate");
     const audio = facts.streams.find((stream) => stream.codec_type === "audio");
     if (audio) {
-      if (audio.codec_name !== "aac") problems.push(`códec de audio ${audio.codec_name}`);
-      if (!(Math.abs(Number(audio.start_time)) <= tolerance)) problems.push("inicio de audio desalineado");
-      if (!(Math.abs(Number(audio.duration) - expected.frameCount / expected.fps) <= tolerance)) problems.push(`duración de audio ${audio.duration}`);
+      if (audio.codec_name !== "aac") problems.push(`audio codec ${audio.codec_name}`);
+      if (!(Math.abs(Number(audio.start_time)) <= tolerance)) problems.push("misaligned audio start");
+      if (!(Math.abs(Number(audio.duration) - expected.frameCount / expected.fps) <= tolerance)) problems.push(`audio duration ${audio.duration}`);
     }
   }
-  if (problems.length) throw new AppError("export_invalid", 500, "La exportación no pasó la verificación.", problems.join(", "));
+  if (problems.length) throw new AppError("export_invalid", 500, "The export failed verification. Try exporting again.", problems.join(", "));
   return { durationSeconds: duration };
 }

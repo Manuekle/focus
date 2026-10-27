@@ -130,7 +130,7 @@ export async function renderTimeFreeze(input: {
   try {
     let index = 0;
     for await (const frame of readFrames(input.normalizedPath, width, height, signal)) {
-      if (signal?.aborted) throw new AppError("canceled", 499, "Proceso cancelado.");
+      if (signal?.aborted) throw new AppError("canceled", 499, "Processing canceled.");
       if (index >= media.frameCount) break;
       // Cutouts are taken as their frames pass: all echoes precede the trigger.
       if (echoFrames.has(index)) {
@@ -163,12 +163,12 @@ export async function renderTimeFreeze(input: {
       index++;
     }
     if (written !== plan.outputFrameCount) {
-      throw new AppError("frame_count_mismatch", 500, `Se escribieron ${written} de ${plan.outputFrameCount} fotogramas.`);
+      throw new AppError("frame_count_mismatch", 500, `Wrote ${written} of ${plan.outputFrameCount} frames.`);
     }
     await writer.finish();
   } catch (error) {
     writer.abort();
-    if (signal?.aborted) throw new AppError("canceled", 499, "Proceso cancelado.");
+    if (signal?.aborted) throw new AppError("canceled", 499, "Processing canceled.");
     throw error;
   }
 

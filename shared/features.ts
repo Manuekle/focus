@@ -13,3 +13,11 @@ export function temporalEffectsEnabled(): boolean {
 export function effectEnabled(effect: EffectId): boolean {
   return effect !== "time-freeze" || temporalEffectsEnabled();
 }
+
+/**
+ * Focus Flipbook: frame-by-frame character animation from one illustration.
+ * Off unless explicitly "true"; like the temporal flag it is compiled in.
+ */
+export function flipbookEnabled(): boolean {
+  return process.env.NEXT_PUBLIC_ENABLE_FLIPBOOK === "true";
+}

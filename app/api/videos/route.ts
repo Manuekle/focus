@@ -9,13 +9,13 @@ export async function POST(request: Request) {
   try {
     guardUpload(request);
     void cleanupJobs();
-    if (!request.body) throw new AppError("empty_file", 400, "No recibimos ningún archivo.");
+    if (!request.body) throw new AppError("empty_file", 400, "No file was received. Choose a file and try again.");
     const header = request.headers.get("x-focus-filename");
     let fileName = "";
     try {
       fileName = header ? decodeURIComponent(header) : "";
     } catch {
-      throw new AppError("invalid_filename", 400, "El nombre del archivo no es válido.");
+      throw new AppError("invalid_filename", 400, "The file name isn’t valid.");
     }
     const length = Number(request.headers.get("content-length"));
     const asset = await ingestVideo({

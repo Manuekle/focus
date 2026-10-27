@@ -2,6 +2,8 @@
 .env
 .env.*
 !.env.example
+*.env
+**/*.env
 .focus-data
 .focus-data-*
 node_modules
@@ -9,6 +11,10 @@ node_modules
 .git
 .claude
 .agents
+.gstack
+.codex
+test-results
+playwright-report
 *.tsbuildinfo
 *.mp4
 !public/demo/*.mp4

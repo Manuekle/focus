@@ -1,0 +1,216 @@
+/* Focus Flipbook. Same shell, tokens and quiet surfaces as the video editor
+   (app/editor/studio.module.css, app/_editor/composer.module.css): panels sit
+   flat on the page, fields use the composer's inset surface. Layout inside the
+   main column answers to its own width (container queries), since the sidebar
+   takes part of the viewport. */
+
+/* The page shell (header, sidebar, main) is the editor's own: app/editor/studio.module.css. */
+.posterContain { object-fit: contain; }
+
+/* ── Shared bits ─────────────────────────────────────────────────────── */
+.hint { color: var(--muted-foreground); font-size: 12px; line-height: 1.55; }
+.hint[data-invalid] { color: var(--destructive); }
+.sectionLabel { color: var(--muted-foreground); font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; }
+.chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.buttonRow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.inline { display: inline-flex; align-items: center; gap: 8px; }
+.pill { padding: 3px 9px; border-radius: 999px; box-shadow: inset 0 0 0 1px #ffffff14; color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+/* The transparent-pixel checkerboard behind sprites. */
+.stage[data-transparent], .stripThumb[data-transparent], .inspect[data-transparent], .referenceImage[data-transparent] {
+  background-color: #1d1f27;
+  background-image: linear-gradient(45deg, #ffffff0a 25%, transparent 25%), linear-gradient(-45deg, #ffffff0a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ffffff0a 75%), linear-gradient(-45deg, transparent 75%, #ffffff0a 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+
+.field {
+  display: flex;
+  flex-direction: column;
+  border-radius: 14px;
+  background: linear-gradient(180deg, #ffffff06, #ffffff02);
+  box-shadow: inset 0 0 0 1px #ffffff0d, inset 0 1px 0 #ffffff08;
+  transition: box-shadow 160ms ease-out, background-color 160ms ease-out;
+}
+.field:focus-within {
+  background-color: #ffffff04;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 55%, transparent), 0 0 0 4px color-mix(in srgb, var(--primary) 14%, transparent), 0 10px 30px -18px #2853e980;
+}
+.fieldInput {
+  min-height: 64px;
+  padding: 12px 14px;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  font: inherit;
+  font-size: 13px;
+  line-height: 1.6;
+  resize: none;
+  field-sizing: content;
+  outline: none;
+  caret-color: var(--primary);
+}
+.fieldInput::placeholder { color: color-mix(in srgb, var(--muted-foreground) 80%, transparent); }
+.fieldInput:disabled { opacity: 0.5; cursor: not-allowed; }
+
+/* ── Create ──────────────────────────────────────────────────────────── */
+/* The drop icon: the glass feather re-tinted with the app blue, like the home page steps. */
+.dropIcon {
+  --nc-gradient-1-color-1: #b6c9ff;
+  --nc-gradient-1-color-2: #2b56f5;
+  --nc-gradient-2-color-1: #cfdcffcc;
+  --nc-gradient-2-color-2: #6e8dffcc;
+  --nc-light: #ffffff;
+  display: block;
+  margin-inline: auto;
+  overflow: visible;
+  filter: drop-shadow(0 5px 16px #2f5bff3d);
+}
+
+/* ── Editor ──────────────────────────────────────────────────────────── */
+.editor { display: flex; min-width: 0; flex-direction: column; gap: 16px; container-type: inline-size; }
+.editorHead { display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 12px; }
+.editorTitle { overflow: hidden; margin-top: 4px; font-family: var(--font-sn-pro); font-size: 20px; font-weight: 600; letter-spacing: -0.02em; text-overflow: ellipsis; white-space: nowrap; max-width: min(70vw, 720px); }
+.headActions { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.progress { display: flex; flex-direction: column; gap: 6px; }
+.steps { display: flex; flex-wrap: wrap; gap: 6px 18px; font-size: 12px; }
+.steps li { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); }
+.steps li[data-state="active"] { color: var(--foreground); }
+.steps li[data-state="done"] { color: color-mix(in srgb, var(--foreground) 75%, var(--muted-foreground)); }
+.stepDot { display: inline-grid; width: 16px; height: 16px; place-items: center; border-radius: 999px; box-shadow: inset 0 0 0 1px #ffffff1f; }
+.steps li[data-state="done"] .stepDot { background: color-mix(in srgb, var(--primary) 70%, transparent); box-shadow: none; color: var(--primary-foreground, #fff); }
+
+.grid { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(280px, 340px); align-items: start; gap: 28px; }
+.columnSide, .columnMain { display: flex; min-width: 0; flex-direction: column; gap: 24px; }
+.columnMain { position: sticky; top: 76px; }
+
+.panel { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
+.panel ~ .panel { padding-top: 20px; border-top: 1px solid var(--border); }
+.panelHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.panelTitle { font-family: var(--font-sn-pro); font-size: 15px; font-weight: 600; letter-spacing: -0.01em; }
+.cta { display: flex; flex-direction: column; gap: 10px; }
+.generate, .handoff { display: flex; flex-direction: column; gap: 8px; }
+.generate { padding-top: 4px; }
+.handoff { padding-top: 12px; border-top: 1px solid var(--border); }
+
+.referencePair { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.referencePair[data-single] { grid-template-columns: minmax(0, 200px); }
+.referencePair figure { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
+.referencePair figcaption { display: inline-flex; align-items: center; gap: 4px; color: var(--muted-foreground); font-size: 11px; }
+.referenceImage { position: relative; display: grid; aspect-ratio: 2 / 3; place-items: center; overflow: hidden; border-radius: 12px; background: #ffffff04; box-shadow: inset 0 0 0 1px #ffffff0a; }
+/* Absolutely placed: a percentage height inside an aspect-ratio grid cell would overflow and crop the feet. */
+.referenceImage img, .stripThumb img, .inspect img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.palette { display: flex; gap: 4px; }
+.palette span { width: 16px; height: 16px; border-radius: 5px; box-shadow: inset 0 0 0 1px #ffffff1f; }
+.metrics { display: grid; gap: 4px; font-size: 12px; }
+.metrics > div { display: flex; justify-content: space-between; gap: 12px; }
+.metrics dt { color: var(--muted-foreground); }
+.metrics dd { min-width: 0; overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.checks { display: flex; flex-direction: column; gap: 6px; }
+.checkList { display: flex; flex-direction: column; gap: 6px; font-size: 12px; line-height: 1.5; }
+.checkList li { position: relative; padding-left: 12px; }
+.checkList li::before { position: absolute; top: 0.62em; left: 0; width: 5px; height: 5px; border-radius: 999px; background: var(--alert-warning, #e0a43a); content: ""; }
+.checkList li[data-source="review"]::before { background: var(--primary); }
+.caveats li::before { background: var(--muted-foreground); }
+.details summary { color: var(--muted-foreground); font-size: 12px; cursor: pointer; }
+.details p { margin-top: 6px; color: var(--muted-foreground); font-size: 12px; line-height: 1.55; }
+.actions { display: flex; flex-direction: column; gap: 8px; }
+
+/* Player */
+.player { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
+/* The light table: a quiet surface the stage sits on, so a narrow in-place cell doesn't float on black. */
+.lightTable { display: grid; place-items: center; padding: clamp(12px, 2vw, 22px); border-radius: 22px; background: radial-gradient(120% 90% at 50% 0%, #ffffff08, #ffffff02 60%, transparent), linear-gradient(180deg, #ffffff03, transparent); }
+.stage { position: relative; width: 100%; max-height: min(56vh, 600px); overflow: hidden; margin-inline: auto; border-radius: 14px; box-shadow: inset 0 0 0 1px #ffffff0a, 0 18px 40px -18px #000000a0, 0 2px 8px #0000002e; outline: none; }
+.stage:focus-visible { box-shadow: inset 0 0 0 1px #ffffff0a, 0 0 0 2px var(--primary); }
+.canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
+.stageEmpty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted-foreground); font-size: 13px; pointer-events: none; }
+.transport { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.transportGroup { display: flex; align-items: center; gap: 4px; }
+.readout { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
+.controlsGrid { display: flex; flex-wrap: wrap; gap: 10px 24px; }
+.controlRow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; }
+.controlLabel { color: var(--muted-foreground); font-size: 12px; }
+
+/* Strip */
+.strip { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; }
+.stripFrame { display: flex; width: 100%; flex-direction: column; gap: 4px; padding: 4px; border: 0; border-radius: 12px; background: transparent; color: inherit; text-align: left; cursor: pointer; transition: background-color 150ms, box-shadow 150ms; }
+.stripFrame:hover { background: #ffffff06; }
+.stripFrameActive { background: #ffffff08; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 60%, transparent); }
+.stripFrame:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.stripThumb { position: relative; display: grid; aspect-ratio: 2 / 3; place-items: center; overflow: hidden; border-radius: 8px; }
+.stripFrame[data-status="failed"] .stripThumb { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--destructive) 55%, transparent); }
+.stripEmpty { color: var(--muted-foreground); font-size: 11px; }
+.badgeApproved, .badgeWarning { position: absolute; top: 4px; display: grid; width: 16px; height: 16px; place-items: center; border-radius: 999px; }
+.badgeApproved { left: 4px; background: var(--primary); color: #fff; }
+.badgeWarning { right: 4px; background: var(--alert-warning, #e0a43a); color: #1a1a1a; }
+.stripMeta { display: flex; min-width: 0; gap: 4px; font-size: 11px; }
+.stripLabel { overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
+.stripState { color: var(--muted-foreground); font-size: 10px; }
+
+/* Frame inspector */
+.inspect { position: relative; display: grid; height: 360px; place-items: center; overflow: hidden; border-radius: 12px; box-shadow: inset 0 0 0 1px #ffffff0a; }
+.inspect:not([data-transparent]) { background: #ffffff04; }
+
+/* Export */
+.color { width: 28px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
+.exportsList { display: flex; flex-direction: column; gap: 8px; }
+.exportsList ul { display: flex; flex-direction: column; gap: 10px; }
+.exportsList li { display: flex; flex-direction: column; gap: 2px; }
+.exportFiles { display: flex; flex-wrap: wrap; gap: 10px; }
+
+@container (max-width: 1080px) {
+  .grid { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); }
+  .grid > .columnSide:first-child { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
+  .grid > .columnSide:first-child > .panel ~ .panel { padding-top: 0; border-top: 0; }
+}
+@container (max-width: 760px) {
+  .grid { grid-template-columns: 1fr; }
+  .grid > .columnSide:first-child { display: flex; }
+  .grid > .columnSide:first-child > .panel ~ .panel { padding-top: 20px; border-top: 1px solid var(--border); }
+  .columnMain { position: static; }
+  .strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 680px) {
+  .fieldInput { font-size: 16px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .stripFrame, .field { transition: none; }
+}
+
+/* Skeletons: the same boxes as the real panels, so nothing moves when they fill in. */
+.skeletonLines { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
+.skeletonReference { width: min(100%, 200px); aspect-ratio: 2 / 3; border-radius: 12px; }
+.skeletonStage { width: min(100%, calc(min(56vh, 600px) * 2 / 3)); aspect-ratio: 2 / 3; margin-inline: auto; border-radius: 14px; }
+.skeletonThumb { display: flex; flex-direction: column; gap: 6px; padding: 4px; }
+/* A drawing in progress: the sheen sits where the drawing will appear. */
+.working { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; box-shadow: none; }
+.workingLabel { position: relative; z-index: 1; color: var(--muted-foreground); font-size: 12px; }
+
+/* ── With a drawing: the video editor's layout (editor-view.module.css) ── */
+/* The drawing like the editor's clip: its own proportions, edge to edge, on the stage color. */
+.drawingFigure { display: flex; min-width: 0; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 16px; background: var(--card); box-shadow: var(--shadow-soft); }
+.drawingStage { position: relative; display: grid; place-items: center; background: var(--editor-stage); }
+.drawingStage img { display: block; width: auto; max-width: 100%; height: auto; max-height: min(62vh, 620px); }
+.drawingStage[data-transparent] {
+  background-color: #1d1f27;
+  background-image: linear-gradient(45deg, #ffffff08 25%, transparent 25%), linear-gradient(-45deg, #ffffff08 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ffffff08 75%), linear-gradient(-45deg, transparent 75%, #ffffff08 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+.detailInput { min-height: 84px; }
+
+/* Reading the upload: what Focus saw, said plainly before anything is drawn. */
+.reading { display: flex; flex-direction: column; gap: 8px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
+.readingSummary { color: var(--foreground); font-size: 13px; line-height: 1.55; text-wrap: pretty; }
+.readingSkeleton { display: flex; flex-direction: column; gap: 8px; }
+.readingNotes { display: flex; flex-direction: column; gap: 4px; color: var(--muted-foreground); font-size: 11px; line-height: 1.5; }
+.readingNotes li { position: relative; padding-left: 11px; }
+.readingNotes li::before { position: absolute; top: 0.6em; left: 0; width: 4px; height: 4px; border-radius: 999px; background: var(--alert-warning, #e0a43a); content: ""; }
+.fact { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 9px; border-radius: 999px; background: #ffffff06; box-shadow: inset 0 0 0 1px #ffffff0d; color: var(--foreground); font-size: 11px; line-height: 1.35; }
+/* A sheen over the drawing while it is being read. */
+.readingSweep { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; background: transparent; box-shadow: none; pointer-events: none; }
+.layerTabs { width: auto; align-self: center; }
+.layerCharacter { animation: lift 360ms cubic-bezier(0.22, 1, 0.36, 1) both; filter: drop-shadow(0 14px 18px #00000066); }
+@keyframes lift { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.keepScene { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 12px; background: linear-gradient(180deg, #ffffff06, #ffffff02); box-shadow: inset 0 0 0 1px #ffffff0d; cursor: pointer; }
+@media (prefers-reduced-motion: reduce) { .layerCharacter { animation: none; } }

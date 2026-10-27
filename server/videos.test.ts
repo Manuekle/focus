@@ -1,8 +1,9 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { Readable } from "node:stream";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { MAX_UPLOAD_BYTES } from "../shared/media";
 import { VideoAssetSchema } from "../shared/schemas";
 import { AppError } from "./errors";
 import { ffmpeg, probe } from "./ffmpeg";
@@ -55,12 +56,41 @@ describe("ingestVideo", () => {
     await expect(getVideo(asset.id)).rejects.toBeInstanceOf(AppError);
   });
 
-  it("rejects a clip over 10 seconds and leaves nothing behind", async () => {
-    const source = await fixture("long.mp4", [
-      "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24:duration=11",
-      "-c:v", "libx264", "-pix_fmt", "yuv420p",
-    ]);
-    await expect(ingestVideo({ body: await bodyOf(source), fileName: "long.mp4" })).rejects.toMatchObject({ code: "duration_too_long" });
+  // Small frames keep long fixtures fast; the duration is what is under test.
+  const clipOf = (seconds: number) => fixture(`clip-${seconds}s.mp4`, [
+    "-f", "lavfi", "-i", `testsrc2=size=160x120:rate=24:duration=${seconds}`,
+    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+  ]);
+
+  it.each([10, 30, 60])("accepts a %i second clip and normalizes every frame", async (seconds) => {
+    const asset = await ingestVideo({ body: await bodyOf(await clipOf(seconds)), fileName: `clip-${seconds}s.mp4` });
+    expect(asset.source.durationSeconds).toBeCloseTo(seconds, 1);
+    expect(asset.normalized.frameCount).toBe(seconds * 24);
+    expect(asset.normalized.durationSeconds).toBeCloseTo(seconds, 1);
+    await deleteVideo(asset.id);
+  });
+
+  it("rejects a 61 second clip and leaves nothing behind", async () => {
+    const before = await readdir(path.join(work, "data", "videos")).catch(() => []);
+    await expect(ingestVideo({ body: await bodyOf(await clipOf(61)), fileName: "clip-61s.mp4" })).rejects.toMatchObject({ code: "duration_too_long", status: 422 });
+    expect(await readdir(path.join(work, "data", "videos")).catch(() => [])).toEqual(before);
+  });
+
+  it("rejects a declared size over 150 MB before reading the body", async () => {
+    const body = Readable.toWeb(Readable.from([Buffer.from("x")])) as ReadableStream<Uint8Array>;
+    await expect(ingestVideo({ body, fileName: "big.mp4", declaredBytes: MAX_UPLOAD_BYTES + 1 })).rejects.toMatchObject({ code: "file_too_large", status: 413 });
+  });
+
+  it("stops a streamed upload as soon as it passes 150 MB, without a size header", async () => {
+    const chunk = Buffer.alloc(1024 * 1024);
+    let sent = 0;
+    async function* stream() {
+      for (let index = 0; index < 151; index++) { sent++; yield chunk; }
+    }
+    const before = await readdir(path.join(work, "data", "videos")).catch(() => []);
+    await expect(ingestVideo({ body: Readable.toWeb(Readable.from(stream())) as ReadableStream<Uint8Array>, fileName: "big.mp4" })).rejects.toMatchObject({ code: "file_too_large" });
+    expect(sent).toBeGreaterThan(150);
+    expect(await readdir(path.join(work, "data", "videos")).catch(() => [])).toEqual(before);
   });
 
   it("rejects a file that only pretends to be a video", async () => {

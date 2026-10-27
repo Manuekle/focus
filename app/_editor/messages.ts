@@ -56,6 +56,11 @@ const errors: Readonly<Record<string, string>> = {
   network: "We couldn’t connect. Check your connection and try again.",
 };
 
+/** The editor's own wording for a known error code, or null for codes it doesn't know. */
+export function knownErrorMessage(code: string): string | null {
+  return Object.hasOwn(errors, code) ? errors[code] : null;
+}
+
 export function editorErrorMessage(code: string): string {
   return errors[code] ?? "We couldn’t complete your edit. Please try again.";
 }

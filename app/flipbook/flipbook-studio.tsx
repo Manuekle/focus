@@ -1,0 +1,220 @@
+"use client";
+
+import Image from "next/image";
+import Link from "next/link";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { Add01Icon, Delete02Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "../../components/icons/icon";
+import { Button } from "../../components/ui/button";
+import { ProgressMeter } from "../../components/ui/progress-meter";
+import { useToast } from "../../components/toast-provider";
+import { cn } from "../../lib/utils";
+import { ACTION_SPECS, FLIPBOOK_TITLE_MAX, WALK_FRAME_COUNT, flipbookTitle, type Flipbook, type FlipbookImage, type FlipbookSummary } from "../../shared/flipbook";
+import { AccountButton } from "../_auth/account-button";
+import { FacebookButton } from "../_auth/facebook-button";
+import { LoginDialog } from "../_auth/login-dialog";
+import { refreshSession, useSession } from "../_auth/session-client";
+import { ago } from "../_editor/ago";
+import { ModeSwitch } from "../_editor/mode-switch";
+import { SidebarListSkeleton } from "../_editor/studio-skeletons";
+import { FlipbookCreate, type CreateOptions } from "./flipbook-create";
+import { FlipbookApiError, flipbookApi, isActive, useFlipbook } from "./flipbook-client";
+import { FlipbookEditor } from "./flipbook-editor";
+import { FlipbookSkeleton } from "./flipbook-skeleton";
+import shell from "../editor/studio.module.css";
+import styles from "./flipbook.module.css";
+
+/**
+ * Focus Flipbook: a creation mode next to video editing, in the same shell
+ * as the editor: header with account, a sidebar with saved animations (or
+ * the free-edit allowance), and the animation. The current animation lives
+ * in the URL (?f=id), so a reload keeps every drawing.
+ */
+export function FlipbookStudio({ flipbookId }: { readonly flipbookId: string | null }) {
+  const { session } = useSession();
+  const user = session?.user ?? null;
+  const { toast } = useToast();
+  const { flipbook, setFlipbook, loadError, pollError } = useFlipbook(flipbookId);
+  const [creating, setCreating] = useState(false);
+  const [login, setLogin] = useState<"quota" | "save" | null>(null);
+  const [saved, setSaved] = useState<FlipbookSummary[] | null>(null);
+  const [title, setTitle] = useState("");
+  const here = flipbook ? `/flipbook?f=${flipbook.id}` : "/flipbook";
+  const outOfFreeEdits = Boolean(session && !session.user && session.quota?.remaining === 0);
+  const owned = Boolean(user && flipbook?.ownerId === user.id);
+
+  useEffect(() => {
+    const url = flipbook ? `/flipbook?f=${flipbook.id}` : "/flipbook";
+    if (`${window.location.pathname}${window.location.search}` !== url && (flipbook || !flipbookId)) window.history.replaceState(null, "", url);
+  }, [flipbook, flipbookId]);
+
+  const loadSaved = useCallback(async () => {
+    setSaved(await flipbookApi.list().catch(() => []));
+  }, []);
+
+  useEffect(() => {
+    if (user) void loadSaved();
+  }, [user, loadSaved]);
+
+  // Signed in with an unsaved animation open (made before signing in): it is
+  // saved to the account, like a clip in the editor. Once per animation.
+  const claimed = useRef<string | null>(null);
+  const flipbookIdNow = flipbook?.id;
+  const unowned = Boolean(flipbook && !flipbook.ownerId);
+  useEffect(() => {
+    if (!user || !flipbookIdNow || !unowned || claimed.current === flipbookIdNow) return;
+    claimed.current = flipbookIdNow;
+    void flipbookApi.save(flipbookIdNow).then((next) => { setFlipbook(next); void loadSaved(); }, () => undefined);
+  }, [user, flipbookIdNow, unowned, setFlipbook, loadSaved]);
+
+  // The title field follows the animation; the sidebar refreshes when a run settles.
+  const flipbookTitleNow = flipbook ? flipbookTitle(flipbook) : "";
+  useEffect(() => setTitle(flipbookTitleNow), [flipbookIdNow, flipbookTitleNow]);
+  const settledKey = flipbook ? `${flipbook.id}:${isActive(flipbook) ? "active" : flipbook.status}` : null;
+  useEffect(() => {
+    if (user && settledKey) void loadSaved();
+  }, [user, settledKey, loadSaved]);
+
+  const create = async (image: FlipbookImage, prompt: string, options: CreateOptions) => {
+    if (outOfFreeEdits) return setLogin("quota");
+    setCreating(true);
+    try {
+      const next: Flipbook = await flipbookApi.create(image.id, prompt, options);
+      setFlipbook(next);
+      void refreshSession();
+    } catch (error) {
+      if (error instanceof FlipbookApiError && error.code === "login_required") setLogin("quota");
+      else toast({ title: "Couldn’t start the animation", description: error instanceof Error ? error.message : "Try again.", status: "error" });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  // A fresh studio: the URL was replaced in place, so the router can't be relied on to remount.
+  const startOver = () => {
+    window.history.replaceState(null, "", "/flipbook");
+    window.location.reload();
+  };
+
+  const saveTitle = () => {
+    const next = title.trim();
+    if (!flipbook || !owned || !next || next === flipbookTitle(flipbook)) return;
+    void flipbookApi.save(flipbook.id, next).then((updated) => { setFlipbook(updated); void loadSaved(); }, () => setTitle(flipbookTitle(flipbook)));
+  };
+
+  const remove = async (entry: FlipbookSummary) => {
+    if (!window.confirm(`Delete “${entry.title}”? Its drawings and exports will expire within a day.`)) return;
+    await flipbookApi.unsave(entry.id).catch(() => undefined);
+    if (entry.id === flipbook?.id) startOver();
+    else void loadSaved();
+  };
+
+  return (
+    <div className={shell.studio}>
+      <header className={shell.header}>
+        <div className={shell.headerStart}>
+          <Link href="/" className={shell.brand} aria-label="Focus — Home">
+            <Image src="/brand/focus-cat.webp" alt="" width={30} height={30} />
+            <span>focus<span className={shell.brandDot}>.</span></span>
+          </Link>
+          {flipbook && owned ? (
+            <input
+              aria-label="Animation name"
+              className={shell.title}
+              value={title}
+              maxLength={FLIPBOOK_TITLE_MAX}
+              onChange={(event) => setTitle(event.target.value)}
+              onBlur={saveTitle}
+              onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
+            />
+          ) : flipbook ? (
+            <span className={shell.titleStatic}>{flipbookTitle(flipbook)}</span>
+          ) : null}
+          {owned ? <span className={shell.saved}>Saved to your animations</span> : null}
+        </div>
+        <ModeSwitch current="flipbook" />
+        <div className={shell.headerEnd}><AccountButton session={session} next={here} /></div>
+      </header>
+
+      <div className={shell.body}>
+        <aside className={shell.sidebar} aria-label={user ? "Your animations" : "Account"}>
+          <Button variant="outline" size="sm" className="w-full justify-start" onClick={startOver}>
+            <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
+            New animation
+          </Button>
+
+          {user ? (
+            <nav className={shell.projects} aria-label="Animations">
+              <p className={shell.sideLabel}>Animations</p>
+              {saved === null ? (
+                <SidebarListSkeleton label="Loading your animations" />
+              ) : saved.length === 0 ? (
+                <p className="px-2 text-xs leading-5 text-muted-foreground">Every animation you make is saved here.</p>
+              ) : (
+                <ul className="flex flex-col gap-1">
+                  {saved.map((entry) => (
+                    <li key={entry.id} className={cn(shell.project, entry.id === flipbook?.id && shell.projectActive)}>
+                      <Link href={`/flipbook?f=${entry.id}`} className={shell.projectLink} aria-current={entry.id === flipbook?.id ? "page" : undefined}>
+                        {/* eslint-disable-next-line @next/next/no-img-element -- the illustration, from the media route */}
+                        <img src={entry.posterUrl} alt="" className={cn(shell.poster, styles.posterContain)} />
+                        <span className="min-w-0">
+                          <span className="block truncate text-xs text-foreground">{entry.title}</span>
+                          <span className="block text-[11px] text-muted-foreground">
+                            {entry.action ? `${ACTION_SPECS[entry.action].label} · ` : ""}{entry.frames}/{WALK_FRAME_COUNT} frames · {ago(entry.updatedAt)}
+                          </span>
+                        </span>
+                      </Link>
+                      <button type="button" className={shell.projectDelete} aria-label={`Delete ${entry.title}`} onClick={() => void remove(entry)}>
+                        <HugeiconsIcon icon={Delete02Icon} size={13} strokeWidth={1.75} />
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </nav>
+          ) : session?.quota ? (
+            <section className={shell.guest} aria-label="Free edits">
+              <p className="text-sm font-medium text-foreground">Free edits</p>
+              <div className="flex items-baseline justify-between text-xs text-muted-foreground tabular-nums">
+                <span>{session.quota.remaining === 0 ? "None left" : `${session.quota.remaining} left`}</span>
+                <span>{session.quota.used}/{session.quota.limit} used</span>
+              </div>
+              <ProgressMeter size="sm" value={Math.round((session.quota.used / Math.max(1, session.quota.limit)) * 100)} aria-label="Free edits used" />
+              <p className="text-xs leading-5 text-muted-foreground">Sign in to keep animating without limits and save every animation.</p>
+              <FacebookButton next={here} label="Sign in with Facebook" className="h-9 whitespace-nowrap px-3 text-[13px]" />
+            </section>
+          ) : null}
+        </aside>
+
+        <main className={shell.main}>
+          {pollError ? <p className={styles.hint} data-invalid="" role="status">{pollError}</p> : null}
+          {flipbookId && !flipbook && !loadError ? (
+            <FlipbookSkeleton />
+          ) : flipbook ? (
+            <>
+              <FlipbookEditor flipbook={flipbook} onChange={setFlipbook} onStartOver={startOver} />
+              {!user ? (
+                <section className={shell.history}>
+                  <p className="text-xs leading-5 text-muted-foreground">
+                    Not saved: animations without an account expire after a day.{" "}
+                    <button type="button" className="text-primary hover:underline" onClick={() => setLogin("save")}>Sign in with Facebook to save this animation</button>
+                  </p>
+                </section>
+              ) : null}
+            </>
+          ) : (
+            <>
+              {loadError ? <p className={styles.hint} data-invalid="" role="alert">{loadError.message}</p> : null}
+              <FlipbookCreate
+                onCreate={(image, prompt, options) => void create(image, prompt, options)}
+                creating={creating}
+                blockedReason={outOfFreeEdits ? "You’ve used your free edits. Sign in with Facebook to keep going." : undefined}
+              />
+            </>
+          )}
+        </main>
+      </div>
+      <LoginDialog open={login !== null} onOpenChange={(open) => { if (!open) setLogin(null); }} next={here} reason={login ?? "save"} />
+    </div>
+  );
+}

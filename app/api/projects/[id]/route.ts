@@ -26,7 +26,7 @@ export async function PATCH(request: Request, { params }: Context) {
   try {
     const user = await requireUser(request);
     const parsed = UpdateProjectRequestSchema.safeParse(await readJsonBody(request));
-    if (!parsed.success) throw new AppError("invalid_project", 400, "El nombre del proyecto no es válido.");
+    if (!parsed.success) throw new AppError("invalid_project", 400, "Enter a valid project name.");
     return Response.json(await updateProject((await params).id, user.id, parsed.data));
   } catch (error) {
     return errorResponse(error);

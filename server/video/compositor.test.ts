@@ -214,7 +214,7 @@ describe("compositor", () => {
     await (await import("node:fs/promises")).mkdir(outputDir, { recursive: true });
     const result = await renderVideo({ normalizedPath: silent, media: media(false), masks: gappy, params: RenderParamsSchema.parse({ effect: "selective_color" }), outputDir });
     expect(result.framesWithoutMask).toBe(5);
-    expect(result.warnings.join(" ")).toMatch(/5 de 48/);
+    expect(result.warnings).toContain("5 of 48 frames have no subject mask. The effect treats those frames entirely as background.");
   });
 
   it("Stops FFmpeg when the render is aborted", async () => {

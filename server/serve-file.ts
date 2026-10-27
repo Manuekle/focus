@@ -7,7 +7,7 @@ import { parseRange } from "./http-range";
 /** Streams a local file, honoring Range. `downloadName` turns it into an attachment. */
 export async function serveFile(request: Request, file: string, type: string, downloadName?: string): Promise<Response> {
   const info = await stat(file).catch(() => null);
-  if (!info) throw new AppError("media_not_found", 404, "Ese archivo ya no está disponible.");
+  if (!info) throw new AppError("media_not_found", 404, "This file is no longer available.");
   const size = info.size;
   const headers = new Headers({
     "Content-Type": type,

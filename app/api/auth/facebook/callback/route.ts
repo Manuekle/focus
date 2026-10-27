@@ -27,11 +27,11 @@ const SimulatedSchema = z.object({ state: z.string().min(1).max(100), name: z.st
 /** The local stand-in for Facebook: the simulated sign-in page posts here. */
 export async function POST(request: Request) {
   try {
-    if (!simulatedLoginAllowed()) throw new AppError("auth_not_configured", 503, "El inicio de sesión simulado no está disponible aquí.");
+    if (!simulatedLoginAllowed()) throw new AppError("auth_not_configured", 503, "Simulated sign-in isn’t available here.");
     const parsed = SimulatedSchema.safeParse(await readJsonBody(request));
-    if (!parsed.success) throw new AppError("invalid_name", 400, "Escribe tu nombre para continuar.");
+    if (!parsed.success) throw new AppError("invalid_name", 400, "Enter your name to continue.");
     const next = checkState(request, parsed.data.state);
-    if (!next) throw new AppError("auth_expired", 400, "El inicio de sesión expiró. Vuelve a intentarlo.");
+    if (!next) throw new AppError("auth_expired", 400, "Your sign-in session has expired. Try again.");
     return jsonWithCookies({ next }, await signIn(simulatedProfile(parsed.data.name)));
   } catch (error) {
     return errorResponse(error);

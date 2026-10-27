@@ -62,8 +62,6 @@
 .groupLabel svg { color: color-mix(in srgb, var(--primary) 70%, var(--foreground)); }
 .chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chip { max-width: 100%; height: auto; min-height: 26px; padding-block: 4px; border-radius: 999px; white-space: normal; text-align: left; line-height: 1.35; }
-.skeleton { width: 168px; height: 26px; border-radius: 999px; background: linear-gradient(90deg, #ffffff06 0%, #ffffff10 50%, #ffffff06 100%) 0 0 / 200% 100%; animation: shimmer 1.4s linear infinite; }
-.skeletonShort { width: 124px; }
 .subject { display: inline-flex; align-items: center; gap: 4px; min-height: 26px; padding: 3px 10px 3px 8px; border: 0; border-radius: 999px; background: transparent; box-shadow: inset 0 0 0 1px #ffffff14; color: var(--foreground); font: inherit; font-size: 12px; line-height: 1.35; cursor: pointer; transition: background-color 140ms ease-out, box-shadow 140ms ease-out, color 140ms ease-out; }
 .subjectPlus { color: var(--muted-foreground); transition: color 140ms ease-out; }
 .subject:hover { background: #ffffff08; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 45%, transparent); }
@@ -74,8 +72,6 @@
 .generate { width: 100%; }
 .blocked { color: var(--muted-foreground); font-size: 12px; text-align: center; }
 
-@keyframes shimmer { to { background-position: -200% 0; } }
-@media (prefers-reduced-motion: reduce) { .skeleton { animation: none; } }
 @media (max-width: 760px) {
   .tabs :global(.t-tab) { padding-inline: 6px; }
 }

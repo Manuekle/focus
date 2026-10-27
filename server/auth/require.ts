@@ -4,6 +4,6 @@ import { currentUser } from "./users";
 
 export async function requireUser(request: Request): Promise<User> {
   const user = await currentUser(request);
-  if (!user) throw new AppError("login_required", 401, "Inicia sesión con Facebook para ver y guardar tus proyectos.");
+  if (!user) throw new AppError("login_required", 401, "Sign in with Facebook to view and save your projects.");
   return user;
 }

@@ -7,13 +7,17 @@ import { dataRoot } from "../storage";
 export type UsageEntry = {
   readonly at: string;
   readonly model: string;
-  readonly kind: "plan" | "suggest" | "assist" | "segment" | "file_upload";
+  readonly kind:
+    | "plan" | "suggest" | "assist" | "segment" | "file_upload"
+    // Focus Flipbook: Muse Image drawings, SAM 3.1 on still images, Muse Spark analysis/plan/review.
+    | "image_generate" | "segment_image" | "flipbook_analyze" | "flipbook_plan" | "flipbook_review";
   readonly cached: boolean;
   readonly ok: boolean;
   readonly videoId?: string;
   readonly inputTokens?: number;
   readonly outputTokens?: number;
   readonly videoFramesProcessed?: number;
+  readonly flipbookId?: string;
   readonly durationMs?: number;
   readonly error?: string;
 };
@@ -47,6 +51,8 @@ export async function usageSummary() {
     planCalls: calls.filter((entry) => entry.kind === "plan").length,
     assistCalls: calls.filter((entry) => entry.kind === "assist").length,
     segmentCalls: calls.filter((entry) => entry.kind === "segment").length,
+    imageCalls: calls.filter((entry) => entry.kind === "image_generate").length,
+    imageSegmentCalls: calls.filter((entry) => entry.kind === "segment_image").length,
     inputTokens: sum((entry) => entry.inputTokens),
     outputTokens: sum((entry) => entry.outputTokens),
     videoFramesProcessed: sum((entry) => entry.videoFramesProcessed),
@@ -61,7 +67,10 @@ export async function samFramesSince(since: Date): Promise<number> {
   for (const line of raw.split("\n")) {
     if (!line) continue;
     const entry = JSON.parse(line) as UsageEntry;
-    if (entry.kind === "segment" && !entry.cached && new Date(entry.at) >= since) total += entry.videoFramesProcessed ?? 0;
+    if (entry.cached || new Date(entry.at) < since) continue;
+    if (entry.kind === "segment") total += entry.videoFramesProcessed ?? 0;
+    // A still image is one frame of SAM work.
+    else if (entry.kind === "segment_image" && entry.ok) total += 1;
   }
   return total;
 }

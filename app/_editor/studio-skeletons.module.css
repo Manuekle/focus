@@ -1,0 +1,15 @@
+/* Skeletons mirror the real layouts (editor-view.module.css, studio.module.css), so nothing jumps when content lands. */
+.list { display: flex; flex-direction: column; gap: 4px; }
+.row { display: flex; align-items: center; gap: 10px; padding: 6px; }
+.poster { width: 40px; height: 40px; flex-shrink: 0; border-radius: 7px; }
+.lines { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 7px; }
+
+.editor { display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); align-items: start; gap: 28px; }
+.preview { display: flex; min-width: 0; flex-direction: column; gap: 14px; }
+.stage { width: 100%; aspect-ratio: 16 / 9; max-height: min(62vh, 620px); border-radius: 16px; }
+.transport { display: flex; align-items: center; gap: 12px; padding: 0 12px; }
+.controls { display: flex; min-width: 0; flex-direction: column; gap: 14px; padding: 18px; border: 1px solid var(--border); border-radius: 16px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
+@media (max-width: 1100px) {
+  .editor { grid-template-columns: 1fr; max-width: 760px; margin-inline: auto; width: 100%; }
+}

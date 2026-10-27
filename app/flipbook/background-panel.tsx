@@ -1,0 +1,136 @@
+"use client";
+
+import { useRef, useState } from "react";
+import { AiMagicIcon, Image01Icon } from "@hugeicons/core-free-icons";
+import { HugeiconsIcon } from "../../components/icons/icon";
+import { Button } from "../../components/ui/button";
+import { Spinner } from "../../components/ui/spinner";
+import { ToggleChip } from "../../components/ui/toggle-chip";
+import { BACKGROUND_PROMPT_MAX, IMAGE_ACCEPT_ATTRIBUTE, type BackgroundMotion, type Flipbook, type FlipbookBackground } from "../../shared/flipbook";
+import styles from "./flipbook.module.css";
+
+const MOTIONS: readonly { motion: BackgroundMotion; label: string; hint: string }[] = [
+  { motion: "static", label: "Still", hint: "" },
+  { motion: "scroll", label: "Slide", hint: "The scene slides behind the character at the length of its stride, so the feet stay planted while it seems to go somewhere." },
+  { motion: "parallax", label: "Parallax", hint: "The sky drifts slowly while the ground and everything on it slide at the stride: depth from a single picture." },
+  { motion: "zoom", label: "Slow zoom", hint: "The camera eases in and back out over the length of the clip, so the scene breathes behind the character." },
+];
+
+/** Whether the illustration came without a setting: transparent, or a plain backdrop. */
+export function hasNoBackground(flipbook: Flipbook): boolean {
+  return flipbook.source.hasAlpha || flipbook.analysis?.background === "plain";
+}
+
+/**
+ * What the character stands on: transparency, a color, the uploaded scene,
+ * an image, or a setting Muse Image draws for it, still or scrolling.
+ */
+export function BackgroundPanel({
+  flipbook,
+  background,
+  onBackgroundChange,
+  busy,
+  generating,
+  onGenerate,
+  creatingScene,
+  onCreateScene,
+  onUploadBackground,
+}: {
+  readonly flipbook: Flipbook;
+  readonly background: FlipbookBackground;
+  readonly onBackgroundChange: (background: FlipbookBackground) => void;
+  readonly busy: boolean;
+  readonly generating: boolean;
+  readonly onGenerate: (prompt: string) => void;
+  readonly creatingScene: boolean;
+  readonly onCreateScene: () => void;
+  readonly onUploadBackground: (file: File) => void;
+}) {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const generated = flipbook.backgrounds.generated;
+  const [prompt, setPrompt] = useState(generated?.prompt ?? "");
+  const [motion, setMotion] = useState<BackgroundMotion>(background.kind === "generated" || background.kind === "scene" ? background.motion ?? "static" : "scroll");
+  const moves = background.kind === "generated" || background.kind === "scene";
+  const currentMotion = moves ? background.motion ?? "static" : motion;
+  const color = background.kind === "color" ? background.color : "#ffffff";
+  const sceneOffered = flipbook.analysis !== null && flipbook.analysis.background !== "plain" && !flipbook.source.hasAlpha;
+  const bare = hasNoBackground(flipbook);
+  // Parallax needs the sky split from the rest, which only exists when SAM found one.
+  const depth = background.kind === "scene" ? flipbook.backgrounds.depth.scene : background.kind === "generated" ? flipbook.backgrounds.depth.generated : false;
+  const pickMotion = (next: BackgroundMotion) => {
+    setMotion(next);
+    if (background.kind === "generated" || background.kind === "scene") onBackgroundChange({ kind: background.kind, motion: next });
+  };
+
+  return (
+    <section className={styles.panel} aria-labelledby="background-title">
+      <h2 id="background-title" className={styles.panelTitle}>Background</h2>
+
+      <div className={styles.chips}>
+        <ToggleChip size="xs" selected={background.kind === "transparent"} onClick={() => onBackgroundChange({ kind: "transparent" })}>Transparent</ToggleChip>
+        <ToggleChip size="xs" selected={background.kind === "color"} onClick={() => onBackgroundChange({ kind: "color", color })}>Color</ToggleChip>
+        {background.kind === "color" ? (
+          <input type="color" className={styles.color} value={color} onChange={(event) => onBackgroundChange({ kind: "color", color: event.target.value })} aria-label="Background color" />
+        ) : null}
+        {generated ? (
+          <ToggleChip size="xs" selected={background.kind === "generated"} onClick={() => onBackgroundChange({ kind: "generated", motion })}>Generated</ToggleChip>
+        ) : null}
+        {sceneOffered ? (
+          flipbook.backgrounds.scene ? (
+            <ToggleChip size="xs" selected={background.kind === "scene"} onClick={() => onBackgroundChange({ kind: "scene", motion })}>Your scene</ToggleChip>
+          ) : (
+            <Button size="xs" variant="outline" disabled={busy || creatingScene} onClick={onCreateScene} title="Muse Image redraws your illustration without the character, once (1 drawing).">
+              {creatingScene ? <Spinner className="size-3" /> : <HugeiconsIcon icon={Image01Icon} size={12} strokeWidth={1.75} />}Use your scene
+            </Button>
+          )
+        ) : null}
+        {flipbook.backgrounds.custom ? (
+          <ToggleChip size="xs" selected={background.kind === "custom"} onClick={() => onBackgroundChange({ kind: "custom" })}>Your image</ToggleChip>
+        ) : null}
+        <Button size="xs" variant="ghost" disabled={busy} onClick={() => fileRef.current?.click()}>{flipbook.backgrounds.custom ? "Replace image" : "Upload image"}</Button>
+        <input
+          ref={fileRef} type="file" accept={IMAGE_ACCEPT_ATTRIBUTE} className="sr-only" tabIndex={-1} aria-hidden
+          onChange={(event) => {
+            const file = event.currentTarget.files?.[0];
+            event.currentTarget.value = "";
+            if (file) onUploadBackground(file);
+          }}
+        />
+      </div>
+
+      {moves ? (
+        <div className={styles.controlRow}>
+          <span className={styles.controlLabel}>Motion</span>
+          <div className={styles.chips}>
+            {MOTIONS.filter((entry) => entry.motion !== "parallax" || depth).map((entry) => (
+              <ToggleChip key={entry.motion} size="xs" selected={currentMotion === entry.motion} onClick={() => pickMotion(entry.motion)}>{entry.label}</ToggleChip>
+            ))}
+          </div>
+        </div>
+      ) : null}
+      {moves && currentMotion !== "static" ? <p className={styles.hint}>{MOTIONS.find((entry) => entry.motion === currentMotion)?.hint}</p> : null}
+      {moves && !depth ? <p className={styles.hint}>No sky was found in this picture, so it can’t move in two depths.</p> : null}
+
+      <div className={styles.generate}>
+        <p className={styles.sectionLabel}>{generated ? "Draw another background" : "Generate a background"}</p>
+        {bare && !generated ? <p className={styles.hint}>Your drawing has no background. Describe a setting and Focus draws it in the same style, ready to stay still or move.</p> : null}
+        <div className={styles.field}>
+          <textarea
+            className={styles.fieldInput}
+            rows={2}
+            maxLength={BACKGROUND_PROMPT_MAX}
+            placeholder="Where is it? e.g. “a park at sunset”, “a neon city street at night”"
+            value={prompt}
+            onChange={(event) => setPrompt(event.target.value)}
+            disabled={busy || generating}
+            aria-label="Describe the background to generate"
+          />
+        </div>
+        <Button size="sm" variant="ai" disabled={busy || generating} onClick={() => onGenerate(prompt.trim())} title="Muse Image draws one background in your character’s style (1 drawing).">
+          {generating ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={AiMagicIcon} size={14} strokeWidth={1.75} />}
+          {generating ? "Drawing the background…" : generated ? "Draw again" : "Generate background"}
+        </Button>
+      </div>
+    </section>
+  );
+}

@@ -10,6 +10,7 @@ import { useState, type ReactNode } from "react";
 import { useToast } from "../../components/toast-provider";
 import { cn } from "../../lib/utils";
 import { RenderParamsSchema, type RenderParams, type RenderResult } from "../../shared/render";
+import { englishRenderWarning } from "../../shared/render-warnings";
 import type { EditJob, JobPhase, PlanEffect } from "../../shared/schemas";
 import { AiEditor } from "./ai-editor";
 import { EffectControls } from "./effect-controls";
@@ -273,7 +274,7 @@ export function ResultPanel({
   // The dedicated controls now explain the suggestion next to its marker.
   // Keep actual render warnings in the existing notice without duplicating
   // a long, persistent suggestion toast over the mobile timeline.
-  const warnings = render.warnings.filter((warning) => !job.temporalSuggestion || !warning.startsWith(job.temporalSuggestion.reason));
+  const warnings = render.warnings.filter((warning) => !job.temporalSuggestion || !warning.startsWith(job.temporalSuggestion.reason)).map(englishRenderWarning);
   const adjustments = (
     <div className="flex flex-col gap-4">
       <EffectControls family={job.request.effect} value={draft} onChange={onDraftChange} />

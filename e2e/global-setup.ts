@@ -16,8 +16,8 @@ export default function globalSetup() {
   ]);
   execFileSync("ffmpeg", [
     "-hide_banner", "-loglevel", "error", "-y",
-    "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24:duration=12",
-    "-c:v", "libx264", "-pix_fmt", "yuv420p",
+    "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24:duration=61",
+    "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
     path.join(dir, "long.mp4"),
   ]);
   writeFileSync(path.join(dir, "broken.mp4"), "this is not a video");

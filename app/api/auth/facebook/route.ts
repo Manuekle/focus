@@ -14,7 +14,7 @@ export async function GET(request: Request) {
     const state = newOAuthState();
     const config = readFacebookConfig();
     if (config) return redirectWithCookies(authorizeUrl(config, callbackUrl(request), state), [stateCookie(state, next)]);
-    if (!simulatedLoginAllowed()) throw new AppError("auth_not_configured", 503, "El inicio de sesión con Facebook no está configurado en esta instalación.");
+    if (!simulatedLoginAllowed()) throw new AppError("auth_not_configured", 503, "Facebook sign-in isn’t configured on this server.");
     return redirectWithCookies(`/auth/simulated?state=${encodeURIComponent(state)}`, [stateCookie(state, next)]);
   } catch (error) {
     return errorResponse(error);
