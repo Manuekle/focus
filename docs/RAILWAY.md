@@ -74,7 +74,7 @@ El healthcheck de Docker usa `PORT`, incluido cuando Railway lo asigna dinámica
 
    Verificar que `FOCUS_PUBLIC_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}` se resuelva al dominio asignado. Con un dominio propio, sustituirlo por ese origen HTTPS y actualizar Facebook.
 
-7. En la app de Meta, registrar `https://<dominio-del-servicio>/api/auth/facebook/callback` como **Valid OAuth Redirect URI**. Esta configuración de Facebook no se crea automáticamente al publicar en Railway.
+7. En la app de Meta, registrar `https://<dominio-del-servicio>/api/auth/facebook/callback` como **Valid OAuth Redirect URI**. Registrar también las páginas `/privacy` y `/data-deletion`. Ver los campos y el estado de acceso en [Facebook Login](FACEBOOK_LOGIN.md). Esta configuración de Facebook no se crea automáticamente al publicar en Railway.
 
 8. Comprobar `/api/health`, `/editor` y `/flipbook`. La salud debe indicar `storageWritable: true`, `metaConfigured: true` y `aiEnabled: true`. Una respuesta 200 por sí sola no certifica que las claves o Facebook estén configurados: `/api/health` comprueba principalmente FFmpeg y almacenamiento.
 
@@ -111,7 +111,7 @@ Configuración preparada en el repositorio. Verificado localmente el 27 de octub
 
 Esta prueba corrió en Docker Linux/arm64 local; el build y la verificación en la infraestructura de Railway siguen pendientes.
 
-La cuenta de Railway ya está conectada y existe el proyecto privado [focus](https://railway.com/project/f7e84859-2207-487c-b6f1-9dfc6a6d1e26) en el workspace `Manus projects`, con el entorno `production`. El servicio `focus` y sus 21 variables están preparados como cambios pendientes: todavía no hay una instancia ejecutándose. Los secretos se prepararon directamente en las variables de Railway; no forman parte de Git. `FOCUS_AI_DISABLED=1` mantiene la IA en espera durante esta preparación.
+La cuenta de Railway ya está conectada y existe el proyecto privado [focus](https://railway.com/project/f7e84859-2207-487c-b6f1-9dfc6a6d1e26) en el workspace `Manus projects`, con el entorno `production`. El servicio `focus` y sus 24 variables, incluidas las dos credenciales y la versión de Graph API de Facebook Login, están preparados como cambios pendientes: todavía no hay una instancia ejecutándose. Los secretos se prepararon directamente en las variables de Railway; no forman parte de Git. `FOCUS_AI_DISABLED=1` mantiene la IA en espera durante esta preparación.
 
 El usuario eligió continuar con Hobby. La cuenta todavía tiene un máximo de 500 MB por volumen: hay que activar Hobby antes de crear el volumen previsto de 5 GB. La integración permite administrar el proyecto, pero no cambiar el plan o completar el pago. Los límites de CPU/RAM y demás ajustes del servicio se aplicarán desde `railway.json` al desplegar el código.
 
