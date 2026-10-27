@@ -8,6 +8,7 @@ import { samFramesSince } from "./ai/usage";
 //   FOCUS_AI_REQUESTS_PER_HOUR=30  paid requests per client per hour
 //   FOCUS_UPLOADS_PER_HOUR=20      uploads per client per hour
 //   FOCUS_CHAT_PER_HOUR=60         AI editor messages per client per hour
+//   FOCUS_RENDERS_PER_HOUR=60      new local renders per client per hour ("Animate as is")
 //   FOCUS_MAX_ACTIVE_JOBS=4        jobs running at once, all clients
 //   FOCUS_SAM_DAILY_FRAMES=20000   SAM frames per UTC day (0 = no budget)
 //   FOCUS_TRUST_PROXY=1            read the client IP from X-Forwarded-For
@@ -23,6 +24,7 @@ export function guardConfig() {
     aiPerHour: number("FOCUS_AI_REQUESTS_PER_HOUR", 30),
     uploadsPerHour: number("FOCUS_UPLOADS_PER_HOUR", 20),
     chatPerHour: number("FOCUS_CHAT_PER_HOUR", 60),
+    rendersPerHour: number("FOCUS_RENDERS_PER_HOUR", 60),
     maxActiveJobs: number("FOCUS_MAX_ACTIVE_JOBS", 4),
     samDailyFrames: number("FOCUS_SAM_DAILY_FRAMES", 20000),
     trustProxy: process.env.FOCUS_TRUST_PROXY === "1",
@@ -104,6 +106,15 @@ export function guardChatRequest(request: Request): void {
   }
   const wait = takeSlot("chat", clientKey(request), config.chatPerHour);
   if (wait !== null) throw tooMany(wait, "AI editor messages");
+}
+
+/**
+ * Local renders: no paid call, but seconds of CPU each. Only a render that
+ * actually runs takes a slot; one served from the cache doesn't.
+ */
+export function guardRender(request: Request): void {
+  const wait = takeSlot("render", clientKey(request), guardConfig().rendersPerHour);
+  if (wait !== null) throw tooMany(wait, "renders");
 }
 
 const MAX_JSON_BYTES = 16 * 1024;

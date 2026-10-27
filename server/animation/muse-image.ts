@@ -43,8 +43,10 @@ function blocked(error: unknown): boolean {
 export async function generateImage(input: {
   readonly prompt: string;
   readonly references: readonly ImageReference[];
-  /** Aspect ratio hint, "WxH"; Muse Image may return other exact pixels. */
-  readonly size: string;
+  /** Aspect ratio hint, "WxH"; Muse Image may return other exact pixels. Omitted, an edit keeps Image 1's aspect. */
+  readonly size?: string;
+  /** "edit" reworks Image 1 instead of drawing a new picture. */
+  readonly action?: "edit";
   readonly flipbookId: string;
   readonly signal?: AbortSignal;
 }): Promise<GeneratedImage> {
@@ -63,7 +65,8 @@ export async function generateImage(input: {
     tools: [
       {
         type: "image_generation",
-        size: input.size,
+        ...(input.size ? { size: input.size } : {}),
+        ...(input.action ? { action: input.action } : {}),
         output_format: "png",
         reasoning_strength: "high",
         enable_image_search: false,
