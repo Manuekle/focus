@@ -28,12 +28,18 @@ export async function drawCleanReference(input: {
   readonly sourceFlat: Buffer;
   readonly analysis: CharacterAnalysis | null;
   readonly direction: FlipbookDirection;
+  /** Extra images of the same character: other angles, details the illustration hides. */
+  readonly extras?: readonly Buffer[];
   readonly flipbookId: string;
   readonly signal?: AbortSignal;
 }): Promise<GeneratedImage> {
+  const extras = input.extras ?? [];
   return generateImage({
-    prompt: referencePrompt(input.analysis, input.direction),
-    references: [{ png: input.sourceFlat, role: "the original character illustration (identity reference)." }],
+    prompt: referencePrompt(input.analysis, input.direction, extras.length),
+    references: [
+      { png: input.sourceFlat, role: "the original character illustration (identity reference)." },
+      ...extras.map((png) => ({ png, role: "an extra reference of the same character (design details only, never the pose)." })),
+    ],
     size: REFERENCE_SIZE,
     flipbookId: input.flipbookId,
     signal: input.signal,
@@ -70,16 +76,108 @@ export async function readReference(flipbookId: string, version: string): Promis
   return { png, measure };
 }
 
-/** The uploaded scene without the character: one background plate, generated once. */
-export async function drawScenePlate(input: { readonly sourceFlat: Buffer; readonly analysis: CharacterAnalysis | null; readonly width: number; readonly height: number; readonly flipbookId: string; readonly signal?: AbortSignal }): Promise<GeneratedImage> {
-  const landscape = input.width >= input.height;
+/**
+ * The uploaded scene without the character: one background plate, generated
+ * once. An edit with no size, so the plate keeps the upload's aspect (a fixed
+ * 3:2 size recomposed 16:9 scenes) and can be laid back over it.
+ */
+export async function drawScenePlate(input: { readonly sourceFlat: Buffer; readonly analysis: CharacterAnalysis | null; readonly flipbookId: string; readonly signal?: AbortSignal }): Promise<GeneratedImage> {
   return generateImage({
     prompt: scenePrompt(input.analysis),
     references: [{ png: input.sourceFlat, role: "the original illustration, scene and character." }],
-    size: landscape ? "1536x1024" : "1024x1536",
+    action: "edit",
     flipbookId: input.flipbookId,
     signal: input.signal,
   });
+}
+
+/** The character's place in the full upload, from its cut-out and where it was cropped. */
+export async function subjectMask(cutout: Buffer, measure: Pick<Measure, "crop" | "rawWidth" | "rawHeight">): Promise<Uint8Array> {
+  const { crop, rawWidth: width } = measure;
+  const alpha = await sharp(cutout).ensureAlpha().extractChannel(3).raw().toBuffer();
+  const mask = new Uint8Array(width * measure.rawHeight);
+  for (let y = 0; y < crop.height; y++) mask.set(alpha.subarray(y * crop.width, (y + 1) * crop.width), (crop.top + y) * width + crop.left);
+  return mask;
+}
+
+/** A plate whose aspect differs more than this from the upload can't be laid back over it. */
+const ASPECT_TOLERANCE = 0.03;
+
+/**
+ * Muse Image re-renders the whole picture when it removes the character:
+ * everything drifts a little and small details change (a jersey's number).
+ * Only the character's place should be new, so the plate is fitted to the
+ * upload and used only inside the character's grown, feathered mask; every
+ * other pixel is the upload's own. Pure, apart from the image codecs.
+ */
+export async function keepAroundSubject(source: Buffer, plate: Buffer, mask: Uint8Array): Promise<Buffer | null> {
+  const { data: rgb, info } = await sharp(source).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { width, height } = info;
+  const plateMeta = await sharp(plate).metadata();
+  if (!plateMeta.width || !plateMeta.height) return null;
+  if (Math.abs(plateMeta.width / plateMeta.height / (width / height) - 1) > ASPECT_TOLERANCE) return null;
+  const drawn = await sharp(plate).removeAlpha().resize(width, height, { fit: "fill", kernel: "lanczos3" }).raw().toBuffer();
+  // Grown past anti-aliased edges and glow, then feathered outward, so the
+  // seam sits in the redrawn background and never cuts through the character.
+  const radius = Math.max(4, Math.round(Math.max(width, height) / 192));
+  const grown = growMask(removedWithSubject(growMask(mask, width, height, radius), rgb, drawn, width, height), width, height, radius);
+  const soft = await sharp(Buffer.from(grown), { raw: { width, height, channels: 1 } }).blur(radius / 2).extractChannel(0).raw().toBuffer();
+  const out = Buffer.alloc(width * height * 3);
+  for (let index = 0; index < width * height; index++) {
+    const k = Math.max(soft[index], mask[index]) / 255;
+    for (let c = 0; c < 3; c++) out[index * 3 + c] = k === 0 ? rgb[index * 3 + c] : Math.round(rgb[index * 3 + c] * (1 - k) + drawn[index * 3 + c] * k);
+  }
+  return sharp(out, { raw: { width, height, channels: 3 } }).png().toBuffer();
+}
+
+/** A channel difference above this between the upload and the plate is something removed, not drift (median 2/255, p90 5/255 on a real plate); a faint, light tail on a light sky differs by ~30. */
+const REMOVED_DIFFERENCE = 24;
+
+/**
+ * The mask plus every strongly changed pixel connected to it. SAM can miss
+ * thin parts (a tail's tip) that Muse Image did remove; restoring those would
+ * leave a piece of the character behind. Changes not touching the character
+ * (a jersey number redrawn) stay out, so the upload wins there.
+ */
+export function removedWithSubject(mask: Uint8Array, rgb: Buffer, drawn: Buffer, width: number, height: number): Uint8Array {
+  const out = new Uint8Array(mask);
+  const changed = new Uint8Array(out.length);
+  for (let index = 0; index < out.length; index++) {
+    const p = index * 3;
+    changed[index] = Math.max(Math.abs(rgb[p] - drawn[p]), Math.abs(rgb[p + 1] - drawn[p + 1]), Math.abs(rgb[p + 2] - drawn[p + 2])) > REMOVED_DIFFERENCE ? 1 : 0;
+  }
+  const stack: number[] = [];
+  for (let index = 0; index < out.length; index++) if (out[index] >= 128) stack.push(index);
+  while (stack.length) {
+    const index = stack.pop()!;
+    const x = index % width, y = (index - x) / width;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+      const next = ny * width + nx;
+      if (out[next] >= 128 || !changed[next]) continue;
+      out[next] = 255;
+      stack.push(next);
+    }
+  }
+  return out;
+}
+
+/**
+ * The scene plate with the upload restored around the character: SAM finds
+ * the character in the upload, and the plate is kept only there. Null when
+ * the character can't be cut out or the plate doesn't fit: the plate is then
+ * used as drawn.
+ */
+export async function restoreScene(input: { readonly sourceFlat: Buffer; readonly plate: Buffer; readonly concept: string; readonly flipbookId: string; readonly signal?: AbortSignal }): Promise<Buffer | null> {
+  try {
+    const { cutout, measure } = await extractSubject({ png: input.sourceFlat, concept: input.concept, flipbookId: input.flipbookId, allowAlpha: false, signal: input.signal });
+    return await keepAroundSubject(input.sourceFlat, input.plate, await subjectMask(cutout, measure));
+  } catch (error) {
+    if (input.signal?.aborted || (error instanceof AppError && error.code === "canceled")) throw error;
+    console.warn("[focus] flipbook: scene kept as drawn, the character couldn’t be found in the upload", error instanceof Error ? error.message : error);
+    return null;
+  }
 }
 
 /** A setting drawn for a character that came without one, in the character's style. */

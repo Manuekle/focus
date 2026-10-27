@@ -1,10 +1,12 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { ArrowLeft01Icon, ArrowRight01Icon, Refresh01Icon, Undo02Icon, Upload01Icon } from "@hugeicons/core-free-icons";
+import { AiDrawingIcon, ArrowLeft01Icon, ArrowRight01Icon, Refresh01Icon, Undo02Icon, Upload01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
+import { Disclosure } from "../../components/ui/disclosure";
+import { MediaLightbox, ZoomButton } from "../../components/ui/media-lightbox";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Switch } from "../../components/ui/switch";
 import { ToggleChip } from "../../components/ui/toggle-chip";
@@ -47,6 +49,7 @@ export function FramePanel({
 }) {
   const [view, setView] = useState<"sprite" | "raw">("sprite");
   const [note, setNote] = useState("");
+  const [zoomed, setZoomed] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const sprite = frameThumb(flipbook, frame);
   const raw = frame.version ? flipbookUrls.raw(flipbook.id, frame.id, frame.version) : null;
@@ -56,6 +59,8 @@ export function FramePanel({
   const working = frame.status === "generating" || frame.status === "processing";
   const canRestore = Boolean(frame.originalVersion && frame.originalVersion !== frame.version);
   const metrics = frame.metrics;
+  const flagged = frame.warnings.length + (frame.review?.issues.length ?? 0);
+  const send = (action: "regenerate" | "enhance") => { onAction({ action, note: note.trim() || undefined }); setNote(""); };
 
   return (
     <section className={styles.panel} aria-labelledby="frame-title">
@@ -67,19 +72,26 @@ export function FramePanel({
         </label>
       </div>
 
-      <div className={styles.inspect} data-transparent={view === "sprite" || undefined}>
-        {shown ? (
-          // eslint-disable-next-line @next/next/no-img-element -- versioned media route
+      {shown ? (
+        <ZoomButton className={styles.inspect} data-transparent={view === "sprite" || undefined} label={`Open ${frame.label} larger`} onOpen={() => setZoomed(true)}>
+          {/* eslint-disable-next-line @next/next/no-img-element -- versioned media route */}
           <img src={shown} alt={`${frame.label}, ${view === "raw" ? "drawing as generated" : "aligned sprite"}`} />
-        ) : (
-          working ? (
+        </ZoomButton>
+      ) : (
+        <div className={styles.inspect}>
+          {working ? (
             <>
               <Skeleton className={styles.working} />
               <p className={styles.workingLabel}>{frame.status === "processing" ? "Cutting out this drawing…" : "Drawing this pose…"}</p>
             </>
-          ) : <p className="text-xs text-muted-foreground">No drawing yet.</p>
-        )}
-      </div>
+          ) : <p className="text-xs text-muted-foreground">No drawing yet.</p>}
+        </div>
+      )}
+      <MediaLightbox
+        items={shown ? [{ kind: "image", src: shown, alt: `${frame.label}, ${view === "raw" ? "drawing as generated" : "aligned sprite"}`, caption: `Frame ${index + 1} · ${frame.label} · ${view === "raw" ? "as drawn" : "aligned sprite"}`, transparent: view === "sprite" }] : []}
+        index={zoomed && shown ? 0 : null}
+        onClose={() => setZoomed(false)}
+      />
       <div className={styles.chips}>
         <ToggleChip size="xs" selected={view === "sprite"} onClick={() => setView("sprite")}>Aligned sprite</ToggleChip>
         <ToggleChip size="xs" selected={view === "raw"} onClick={() => setView("raw")} disabled={!raw}>As drawn</ToggleChip>
@@ -111,10 +123,9 @@ export function FramePanel({
       ) : null}
 
       {pose ? (
-        <details className={styles.details}>
-          <summary>Pose instructions</summary>
-          <p>{pose.description}</p>
-        </details>
+        <Disclosure title="Pose instructions">
+          <p className={styles.poseText}>{pose.description}</p>
+        </Disclosure>
       ) : null}
 
       <div className={styles.actions}>
@@ -132,8 +143,11 @@ export function FramePanel({
           />
         </div>
         <div className={styles.buttonRow}>
-          <Button size="sm" variant="ai" disabled={locked || busy || !flipbook.reference} onClick={() => { onAction({ action: "regenerate", note: note.trim() || undefined }); setNote(""); }}>
-            <HugeiconsIcon icon={Refresh01Icon} size={14} strokeWidth={1.75} />Redraw this frame
+          <Button size="sm" variant="ai" disabled={locked || busy || !flipbook.reference || !frame.version} onClick={() => send("enhance")} title={flagged ? `Muse Image repairs this drawing and fixes ${flagged === 1 ? "the problem" : `the ${flagged} problems`} found above (1 drawing).` : "Muse Image repairs this drawing: anatomy, identity and line work, same pose (1 drawing)."}>
+            <HugeiconsIcon icon={AiDrawingIcon} size={14} strokeWidth={1.75} />Improve with AI
+          </Button>
+          <Button size="sm" variant="outline" disabled={locked || busy || !flipbook.reference} onClick={() => send("regenerate")} title="Muse Image draws this pose again from the reference (1 drawing).">
+            <HugeiconsIcon icon={Refresh01Icon} size={14} strokeWidth={1.75} />Redraw
           </Button>
           <Button size="sm" variant="outline" disabled={locked || busy} onClick={() => fileRef.current?.click()}>
             <HugeiconsIcon icon={Upload01Icon} size={14} strokeWidth={1.75} />Replace
@@ -157,6 +171,7 @@ export function FramePanel({
             }}
           />
         </div>
+        {!locked && frame.version ? <p className={styles.hint}>Improve keeps this pose and fixes its mistakes. Redraw starts the pose over from the reference. Each is one drawing; the old version stays in this frame’s history.</p> : null}
         <div className={styles.buttonRow}>
           <Button size="xs" variant="ghost" disabled={busy || index === 0} onClick={() => onMove(-1)}><HugeiconsIcon icon={ArrowLeft01Icon} size={12} strokeWidth={1.75} />Move earlier</Button>
           <Button size="xs" variant="ghost" disabled={busy || index === count - 1} onClick={() => onMove(1)}>Move later<HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.75} /></Button>

@@ -58,6 +58,7 @@ See `.env.example`. Required: `MODEL_API_KEY`. For a public demo, set at least:
 | `FOCUS_SESSION_SECRET` | — | **Required in production.** Signs session cookies (32+ chars: `openssl rand -base64 48`). |
 | `FOCUS_FREE_EDITS` | 3 | AI edits allowed before Facebook sign-in. Stored on disk, survives restarts. |
 | `FOCUS_CHAT_PER_HOUR` | 60 | AI editor messages per client per hour. |
+| `FOCUS_RENDERS_PER_HOUR` | 60 | New "Animate as is" renders per client per hour (local CPU; cached renders are free). At most 4 wait at once; past that the server answers busy. |
 | `FACEBOOK_APP_ID` / `FACEBOOK_APP_SECRET` | — | Real Facebook Login. Without them a simulated sign-in runs (development only). |
 | `FOCUS_PUBLIC_URL` | request origin | Origin of the OAuth redirect URI. Register `<FOCUS_PUBLIC_URL>/api/auth/facebook/callback` as a Valid OAuth Redirect URI in the Meta app. |
 | `FACEBOOK_GRAPH_VERSION` | v23.0 | Graph API version for the login dialog and `/me`. |
@@ -105,7 +106,7 @@ Run builds, TypeScript checks and video suites in sequence. Next regenerates sha
 
 ## Operations
 
-- **Health:** `GET /api/health` → 200 when FFmpeg, FFprobe and storage work; includes whether AI is enabled and today's SAM usage.
+- **Health:** `GET /api/health` → 200 when FFmpeg, FFprobe and storage work; includes whether AI is enabled. The result is cached for 10 s. SAM usage is in `GET /api/usage` (admin token).
 - **Expiry:** media, masks and renders older than 24 h are deleted when new uploads or jobs arrive.
 - **Restarts:** running jobs are marked "interrupted" after a restart; cached plans, masks and renders survive on the volume and are reused.
 - **Logs:** server errors are logged with codes; API keys are never logged.

@@ -85,6 +85,7 @@ export const flipbookFiles = {
   /** The upload flattened on white: what the models receive. */
   sourceFlat: (id: string) => path.join(flipbookDir(id), "source-flat.png"),
   reference: (id: string, version: string) => path.join(flipbookDir(id), "reference", `${checkedVersion(version)}.png`),
+  extraReference: (id: string, version: string) => path.join(flipbookDir(id), "reference", `extra-${checkedVersion(version)}.png`),
   referenceMeasure: (id: string, version: string) => path.join(flipbookDir(id), "reference", `${checkedVersion(version)}.json`),
   versionDir: (id: string, frameId: string, version: string) => path.join(flipbookDir(id), "frames", checkedFrame(frameId), checkedVersion(version)),
   sprite: (id: string, frameId: string, key: string) => {

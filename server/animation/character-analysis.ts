@@ -50,7 +50,7 @@ Fields:
 - hair, clothing, proportions: precise visible facts for redrawing the same character (colors, lengths, which side an asymmetric element is on, head-to-body ratio). Write "not visible" for what cannot be seen.
 - accessories: visible accessories, each with its color and on which side of the body it is.
 - palette: up to 6 main colors of the character as #RRGGBB hex.
-- requestedAction: what the user's instruction asks the character to do. "fight" for punching, boxing, shadowboxing, sparring or any fighting move. "run" for running, sprinting or jogging. "jump" for jumping, hopping or leaping. "wave" for waving, greeting or saying hello or goodbye with a hand. "idle" for standing still, breathing, waiting or an idle loop. "gesture" for other hand or arm gestures (pointing, clapping). "none" when the instruction names no movement.
+- requestedAction: what the user's instruction asks the character to do. "fight" for punching, boxing, shadowboxing, sparring or any fighting move. "run" for running, sprinting or jogging. "jump" for jumping, hopping or leaping. "wave" for waving, greeting or saying hello or goodbye with a hand. "idle" for resting in a posture, sitting, crouching, standing still, breathing, waiting or an idle loop. "gesture" for other hand or arm gestures (pointing, clapping). "none" when the instruction names no movement.
 - notes: anything that would make redrawing the same character in new poses unreliable (cropped body, heavy occlusion, several characters, very small character), in one short sentence, or null.`;
 
 function stripNulls(value: unknown): unknown {

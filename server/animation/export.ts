@@ -10,6 +10,7 @@ import {
   backgroundShiftAt,
   backgroundZoomAt,
   cellLeftAt,
+  cellTopAt,
   outputFrameCount,
   stageSize,
   tickAtOutputFrame,
@@ -133,7 +134,7 @@ async function backdropAt(backdrop: Backdrop, stage: { width: number; height: nu
 }
 
 /** Straight-alpha "over" of one sprite cell onto the stage at x. */
-function blend(target: Buffer, stageWidth: number, sprite: Rgba, x0: number): void {
+function blend(target: Buffer, stageWidth: number, sprite: Rgba, x0: number, y0 = 0): void {
   const fromX = Math.max(0, -x0);
   const toX = Math.min(sprite.width, stageWidth - x0);
   for (let y = 0; y < sprite.height; y++) {
@@ -141,7 +142,7 @@ function blend(target: Buffer, stageWidth: number, sprite: Rgba, x0: number): vo
       const s = (y * sprite.width + x) * 4;
       const a = sprite.data[s + 3];
       if (a === 0) continue;
-      const d = (y * stageWidth + x0 + x) * 4;
+      const d = ((y0 + y) * stageWidth + x0 + x) * 4;
       if (a === 255) {
         target[d] = sprite.data[s]; target[d + 1] = sprite.data[s + 1]; target[d + 2] = sprite.data[s + 2]; target[d + 3] = 255;
         continue;
@@ -187,7 +188,7 @@ export async function renderExport(input: {
 
   if (request.format === "mp4") {
     if (request.background.kind === "transparent") throw new AppError("mp4_needs_background", 400, "MP4 can’t be transparent. Choose a color, the scene or your own background.");
-    const stage = stageSize(settings.motion, cell);
+    const stage = stageSize(settings, cell);
     const background = await loadBackground(request, stage, { plate: input.plate, far: input.far ?? null });
     const total = outputFrameCount(settings.durationSeconds);
     const file = path.join(outputDir, `${input.baseName}.mp4`);
@@ -200,7 +201,7 @@ export async function renderExport(input: {
         const tick = tickAtOutputFrame(index, settings.drawingFps);
         if (tick !== lastTick) {
           frame = await backdropAt(background, stage, tick, settings, cell, count, facing);
-          blend(frame, stage.width, sprites[tick % count], cellLeftAt(tick, settings, cell, count));
+          blend(frame, stage.width, sprites[tick % count], cellLeftAt(tick, settings, cell, count), cellTopAt(settings, cell));
           lastTick = tick;
         }
         await writer.write(frame);
@@ -218,7 +219,7 @@ export async function renderExport(input: {
   }
 
   if (request.format === "gif") {
-    const stage = stageSize(settings.motion, cell);
+    const stage = stageSize(settings, cell);
     const background = await loadBackground(request, stage, { plate: input.plate, far: input.far ?? null });
     // In place is one cycle looping forever; moving across (or a moving background) needs the whole length.
     const ticks = settings.motion === "in_place" && !backgroundMoves(request.background) ? count : tickCount(settings.durationSeconds, settings.drawingFps);
@@ -227,7 +228,7 @@ export async function renderExport(input: {
     for (let tick = 0; tick < ticks; tick++) {
       if (signal?.aborted) throw new AppError("canceled", 499, "Export canceled.");
       const frame = await backdropAt(background, stage, tick, settings, cell, count, facing);
-      blend(frame, stage.width, sprites[tick % count], cellLeftAt(tick, settings, cell, count));
+      blend(frame, stage.width, sprites[tick % count], cellLeftAt(tick, settings, cell, count), cellTopAt(settings, cell));
       await writeFile(path.join(sourceDir, `frame_${String(tick).padStart(4, "0")}.png`), await sharp(frame, { raw: { width: stage.width, height: stage.height, channels: 4 } }).png().toBuffer());
     }
     const scale = Math.min(1, GIF_LONG_SIDE / Math.max(stage.width, stage.height));

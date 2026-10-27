@@ -42,6 +42,11 @@ export async function flipbookMedia(request: Request, id: string): Promise<Respo
       if (!version) throw new AppError("media_not_found", 404, "This file is no longer available.");
       return png(flipbookFiles.reference(flipbook.id, version));
     }
+    case "extra": {
+      const version = search.get("v") ?? "";
+      if (!flipbook.extraReferences.some((entry) => entry.version === version)) throw new AppError("media_not_found", 404, "This file is no longer available.");
+      return png(flipbookFiles.extraReference(flipbook.id, version));
+    }
     case "raw": {
       const frame = flipbook.frames.find((entry) => entry.id === parseFrame(search.get("frame") ?? ""));
       const version = search.get("v") ?? "";

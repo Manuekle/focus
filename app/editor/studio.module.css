@@ -38,7 +38,59 @@
 .titleStatic { overflow: hidden; color: var(--muted-foreground); font-size: 13px; text-overflow: ellipsis; white-space: nowrap; }
 .saved { flex-shrink: 0; color: var(--muted-foreground); font-size: 11px; }
 
-.body { display: grid; flex: 1; grid-template-columns: 248px minmax(0, 1fr); }
+.body { position: relative; display: grid; flex: 1; grid-template-columns: var(--sidebar-width, 248px) minmax(0, 1fr); transition: grid-template-columns 250ms var(--ease-smooth-out); }
+/* While the edge is dragged the column follows the pointer, not an ease. */
+.body:has(.resizer[data-dragging]) { transition: none; }
+/* The drag edge sits on the sidebar's border; its hit area is wider than the line. */
+.resizer {
+  position: absolute;
+  z-index: 5;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--sidebar-width, 248px) - 4px);
+  width: 9px;
+  transition: left 250ms var(--ease-smooth-out);
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.resizer::after {
+  position: absolute;
+  inset: 0 4px;
+  background: var(--primary);
+  content: "";
+  opacity: 0;
+  transition: opacity 150ms var(--ease-smooth-out);
+}
+.resizer:hover::after, .resizer:focus-visible::after, .resizer[data-dragging]::after { opacity: 0.7; }
+.resizer[data-dragging] { transition: none; }
+.body:has(.resizer[data-dragging]) { cursor: col-resize; user-select: none; }
+
+/* Fold / unfold: a small button riding the sidebar's edge, flush at the page's edge once folded. */
+.sidebarToggle {
+  position: absolute;
+  z-index: 6;
+  top: 14px;
+  left: max(calc(var(--sidebar-width, 248px) - 11px), 6px);
+  display: grid;
+  width: 22px;
+  height: 22px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  cursor: pointer;
+  transition: left 250ms var(--ease-smooth-out), color 150ms, border-color 150ms;
+}
+.sidebarToggle:hover { border-color: color-mix(in srgb, var(--foreground) 22%, var(--border)); color: var(--foreground); }
+.sidebarToggle:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.sidebarToggle svg { transition: transform 250ms var(--ease-smooth-out); }
+.sidebarToggle[data-collapsed] svg { transform: scaleX(-1); }
+.body:has(.resizer[data-dragging]) .sidebarToggle { transition: color 150ms, border-color 150ms; }
+.body[data-collapsed] .sidebar { visibility: hidden; border-right-color: transparent; opacity: 0; transition: opacity 150ms, visibility 0s linear 250ms, border-color 250ms; }
+.sidebar { transition: opacity 200ms 50ms, visibility 0s, border-color 250ms; }
 .sidebar {
   position: sticky;
   top: 60px;
@@ -75,6 +127,7 @@
 .guest { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--card); }
 
 .main { display: flex; min-width: 0; flex-direction: column; gap: 24px; padding: 24px clamp(16px, 3vw, 36px) 48px; }
+.body[data-collapsed] .main { padding-left: max(clamp(16px, 3vw, 36px), 44px); }
 .empty { display: flex; max-width: 640px; flex-direction: column; gap: 12px; margin: 6vh auto 0; width: 100%; }
 .emptyTitle { font-family: var(--font-sn-pro); font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
 .drop { margin-top: 8px; }
@@ -87,6 +140,9 @@
 
 @media (max-width: 860px) {
   .body { grid-template-columns: 1fr; }
+  .resizer, .sidebarToggle { display: none; }
+  .body[data-collapsed] .main { padding-left: clamp(16px, 3vw, 36px); }
+  .body[data-collapsed] .sidebar { visibility: visible; border-right-color: var(--border); opacity: 1; }
   .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
   .saved { display: none; }
 }
@@ -114,6 +170,7 @@
 @media (prefers-reduced-motion: reduce) {
   .main > *, .projects { animation: none; }
   .main, .projects { transition: none; }
+  .body, .resizer, .sidebar, .sidebarToggle, .sidebarToggle svg { transition: none !important; }
   :global(html[data-leaving]) .main,
   :global(html[data-leaving]) .projects { filter: none; }
 }

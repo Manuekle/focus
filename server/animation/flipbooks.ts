@@ -6,6 +6,7 @@ import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/
 import { Readable } from "node:stream";
 import {
   FRAME_IDS,
+  MAX_EXTRA_REFERENCES,
   WALK_POSES,
   actionSpec,
   flipbookTitle,
@@ -26,16 +27,19 @@ import {
   type FrameId,
 } from "../../shared/flipbook";
 import { AppError } from "../errors";
+import { PoseIdSchema, type PoseId } from "../../shared/pose-library";
 import { Limiter } from "../ai/meta";
 import { activeWorkCount, type PaidWorkGate } from "../jobs";
 import { assessInput, analyzeCharacter, lookAtImage } from "./character-analysis";
 import { computeAlignment, extractSubject, MeasureSchema, renderSprite, type AlignInput, type Measure } from "./frame-alignment";
 import { renderExport } from "./export";
 import { drawPose } from "./frame-generation";
+import { loadPoseReference } from "./pose-references";
+import { compatiblePoseId } from "./pose-catalog";
 import { decodeImage, getCharacterImage, imageFiles, readUpload } from "./image-input";
 import { actionFor, planPoses } from "./pose-planning";
 import { checkFrames, contactSheet, reviewFrames } from "./quality-control";
-import { FAR_CONCEPTS, decideReference, growMask, drawBackdrop, drawCleanReference, drawScenePlate, readReference, seamlessPlate, splitDepth, storeReference } from "./reference-manager";
+import { FAR_CONCEPTS, decideReference, growMask, drawBackdrop, drawCleanReference, drawScenePlate, readReference, restoreScene, seamlessPlate, splitDepth, storeReference, subjectMask } from "./reference-manager";
 import type { VideoAsset } from "../../shared/schemas";
 import { ingestVideo } from "../videos";
 import {
@@ -74,6 +78,7 @@ export const services = {
   analyze: analyzeCharacter,
   plan: planPoses,
   draw: drawPose,
+  poseReference: loadPoseReference,
   cleanReference: drawCleanReference,
   scene: drawScenePlate,
   backdrop: drawBackdrop,
@@ -173,15 +178,19 @@ function refundImages(id: string, count: number): Promise<unknown> {
 // ── Create and run ─────────────────────────────────────────────────────────
 
 export async function createFlipbook(
-  input: { readonly imageId: string; readonly prompt: string; readonly ownerId?: string | null; readonly action?: AnimationAction; readonly keepScene?: boolean },
+  input: { readonly imageId: string; readonly prompt: string; readonly ownerId?: string | null; readonly action?: AnimationAction; readonly poseId?: PoseId; readonly keepScene?: boolean },
   gate?: PaidWorkGate,
 ): Promise<Flipbook> {
   assertFlipbookEnabled();
+  if (input.poseId !== undefined && (!PoseIdSchema.safeParse(input.poseId).success || compatiblePoseId(input.poseId) !== input.poseId || (input.action && input.action !== "idle"))) {
+    throw new AppError("invalid_pose", 400, "This posture isn’t compatible with the animation. Try describing the movement again.");
+  }
   const { image, png, flat } = await getCharacterImage(input.imageId);
   void cleanupFlipbooks();
   // A motion picked from the reading reuses its character facts: no second look.
-  const reading = input.action ? await readLook(image.id) : null;
-  const analysis = reading && input.action ? { ...reading.analysis, requestedAction: input.action } : null;
+  const action = input.poseId ? "idle" : input.action;
+  const reading = action ? await readLook(image.id) : null;
+  const analysis = reading && action ? { ...reading.analysis, requestedAction: action } : null;
   const keepScene = Boolean(input.keepScene && !image.hasAlpha && (reading ? reading.layers.scene : true));
   // Analysis + plan + up to nine drawings, each cut out by SAM on one still frame; with the scene, its plate and depth layers too.
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: WALK_POSES.length + 1 + (keepScene ? 1 + FAR_CONCEPTS.length : 0) });
@@ -196,6 +205,7 @@ export async function createFlipbook(
     ownerId: input.ownerId ?? null,
     title: flipbookTitle({ title: "", prompt: input.prompt }),
     prompt: input.prompt,
+    ...(input.poseId ? { poseId: input.poseId } : {}),
     status: "analyzing",
     detail: analysis ? "Planning the poses" : "Analyzing your character with Muse Spark",
     progress: null,
@@ -204,6 +214,7 @@ export async function createFlipbook(
     plan: null,
     warnings: [],
     reference: null,
+    extraReferences: [],
     frames: skeleton(),
     order: [...FRAME_IDS],
     alignment: null,
@@ -216,15 +227,19 @@ export async function createFlipbook(
     createdAt: now,
     updatedAt: now,
   });
-  startWorker(id, (signal) => runPipeline(id, signal, { keepScene, fromReading: Boolean(analysis) }), failWith);
+  startWorker(id, (signal) => runPipeline(id, signal, { keepScene, fromReading: Boolean(analysis), action }), failWith);
   return flipbook;
 }
 
-async function runPipeline(id: string, signal: AbortSignal, options: { keepScene: boolean; fromReading: boolean }): Promise<void> {
+async function runPipeline(id: string, signal: AbortSignal, options: { keepScene: boolean; fromReading: boolean; action?: AnimationAction }): Promise<void> {
   const flipbook = await getFlipbook(id);
+  // Fail before paid model work if the selected posture cannot be retrieved.
+  if (flipbook.poseId) await services.poseReference(flipbook.poseId, signal);
   const sourceFlat = await readFile(flipbookFiles.sourceFlat(id));
 
-  const analysis = flipbook.analysis ?? await services.analyze({ imagePng: sourceFlat, prompt: flipbook.prompt, flipbookId: id, signal });
+  const analyzed = flipbook.analysis ?? await services.analyze({ imagePng: sourceFlat, prompt: flipbook.prompt, flipbookId: id, signal });
+  const action = flipbook.poseId ? "idle" : options.action;
+  const analysis = action ? { ...analyzed, requestedAction: action } : analyzed;
   if (signal.aborted) return;
   const assessed = assessInput(analysis);
   if (!assessed.supported) {
@@ -233,7 +248,7 @@ async function runPipeline(id: string, signal: AbortSignal, options: { keepScene
   }
   await workerUpdate(id, signal, (current) => ({ ...current, analysis, warnings: assessed.warnings, status: "planning", detail: `Planning eight ${actionSpec(actionFor(analysis)).label} poses with Muse Spark` }));
 
-  const plan = await services.plan({ analysis, prompt: flipbook.prompt, flipbookId: id, signal });
+  const plan = await services.plan({ analysis, prompt: flipbook.prompt, flipbookId: id, imagePng: sourceFlat, poseId: flipbook.poseId, signal });
   if (signal.aborted) return;
   await workerUpdate(id, signal, (current) => ({
     ...current,
@@ -276,25 +291,31 @@ async function separateScene(id: string, signal: AbortSignal, plan: NonNullable<
     const flipbook = await getFlipbook(id);
     let plate;
     try {
-      plate = await services.scene({ sourceFlat: await readFile(flipbookFiles.sourceFlat(id)), analysis: flipbook.analysis, width: flipbook.source.width, height: flipbook.source.height, flipbookId: id, signal });
+      plate = await services.scene({ sourceFlat: await readFile(flipbookFiles.sourceFlat(id)), analysis: flipbook.analysis, flipbookId: id, signal });
     } catch (error) {
       if (unbilled(error)) await refundImages(id, 1);
       throw error;
     }
     if (signal.aborted) return;
-    const depth = await storePlate(id, "scene", plate.png, signal);
+    const depth = await storePlate(id, "scene", await keptScene(id, flipbook, plate.png, signal), signal);
     const background: FlipbookBackground = { kind: "scene", motion: defaultMotion(plan, depth) };
     await workerUpdate(id, signal, (current) => ({
       ...current,
       backgrounds: { ...current.backgrounds, scene: true, depth: { ...current.backgrounds.depth, scene: depth } },
       // The scene was asked for: it becomes the background, whatever was picked while it was drawn.
-      look: { settings: current.look?.settings ?? { drawingFps: plan.drawingFps, durationSeconds: plan.durationSeconds, motion: plan.motion, speed: 1 }, background },
+      look: { settings: current.look?.settings ?? { drawingFps: plan.drawingFps, durationSeconds: plan.durationSeconds, motion: plan.motion, aspect: "16:9", speed: 1 }, background },
     }));
   } catch (error) {
     if (signal.aborted) return;
     if (!(error instanceof AppError)) console.error("[focus] flipbook scene separation failed", error);
     await workerUpdate(id, signal, (current) => ({ ...current, warnings: [...current.warnings, "The scene couldn’t be separated from the character. Use “Use your scene” to try again, or pick another background."].slice(-8) })).catch(() => undefined);
   }
+}
+
+/** The scene plate with the upload kept, pixel for pixel, everywhere but the character's place. */
+async function keptScene(id: string, flipbook: Flipbook, png: Buffer, signal?: AbortSignal): Promise<Buffer> {
+  const sourceFlat = await readFile(flipbookFiles.sourceFlat(id));
+  return await restoreScene({ sourceFlat, plate: png, concept: flipbook.analysis?.subject ?? "character", flipbookId: id, signal }) ?? png;
 }
 
 /**
@@ -348,7 +369,7 @@ async function prepareReference(id: string, decision: { kind: "original" | "clea
   if (decision.kind === "clean") {
     let drawn;
     try {
-      drawn = await services.cleanReference({ sourceFlat: await readFile(flipbookFiles.sourceFlat(id)), analysis: flipbook.analysis, direction: flipbook.plan?.direction ?? "right", flipbookId: id, signal });
+      drawn = await services.cleanReference({ sourceFlat: await readFile(flipbookFiles.sourceFlat(id)), analysis: flipbook.analysis, direction: flipbook.plan?.direction ?? "right", extras: await readExtras(flipbook), flipbookId: id, signal });
     } catch (error) {
       if (unbilled(error)) await refundImages(id, 1);
       throw error;
@@ -373,20 +394,54 @@ async function prepareReference(id: string, decision: { kind: "original" | "clea
   await workerUpdate(id, signal, (current) => ({ ...current, reference: { kind: decision.kind, version, reason: decision.reason, createdAt: new Date().toISOString() }, error: null }));
 }
 
+/** The extra reference images, as sent beside the anchor. One that went missing is skipped, not fatal. */
+async function readExtras(flipbook: Pick<Flipbook, "id" | "extraReferences">): Promise<Buffer[]> {
+  const read = await Promise.all(flipbook.extraReferences.map((extra) => readFile(flipbookFiles.extraReference(flipbook.id, extra.version)).catch(() => undefined)));
+  return read.filter((png) => png !== undefined);
+}
+
+/** What was found wrong with a drawing, in words the repair prompt can use. */
+function problemsOf(frame: FlipbookFrame): string[] {
+  return [
+    ...frame.warnings.map((warning) => warning.message),
+    ...(frame.review?.issues ?? []).map((issue) => `${issue.code.replaceAll("_", " ")}: ${issue.note}`),
+  ].map((text) => text.trim().replace(/\s+/g, " ")).filter(Boolean).slice(0, 6);
+}
+
 /**
  * Draws the given frames from the anchor (the budget is already reserved),
  * cuts them out, re-registers the cycle and checks it.
  */
-async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly FrameId[], options: { note?: string; withNeighbor?: boolean; alsoCut?: readonly FrameId[] }): Promise<void> {
+async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly FrameId[], options: { note?: string; withNeighbor?: boolean; repair?: boolean; alsoCut?: readonly FrameId[] }): Promise<void> {
   const flipbook = await getFlipbook(id);
   assertDrawable(flipbook);
   const reference = await readReference(id, flipbook.reference.version);
+  const extras = await readExtras(flipbook);
+  const poseReferences = new Map<PoseId, Buffer>();
+  const guideIds = [...new Set(frameIds.map((id) => {
+    const frame = flipbook.frames.find((entry) => entry.id === id)!;
+    return compatiblePoseId(flipbook.plan.poseId ?? flipbook.plan.poses[frame.poseIndex].referenceId, flipbook.plan.action);
+  }).filter((id): id is PoseId => Boolean(id)))];
+  let missingGuide = false;
+  try {
+    await Promise.all(guideIds.map(async (guideId) => {
+      try { poseReferences.set(guideId, await services.poseReference(guideId, signal)); }
+      catch (error) {
+        if (signal.aborted || flipbook.poseId) throw error;
+        missingGuide = true;
+      }
+    }));
+  } catch (error) { await refundImages(id, frameIds.length); throw error; }
+  if (missingGuide) {
+    const warning = "A visual pose guide was unavailable. The drawings use the planned movement and posture descriptions.";
+    await workerUpdate(id, signal, (current) => ({ ...current, warnings: current.warnings.includes(warning) ? current.warnings : [...current.warnings, warning].slice(0, 8) }));
+  }
   const total = frameIds.length;
   let done = 0;
   await workerUpdate(id, signal, (current) => ({
     ...current,
     status: "generating",
-    detail: total === 1 ? `Redrawing “${current.frames.find((frame) => frame.id === frameIds[0])?.label}” with Muse Image` : "Drawing the poses with Muse Image",
+    detail: total === 1 ? `${options.repair ? "Repairing" : "Redrawing"} “${current.frames.find((frame) => frame.id === frameIds[0])?.label}” with Muse Image` : "Drawing the poses with Muse Image",
     progress: { done: 0, total },
     error: null,
     frames: current.frames.map((frame) => (frameIds.includes(frame.id) ? { ...frame, status: "generating", error: null } : frame)),
@@ -404,7 +459,14 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
         const previous = flipbook.frames.find((entry) => entry.id === previousId);
         if (previous?.version && previous.status === "ready") neighbor = await readFile(path.join(flipbookFiles.versionDir(id, previous.id, previous.version), "raw.png")).catch(() => null);
       }
-      const image = await services.draw({ reference: reference.png, neighbor, analysis: flipbook.analysis, plan: flipbook.plan, index: frame.poseIndex, note: options.note, flipbookId: id, signal });
+      let repair: { png: Buffer; problems: string[] } | null = null;
+      if (options.repair && frame.version) {
+        const png = await readFile(path.join(flipbookFiles.versionDir(id, frameId, frame.version), "raw.png")).catch(() => null);
+        if (!png) throw new AppError("drawing_missing", 409, "This drawing’s file is missing. Redraw the frame instead.");
+        repair = { png, problems: problemsOf(frame) };
+      }
+      const guideId = compatiblePoseId(flipbook.plan.poseId ?? flipbook.plan.poses[frame.poseIndex].referenceId, flipbook.plan.action);
+      const image = await services.draw({ reference: reference.png, neighbor, extras, repair, poseReference: guideId ? poseReferences.get(guideId) : undefined, requirePoseReference: Boolean(flipbook.poseId), analysis: flipbook.analysis, plan: flipbook.plan, index: frame.poseIndex, note: options.note, flipbookId: id, signal });
       if (signal.aborted) return;
       const version = newVersionId();
       await writeAtomic(path.join(flipbookFiles.versionDir(id, frameId, version), "raw.png"), image.png);
@@ -415,8 +477,7 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
           ...entry,
           status: "processing",
           version,
-          originalVersion: entry.originalVersion ?? version,
-          versions: [...entry.versions, { id: version, source: "generated" as const, createdAt: new Date().toISOString(), ...(options.note ? { note: options.note } : {}) }].slice(-32),
+          versions: [...entry.versions, { id: version, source: options.repair ? "enhanced" as const : "generated" as const, createdAt: new Date().toISOString(), ...(options.note ? { note: options.note } : {}) }].slice(-32),
           review: null,
           error: null,
         })),
@@ -457,6 +518,9 @@ async function cutOut(id: string, signal: AbortSignal, frameIds: readonly FrameI
         const extraction = await extractSubject({ png: await readFile(path.join(dir, "raw.png")), concept: flipbook.analysis?.subject ?? "character", flipbookId: id, allowAlpha: source === "uploaded", signal });
         await writeAtomic(path.join(dir, "cutout.png"), extraction.cutout);
         await writeAtomic(path.join(dir, "measure.json"), JSON.stringify(extraction.measure));
+        // The first drawing that could be cut out is the one "Restore original" brings back, never one that failed.
+        const prepared = frame.version;
+        await workerUpdate(id, signal, (current) => patchFrame(current, frameId, (entry) => (entry.originalVersion || entry.version !== prepared ? entry : { ...entry, originalVersion: prepared })));
       } catch (error) {
         if (signal.aborted) return;
         const failure = error instanceof AppError ? error : new AppError("extraction_failed", 422, "We couldn’t cut this character out. Redraw the frame.");
@@ -635,9 +699,11 @@ export async function applyFrameAction(id: string, frameId: FrameId, action: Fra
   }
 
   assertDrawable(flipbook);
+  const repair = action.action === "enhance";
+  if (repair && !frame.version) throw new AppError("nothing_to_enhance", 409, "This frame has no drawing to improve yet. Draw it first.");
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 });
   await reserveImages(id, 1, action.confirmExtra === true);
-  return startVisible(id, markGenerating([frameId], `Redrawing “${frame.label}” with Muse Image`), (signal) => drawFrames(id, signal, [frameId], { note: action.note || undefined, withNeighbor: true }));
+  return startVisible(id, markGenerating([frameId], `${repair ? "Repairing" : "Redrawing"} “${frame.label}” with Muse Image`), (signal) => drawFrames(id, signal, [frameId], { note: action.note || undefined, withNeighbor: true, repair }));
 }
 
 /** A drawing the animator made or fixed elsewhere becomes the frame's current version. */
@@ -695,17 +761,43 @@ export async function changeReference(id: string, kind: "original" | "clean" | "
   });
 }
 
+/**
+ * Adds an image of the same character (another angle, the back of the outfit)
+ * that travels beside the anchor with every drawing from now on. No AI call.
+ */
+export async function addExtraReference(id: string, body: ReadableStream<Uint8Array> | null, declaredBytes: number | undefined, name: string): Promise<Flipbook> {
+  assertFlipbookEnabled();
+  const flipbook = await getFlipbook(id);
+  assertIdle(flipbook);
+  if (flipbook.extraReferences.length >= MAX_EXTRA_REFERENCES) throw new AppError("too_many_references", 409, `A character can have up to ${MAX_EXTRA_REFERENCES} extra references. Remove one first.`);
+  const decoded = await decodeImage(await readUpload(body, declaredBytes));
+  const version = newVersionId();
+  await writeAtomic(flipbookFiles.extraReference(id, version), decoded.flat);
+  return updateFlipbook(id, (current) => {
+    if (current.extraReferences.length >= MAX_EXTRA_REFERENCES) return current;
+    return { ...current, extraReferences: [...current.extraReferences, { version, name: name.slice(0, 80), createdAt: new Date().toISOString() }] };
+  });
+}
+
+export async function removeExtraReference(id: string, version: string): Promise<Flipbook> {
+  assertFlipbookEnabled();
+  const flipbook = await getFlipbook(id);
+  assertIdle(flipbook);
+  if (!flipbook.extraReferences.some((extra) => extra.version === version)) throw new AppError("media_not_found", 404, "That reference is no longer there.");
+  return updateFlipbook(id, (current) => ({ ...current, extraReferences: current.extraReferences.filter((extra) => extra.version !== version) }));
+}
+
 export async function createScene(id: string, confirmExtra: boolean, gate?: PaidWorkGate): Promise<Flipbook> {
   assertFlipbookEnabled();
   const flipbook = await getFlipbook(id);
   if (flipbook.analysis?.background === "plain") throw new AppError("scene_unavailable", 409, "Your illustration has a plain background, so there is no scene to keep. Choose a color or upload a background.");
-  // The plate, then SAM on its strip for the depth layers.
-  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 + FAR_CONCEPTS.length });
+  // The plate, SAM on the upload to keep it around the character, then SAM on the strip for the depth layers.
+  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 2 + FAR_CONCEPTS.length });
   await reserveImages(id, 1, confirmExtra);
   let depth: boolean;
   try {
-    const plate = await services.scene({ sourceFlat: await readFile(flipbookFiles.sourceFlat(id)), analysis: flipbook.analysis, width: flipbook.source.width, height: flipbook.source.height, flipbookId: id });
-    depth = await storePlate(id, "scene", plate.png);
+    const plate = await services.scene({ sourceFlat: await readFile(flipbookFiles.sourceFlat(id)), analysis: flipbook.analysis, flipbookId: id });
+    depth = await storePlate(id, "scene", await keptScene(id, flipbook, plate.png));
   } catch (error) {
     if (unbilled(error)) await refundImages(id, 1);
     throw error;
@@ -800,11 +892,8 @@ export async function readUploadedImage(imageId: string, gate?: PaidWorkGate): P
 
 /** The upload with the character's pixels made transparent (grown a little, so no outline is left behind). */
 export async function emptiedScene(source: Buffer, cutout: Buffer, measure: Pick<Measure, "crop" | "rawWidth" | "rawHeight">): Promise<Buffer> {
-  const { crop, rawWidth: width, rawHeight: height } = measure;
-  const alpha = await sharp(cutout).ensureAlpha().extractChannel(3).raw().toBuffer();
-  const mask = new Uint8Array(width * height);
-  for (let y = 0; y < crop.height; y++) mask.set(alpha.subarray(y * crop.width, (y + 1) * crop.width), (crop.top + y) * width + crop.left);
-  const grown = growMask(mask, width, height, 4);
+  const { rawWidth: width, rawHeight: height } = measure;
+  const grown = growMask(await subjectMask(cutout, measure), width, height, 4);
   const rgb = await sharp(source).removeAlpha().raw().toBuffer();
   const rgba = Buffer.alloc(width * height * 4);
   for (let index = 0; index < width * height; index++) {

@@ -37,6 +37,46 @@ The action comes from the instruction (Muse Spark analysis: `walk`, `run`, `figh
 
 **Two characters fighting each other is not supported.** Every drawing is made from one character anchor and cut out as one figure; a duel needs two identities, contact and occlusion between bodies, and a shared stage. When the image has several characters and the instruction asks for a fight, the user is told only one character will throw punches.
 
+## Internal pose references
+
+Focus uses [POSE-DB-01](https://ai-pose-gallery.pages.dev/) internally. The complete
+metadata snapshot indexes **288 poses and 1,439 images**, preserving all actual
+camera variants, including the one missing angle. There is no pose picker. Use
+the existing motion controls and describe the movement; for Idle, a description
+such as “sitting calmly” or “crouching, looking around” can set the resting posture.
+
+The existing Muse Spark planning call receives the original character image and
+a compact catalog of compatible postures. It can choose a base `poseId` for an
+idle loop and a `referenceId` per phase for other movements. IDs are validated
+against the full imported allowlist, normalized to the renderer's side view and
+checked for compatibility before download. Fixed phase mechanics always take
+priority over a static anatomy guide. A base posture keeps its support points
+through breathing, blinking and swaying; an upper-body guide never crops the
+character or replaces the phase's legs. Plans save the chosen guides, so frame
+redraws and repairs reuse them.
+
+The current renderer supports one character in profile. There are **233 eligible
+single-character postures** across the full-body and upper-body series; movement
+filters additionally exclude seated or lying body poses from travelling actions.
+The 55 paired postures and all other angles stay indexed for future renderer
+support. They are not applied to a single-character animation.
+
+`server/animation/pose-catalog.json` stores metadata; `shared/pose-ids.json` holds
+the allowed image IDs without names or categories in the browser. Refresh both
+with `pnpm poses:sync`. The importer parses JSON data without executing the page
+and checks identifiers, paths, duplicate entries, text lengths and response size.
+It copies no PNGs or thumbnails.
+
+`pose-references.ts` downloads only the guides a run uses from the fixed source
+host, refuses redirects, limits each response to 8 MiB and 16 million decoded
+pixels, and caches validated copies privately under `.focus-data/pose-references/`.
+The gallery permits reference use but prohibits redistributing its image data;
+there is no gallery media route or browser gallery. An unavailable automatic guide
+adds a caveat and leaves the original frame pipeline working from its posture and
+movement descriptions. Older explicit selections still require their reference.
+The mannequin is sent last to Muse Image; Image 1 remains the character identity.
+This adds no extra paid model call.
+
 ## Consistency strategy
 
 - One immutable anchor image goes into every pose request as Image 1, with the same identity text (hair, clothing, accessories and their side, palette, style) repeated. A drawing never becomes the reference for the next drawing, so the cycle doesn't drift.
@@ -59,6 +99,21 @@ The action comes from the instruction (Muse Spark analysis: `walk`, `run`, `figh
 Right after an upload, `POST /api/flipbooks/images/<id>/look` reads it once (`readUploadedImage`): one Muse Spark call (`lookAtImage`, the analysis fields without an instruction, plus a one-line summary, the setting and up to three motions that suit the picture) and one SAM frame. SAM tries the subject phrase, then its head noun ("girl with horse ears" → "girl"), then "character" (`segmentationConcepts`). The result is kept with the upload (`look.json`, `character.png`, and `scene.png`: the upload with the character's place made transparent), so reading again is free. It passes the chat and AI guards and spends no free edit.
 
 The create screen shows what was read (summary, facts, caveats), suggests the ideas as chips (the first one is the starting pick), and lets you flip between Original, Character and Scene. Creating with a picked motion sends `action`, and the flipbook reuses the reading's character facts instead of analyzing again; the caveats were already shown, so the run doesn't pause at the reference. With **Keep the scene** (on by default when there is one), Muse Image redraws the scene without the character alongside the poses (one drawing, `separateScene`) and it becomes the background: scrolling for a cycle in place, still for one that travels. A failed scene is a caveat, never a failed animation.
+
+The scene is an edit with no size (`action: "edit"`), so it keeps the upload's aspect. Muse Image still re-renders the whole picture (on a real 16:9 illustration: median drift 2/255, small details such as a jersey number changed), and `input_image_mask` made no measurable difference, so the plate is only used where the character was: SAM cuts the character out of the upload, the mask is extended over strongly changed pixels connected to it (thin parts SAM missed, like a tail's tip; `removedWithSubject`), grown and feathered, and every pixel outside it is the upload's own (`keepAroundSubject`). When the character can't be cut out or the plate came back in another aspect, the plate is used as drawn.
+
+## Animate as is
+
+The second mode on the create screen. Nothing is redrawn: the upload is the animation, and only its own pixels move, in a loop that closes exactly. It suits pictures the cycle can't use as they are (a close-up, a three-quarter view, a cropped body) and anyone who wants the picture kept as drawn.
+
+- **Finding what can move** (`findLayers`, `server/animation/living-pictures.ts`, `POST /api/flipbooks/images/<id>/living`): one Muse Spark call (`nameLayers`, strict JSON) names the parts in plain nouns, by kind: the character, parts of it that flow (hair, cape, scarf), many small floating things (leaves, petals), the sky, and what stays still. Then one SAM frame per moving part. A flowing mask counts only when at least half of it lies on or beside the character (another character's hair is dropped); floating pieces are small (under 3% of the picture, at most 80); the sky is large. A part SAM can't find is dropped, never guessed. The character comes from the same cut-out the flipbook uses. Masks and `layers.json` are kept in the upload's `living/` folder, so this runs once per upload.
+- **The engine** (`server/animation/living.ts`, no AI): floating pieces are cut out as sprites and their places filled from the surroundings (push-pull inpainting, grown past their painted glow); they drift across the frame in whole crossings per loop (bigger ones twice, so they read as nearer) or flutter in place, and pass behind the character unless they overlapped it. Flowing parts bend in a wave whose weight is 0 at the root (where the part touches the rest of the body, by geodesic distance inside the part) and 1 at the tip; the field fades out around the part, so what's around it follows instead of tearing. The body breathes and leans a little from its lowest point. Open sky drifts by crossfading two shifted copies; it stays a band away from everything else, because SAM's sky reaches into the glow and blur around what stands in it and drifting those pixels slides ghost outlines. Every motion is periodic in the loop, and pixels no motion reaches are the upload's own.
+- **Rendering** (`renderLiving`, `POST /api/flipbooks/images/<id>/living/render`): local, about 10 s for a 4 s loop at 1536×864. One silent loop is rendered first; the MP4 (H.264, 24 fps, AAC when it has sound, verified with FFprobe) repeats it and lays the sound under it, and the GIF (12 fps, 640 px, verified by parsing) is made from it. Keyed by the request and the inventory; the same choices reuse the files. Each layer takes the motions its kind allows (`MOTIONS_FOR`), at Subtle, Normal or Strong; plus the wind's direction and a 2, 4 or 6 second loop.
+
+- **Sound.** The Meta Model API has no audio generation (its models are text, image, segmentation and speech-to-text). Sound is either an **ambience** (wind, leaves in the wind, rain, waves) synthesized by FFmpeg from filtered noise with fixed seeds (no AI, no stock files, no licenses; `soundGraph`), suggested from what moves (`suggestAmbience`), or **a track the person uploads** (`POST …/living/audio`: read with FFprobe, normalized to stereo AAC, cut to 60 s, replacing the previous one). Either way the sound is made a little longer than the video and its last half-second is crossfaded (equal power) into its start, so the MP4 repeats without a seam. **Video length** repeats whole loops to 10, 20 or 30 seconds or more (`videoSeconds`), without re-encoding the picture (`-stream_loop`, stream copy). The GIF is always one silent loop.
+- **Keeping it.** "Open in video editor" (`livingToEditor`, `POST …/living/editor`) ingests the finished MP4 as an editor clip, sound included; for a signed-in person it becomes a saved project, out of the 24-hour cleanup that uploads and their renders are subject to.
+
+Limits: nothing new is invented, so a part can only move as far as its surroundings can cover for it. Inpainting under a floating piece that crossed something textured (a blurred runner) leaves a soft patch, and SAM can't name every part (a "tail" wasn't found on the reference picture).
 
 ## Backgrounds
 

@@ -11,6 +11,7 @@ import {
   WALK_POSES,
   backgroundShiftAt,
   cellLeftAt,
+  cellTopAt,
   holdFrames,
   outputFrameCount,
   stageSize,
@@ -63,27 +64,45 @@ describe("timing", () => {
 });
 
 describe("placement", () => {
-  it("keeps a walk in place centered on its cell", () => {
-    expect(stageSize("in_place", cell)).toEqual({ width: 600, height: 768 });
-    for (let tick = 0; tick < 16; tick++) expect(cellLeftAt(tick, { motion: "in_place", speed: 1 }, cell, 8)).toBe(0);
+  it("keeps a walk in place centered on a landscape stage", () => {
+    const landscape = { motion: "in_place" as const, aspect: "16:9" as const, speed: 1 };
+    const stage = stageSize(landscape, cell);
+    expect(stage).toEqual({ width: 1366, height: 768 });
+    expect(cellTopAt(landscape, cell)).toBe(0);
+    for (let tick = 0; tick < 16; tick++) expect(cellLeftAt(tick, landscape, cell, 8)).toBe(Math.round((stage.width - cell.width) / 2));
+  });
+
+  it("holds the whole cell in a portrait stage, standing on the bottom", () => {
+    const portrait = { motion: "in_place" as const, aspect: "9:16" as const, speed: 1 };
+    const stage = stageSize(portrait, cell);
+    expect(stage.width).toBeGreaterThanOrEqual(cell.width);
+    expect(stage.height).toBeGreaterThanOrEqual(cell.height);
+    expect(stage.width % 2).toBe(0);
+    expect(stage.height % 2).toBe(0);
+    expect(Math.abs(stage.width / stage.height - 9 / 16)).toBeLessThan(0.002);
+    expect(cellTopAt(portrait, cell)).toBe(stage.height - cell.height);
+    // A cell wider than a tall portrait would be still gets a stage that fits it.
+    const wide = stageSize(portrait, { width: 900, height: 300 });
+    expect(wide.width).toBeGreaterThanOrEqual(900);
+    expect(Math.abs(wide.width / wide.height - 9 / 16)).toBeLessThan(0.002);
   });
 
   it("moves one stride per cycle, stepping once per drawing, in the walking direction", () => {
-    const stage = stageSize("right", cell);
+    const stage = stageSize({ aspect: "16:9" }, cell);
     expect(stage.height).toBe(768);
     expect(stage.width % 2).toBe(0);
-    const start = cellLeftAt(0, { motion: "right", speed: 1 }, cell, 8);
+    const start = cellLeftAt(0, { motion: "right", aspect: "16:9", speed: 1 }, cell, 8);
     expect(start).toBe(Math.round((stage.width - cell.width) / 2));
-    expect(cellLeftAt(8, { motion: "right", speed: 1 }, cell, 8) - start).toBe(400);
-    expect(cellLeftAt(1, { motion: "right", speed: 1 }, cell, 8) - start).toBe(50);
-    expect(cellLeftAt(1, { motion: "left", speed: 1 }, cell, 8) - start).toBe(-50);
-    expect(cellLeftAt(1, { motion: "right", speed: 1.5 }, cell, 8) - start).toBe(75);
+    expect(cellLeftAt(8, { motion: "right", aspect: "16:9", speed: 1 }, cell, 8) - start).toBe(400);
+    expect(cellLeftAt(1, { motion: "right", aspect: "16:9", speed: 1 }, cell, 8) - start).toBe(50);
+    expect(cellLeftAt(1, { motion: "left", aspect: "16:9", speed: 1 }, cell, 8) - start).toBe(-50);
+    expect(cellLeftAt(1, { motion: "right", aspect: "16:9", speed: 1.5 }, cell, 8) - start).toBe(75);
   });
 
   it("wraps around the stage instead of walking off forever", () => {
-    const stage = stageSize("right", cell);
+    const stage = stageSize({ aspect: "16:9" }, cell);
     for (let tick = 0; tick < 200; tick++) {
-      const left = cellLeftAt(tick, { motion: "right", speed: 1.5 }, cell, 8);
+      const left = cellLeftAt(tick, { motion: "right", aspect: "16:9", speed: 1.5 }, cell, 8);
       expect(left).toBeGreaterThanOrEqual(-cell.width);
       expect(left).toBeLessThan(stage.width + 1);
     }

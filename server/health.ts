@@ -2,7 +2,6 @@ import { spawn } from "node:child_process";
 import { access, mkdir } from "node:fs/promises";
 import { constants } from "node:fs";
 import { readMetaConfig } from "./ai/meta";
-import { samFramesSince } from "./ai/usage";
 import { guardConfig } from "./guard";
 import { dataRoot } from "./storage";
 
@@ -23,8 +22,21 @@ function toolVersion(bin: string): Promise<string | null> {
   });
 }
 
-/** Liveness and readiness facts. Never includes secrets or paths. */
-export async function healthReport() {
+const CACHE_MS = 10_000;
+let cached: { at: number; report: ReturnType<typeof buildReport> } | null = null;
+
+/** Liveness and readiness facts. Never includes secrets or paths. Cached briefly: the endpoint is public and spawns two processes. */
+export function healthReport() {
+  if (!cached || Date.now() - cached.at > CACHE_MS) {
+    const report = buildReport();
+    cached = { at: Date.now(), report };
+    // A failed probe must not be served for the whole window.
+    report.catch(() => { if (cached?.report === report) cached = null; });
+  }
+  return cached.report;
+}
+
+async function buildReport() {
   const [ffmpeg, ffprobe] = await Promise.all([
     toolVersion(process.env.FFMPEG_PATH ?? "ffmpeg"),
     toolVersion(process.env.FFPROBE_PATH ?? "ffprobe"),
@@ -33,8 +45,6 @@ export async function healthReport() {
     .then(() => access(dataRoot(), constants.W_OK))
     .then(() => true, () => false);
   const config = guardConfig();
-  const midnight = new Date();
-  midnight.setUTCHours(0, 0, 0, 0);
   const ok = Boolean(ffmpeg && ffprobe && storage);
   return {
     ok,
@@ -44,10 +54,6 @@ export async function healthReport() {
       storageWritable: storage,
       metaConfigured: readMetaConfig() !== null,
       aiEnabled: !config.aiDisabled,
-    },
-    budget: {
-      samFramesToday: await samFramesSince(midnight).catch(() => 0),
-      samDailyFrames: config.samDailyFrames || null,
     },
   };
 }

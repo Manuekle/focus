@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { ConceptSchema } from "./schemas";
+import { PoseIdSchema } from "./pose-library";
 
 // Focus Flipbook: one character illustration becomes a short cycle of real,
 // distinct drawings. Contracts shared by the studio, the API routes and the
@@ -273,10 +274,16 @@ export type FlipbookDirection = z.infer<typeof DirectionSchema>;
 
 export const SPEED_BOUNDS = [0.5, 1.5] as const;
 
+/** Shape of the video: landscape or portrait. Separate from the file format. */
+export const AspectSchema = z.enum(["16:9", "9:16"]);
+export type FlipbookAspect = z.infer<typeof AspectSchema>;
+
 export const PlaybackSettingsSchema = z.object({
   drawingFps: DrawingFpsSchema,
   durationSeconds: DurationSchema,
   motion: MotionSchema,
+  /** Landscape (16:9) or portrait (9:16) stage. Drawings saved before this existed are landscape. */
+  aspect: AspectSchema.default("16:9"),
   /** Multiplier of the stride measured from the drawings; 1 keeps the feet planted. */
   speed: z.number().min(SPEED_BOUNDS[0]).max(SPEED_BOUNDS[1]),
 });
@@ -284,11 +291,25 @@ export type PlaybackSettings = z.infer<typeof PlaybackSettingsSchema>;
 
 export type Cell = { readonly width: number; readonly height: number; readonly strideX: number };
 
-/** Stage size: the sprite cell for walking in place, a 16:9 strip of the same height to walk across. */
-export function stageSize(motion: FlipbookMotion, cell: Pick<Cell, "width" | "height">): { width: number; height: number } {
-  if (motion === "in_place") return { width: cell.width, height: cell.height };
-  const width = Math.max(cell.width, Math.round((cell.height * 16) / 9 / 2) * 2);
-  return { width, height: cell.height };
+const evenDown = (n: number) => Math.round(n / 2) * 2;
+const evenUp = (n: number) => Math.ceil(n / 2) * 2;
+
+/**
+ * Stage size: a 16:9 or 9:16 frame that always holds the whole sprite cell.
+ * Landscape keeps the cell height and widens; portrait keeps the cell width
+ * (or more) and grows taller. Both dimensions are even, as H.264 needs.
+ */
+export function stageSize(settings: Pick<PlaybackSettings, "aspect">, cell: Pick<Cell, "width" | "height">): { width: number; height: number } {
+  if (settings.aspect === "9:16") {
+    const height = Math.max(evenUp(cell.height), evenUp((cell.width * 16) / 9));
+    return { width: evenUp((height * 9) / 16), height };
+  }
+  return { width: Math.max(cell.width, evenDown((cell.height * 16) / 9)), height: cell.height };
+}
+
+/** Top edge of the sprite cell: it stands on the bottom of the stage, so a portrait frame leaves sky above. */
+export function cellTopAt(settings: Pick<PlaybackSettings, "aspect">, cell: Pick<Cell, "width" | "height">): number {
+  return stageSize(settings, cell).height - cell.height;
 }
 
 /**
@@ -296,8 +317,8 @@ export function stageSize(motion: FlipbookMotion, cell: Pick<Cell, "width" | "he
  * moves once per drawing, like the drawings themselves, and wraps around the
  * stage so a walk across never runs out of room.
  */
-export function cellLeftAt(tick: number, settings: Pick<PlaybackSettings, "motion" | "speed">, cell: Cell, frameCount: number): number {
-  const stage = stageSize(settings.motion, cell);
+export function cellLeftAt(tick: number, settings: Pick<PlaybackSettings, "motion" | "speed" | "aspect">, cell: Cell, frameCount: number): number {
+  const stage = stageSize(settings, cell);
   const center = Math.round((stage.width - cell.width) / 2);
   if (settings.motion === "in_place" || frameCount <= 0) return center;
   const perDrawing = (cell.strideX * settings.speed) / frameCount;
@@ -375,6 +396,8 @@ export const AnimationPoseSchema = z.object({
   index: z.number().int().min(0).max(WALK_FRAME_COUNT - 1),
   phase: PhaseSchema,
   label: z.string().max(40),
+  /** Internal visual guide, selected by the planner; absent in older plans. */
+  referenceId: PoseIdSchema.optional(),
   /** The canonical constraints plus character-specific detail from Muse Spark. */
   description: z.string().max(900),
   relativeRootY: z.number().min(-0.3).max(0.3),
@@ -386,6 +409,8 @@ export type AnimationPose = z.infer<typeof AnimationPoseSchema>;
 export const FlipbookPlanSchema = z
   .object({
     action: AnimationActionSchema,
+    /** A gallery posture animated through the idle phases; absent in ordinary cycles. */
+    poseId: PoseIdSchema.optional(),
     direction: DirectionSchema,
     motion: MotionSchema,
     drawingFps: DrawingFpsSchema,
@@ -394,6 +419,9 @@ export const FlipbookPlanSchema = z
     poses: z.array(AnimationPoseSchema).length(WALK_FRAME_COUNT),
   })
   .superRefine((plan, context) => {
+    if (plan.poseId && (plan.action !== "idle" || plan.motion !== "in_place")) {
+      context.addIssue({ code: "custom", path: ["poseId"], message: "A selected pose must use an idle cycle in place." });
+    }
     plan.poses.forEach((pose, index) => {
       const expected = ACTION_SPECS[plan.action].poses[index]?.phase;
       if (pose.index !== index || pose.phase !== expected) {
@@ -435,7 +463,7 @@ export type FrameReview = z.infer<typeof FrameReviewSchema>;
 
 export const FrameVersionSchema = z.object({
   id: VersionIdSchema,
-  source: z.enum(["generated", "uploaded"]),
+  source: z.enum(["generated", "uploaded", "enhanced"]),
   createdAt: z.iso.datetime(),
   /** The user's correction note for a redraw. */
   note: z.string().max(240).optional(),
@@ -485,6 +513,15 @@ export const ReferenceSchema = z.object({
   createdAt: z.iso.datetime(),
 });
 export type FlipbookReference = z.infer<typeof ReferenceSchema>;
+
+/** Extra images of the same character (another angle, the back of the outfit) sent beside the anchor with every drawing. */
+export const MAX_EXTRA_REFERENCES = 3;
+export const ExtraReferenceSchema = z.object({
+  version: VersionIdSchema,
+  name: z.string().max(80),
+  createdAt: z.iso.datetime(),
+});
+export type FlipbookExtraReference = z.infer<typeof ExtraReferenceSchema>;
 
 export const FrameTransformSchema = z.object({
   version: VersionIdSchema,
@@ -590,6 +627,7 @@ export const FlipbookSchema = z.object({
   ownerId: z.uuid().nullable().default(null),
   title: z.string().max(FLIPBOOK_TITLE_MAX).default(""),
   prompt: z.string().max(500),
+  poseId: PoseIdSchema.optional(),
   status: FlipbookStatusSchema,
   /** The real step running now. */
   detail: z.string().max(240).nullable(),
@@ -601,6 +639,8 @@ export const FlipbookSchema = z.object({
   /** Input caveats: what may make the result unreliable. */
   warnings: z.array(z.string().max(240)).max(8),
   reference: ReferenceSchema.nullable(),
+  /** Saved animations from before extra references existed have none. */
+  extraReferences: z.array(ExtraReferenceSchema).max(MAX_EXTRA_REFERENCES).default([]),
   frames: z.array(FlipbookFrameSchema).max(WALK_FRAME_COUNT),
   /** Playback order, by frame id. */
   order: z.array(FrameIdSchema).max(WALK_FRAME_COUNT),
@@ -628,8 +668,11 @@ export const CreateFlipbookRequestSchema = z.object({
   prompt: z.string().trim().min(3).max(500),
   /** The motion picked from the reading; with it, the reading's character facts are reused. */
   action: AnimationActionSchema.optional(),
+  poseId: PoseIdSchema.optional(),
   /** Separate the uploaded scene from the character and use it as the background (one drawing). */
   keepScene: z.boolean().optional(),
+}).refine((input) => !input.poseId || !input.action || input.action === "idle", {
+  path: ["poseId"], message: "A selected pose uses an idle cycle.",
 });
 
 // ── Reading an upload ──────────────────────────────────────────────────────
@@ -661,6 +704,8 @@ export const imageUrls = {
 
 export const FrameActionSchema = z.discriminatedUnion("action", [
   z.object({ action: z.literal("regenerate"), note: z.string().trim().max(240).optional(), confirmExtra: z.boolean().optional() }),
+  /** Muse Image repairs the current drawing: same pose, with the generation's mistakes fixed. */
+  z.object({ action: z.literal("enhance"), note: z.string().trim().max(240).optional(), confirmExtra: z.boolean().optional() }),
   z.object({ action: z.literal("restore") }),
   z.object({ action: z.literal("approve"), approved: z.boolean() }),
 ]);
@@ -707,6 +752,7 @@ export type BackgroundMedia = "scene" | "scene-loop" | "scene-far" | "scene-near
 
 export const flipbookUrls = {
   source: (id: string) => `/api/flipbooks/${id}/media?kind=source`,
+  extraReference: (id: string, version: string) => `/api/flipbooks/${id}/media?kind=extra&v=${version}`,
   reference: (id: string, version: string) => `/api/flipbooks/${id}/media?kind=reference&v=${version}`,
   raw: (id: string, frame: string, version: string) => `/api/flipbooks/${id}/media?kind=raw&frame=${frame}&v=${version}`,
   sprite: (id: string, frame: string, key: string) => `/api/flipbooks/${id}/media?kind=sprite&frame=${frame}&a=${key}`,

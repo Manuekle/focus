@@ -1,12 +1,14 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { AiMagicIcon, Image01Icon } from "@hugeicons/core-free-icons";
+import { AiPaintbrushIcon, Image01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { ColorPicker } from "../../components/ui/color-picker";
+import { MediaLightbox, ZoomButton, type LightboxMedia } from "../../components/ui/media-lightbox";
 import { Spinner } from "../../components/ui/spinner";
 import { ToggleChip } from "../../components/ui/toggle-chip";
-import { BACKGROUND_PROMPT_MAX, IMAGE_ACCEPT_ATTRIBUTE, type BackgroundMotion, type Flipbook, type FlipbookBackground } from "../../shared/flipbook";
+import { BACKGROUND_PROMPT_MAX, IMAGE_ACCEPT_ATTRIBUTE, flipbookUrls, type BackgroundMotion, type Flipbook, type FlipbookBackground } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
 
 const MOTIONS: readonly { motion: BackgroundMotion; label: string; hint: string }[] = [
@@ -35,6 +37,7 @@ export function BackgroundPanel({
   creatingScene,
   onCreateScene,
   onUploadBackground,
+  stamp,
 }: {
   readonly flipbook: Flipbook;
   readonly background: FlipbookBackground;
@@ -45,8 +48,11 @@ export function BackgroundPanel({
   readonly creatingScene: boolean;
   readonly onCreateScene: () => void;
   readonly onUploadBackground: (file: File) => void;
+  /** Changes whenever the scene or the uploaded image is replaced, so a previewed picture is never stale. */
+  readonly stamp: string;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const [zoom, setZoom] = useState<number | null>(null);
   const generated = flipbook.backgrounds.generated;
   const [prompt, setPrompt] = useState(generated?.prompt ?? "");
   const [motion, setMotion] = useState<BackgroundMotion>(background.kind === "generated" || background.kind === "scene" ? background.motion ?? "static" : "scroll");
@@ -57,6 +63,12 @@ export function BackgroundPanel({
   const bare = hasNoBackground(flipbook);
   // Parallax needs the sky split from the rest, which only exists when SAM found one.
   const depth = background.kind === "scene" ? flipbook.backgrounds.depth.scene : background.kind === "generated" ? flipbook.backgrounds.depth.generated : false;
+  // Every picture available as a background, to look at before choosing it.
+  const plates: readonly (LightboxMedia & { readonly kind: "image"; readonly id: "generated" | "scene" | "custom"; readonly label: string })[] = [
+    ...(generated ? [{ id: "generated" as const, label: "Generated", kind: "image" as const, src: flipbookUrls.background(flipbook.id, "generated", generated.createdAt), alt: "The background Muse Image drew", caption: generated.prompt ? `Generated · “${generated.prompt}”` : "Generated background" }] : []),
+    ...(flipbook.backgrounds.scene ? [{ id: "scene" as const, label: "Your scene", kind: "image" as const, src: flipbookUrls.background(flipbook.id, "scene", stamp), alt: "Your scene without the character", caption: "Your scene, redrawn without the character" }] : []),
+    ...(flipbook.backgrounds.custom ? [{ id: "custom" as const, label: "Your image", kind: "image" as const, src: flipbookUrls.background(flipbook.id, "custom", stamp), alt: "The image you uploaded as a background", caption: "The image you uploaded" }] : []),
+  ];
   const pickMotion = (next: BackgroundMotion) => {
     setMotion(next);
     if (background.kind === "generated" || background.kind === "scene") onBackgroundChange({ kind: background.kind, motion: next });
@@ -70,7 +82,7 @@ export function BackgroundPanel({
         <ToggleChip size="xs" selected={background.kind === "transparent"} onClick={() => onBackgroundChange({ kind: "transparent" })}>Transparent</ToggleChip>
         <ToggleChip size="xs" selected={background.kind === "color"} onClick={() => onBackgroundChange({ kind: "color", color })}>Color</ToggleChip>
         {background.kind === "color" ? (
-          <input type="color" className={styles.color} value={color} onChange={(event) => onBackgroundChange({ kind: "color", color: event.target.value })} aria-label="Background color" />
+          <ColorPicker value={color} label="Background color" onChange={(next) => onBackgroundChange({ kind: "color", color: next })} />
         ) : null}
         {generated ? (
           <ToggleChip size="xs" selected={background.kind === "generated"} onClick={() => onBackgroundChange({ kind: "generated", motion })}>Generated</ToggleChip>
@@ -97,6 +109,21 @@ export function BackgroundPanel({
           }}
         />
       </div>
+
+      {plates.length ? (
+        <div className={styles.plates} role="list" aria-label="Available backgrounds">
+          {plates.map((plate, position) => (
+            <figure key={plate.id} role="listitem" data-active={background.kind === plate.id || undefined}>
+              <ZoomButton className={styles.plate} label={`Open ${plate.label.toLowerCase()} background larger`} onOpen={() => setZoom(position)}>
+                {/* eslint-disable-next-line @next/next/no-img-element -- media route */}
+                <img src={plate.src} alt={plate.alt} />
+              </ZoomButton>
+              <figcaption>{plate.label}</figcaption>
+            </figure>
+          ))}
+        </div>
+      ) : null}
+      <MediaLightbox items={plates} index={zoom} onIndexChange={setZoom} onClose={() => setZoom(null)} />
 
       {moves ? (
         <div className={styles.controlRow}>
@@ -127,7 +154,7 @@ export function BackgroundPanel({
           />
         </div>
         <Button size="sm" variant="ai" disabled={busy || generating} onClick={() => onGenerate(prompt.trim())} title="Muse Image draws one background in your character’s style (1 drawing).">
-          {generating ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={AiMagicIcon} size={14} strokeWidth={1.75} />}
+          {generating ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={14} strokeWidth={1.75} />}
           {generating ? "Drawing the background…" : generated ? "Draw again" : "Generate background"}
         </Button>
       </div>

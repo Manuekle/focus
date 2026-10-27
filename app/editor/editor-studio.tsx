@@ -23,6 +23,7 @@ import { EditorNotice } from "../_editor/editor-notice";
 import { EditorView } from "../_editor/editor-view";
 import { ModeSwitch } from "../_editor/mode-switch";
 import { PLAN_EFFECT_LABEL } from "../_editor/job-panel";
+import { SidebarResizer, useSidebar } from "../_editor/sidebar-resizer";
 import { EditorSkeleton, SidebarListSkeleton } from "../_editor/studio-skeletons";
 import { StudioUpload } from "../_editor/studio-upload";
 import { useClipUpload } from "../_editor/use-clip-upload";
@@ -42,6 +43,7 @@ const STATUS_LABEL: Partial<Record<EditJob["status"], string>> = {
  * editor. The home page's instruction arrives through localStorage.
  */
 export function EditorStudio({ videoId, authNotice }: { readonly videoId: string | null; readonly authNotice: "failed" | "canceled" | null }) {
+  const sidebar = useSidebar();
   const router = useRouter();
   const { session, refresh } = useSession();
   const user = session?.user ?? null;
@@ -208,7 +210,8 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
         <div className={styles.headerEnd}><AccountButton session={session} next={here} /></div>
       </header>
 
-      <div className={styles.body}>
+      <div className={styles.body} {...sidebar.bodyProps}>
+        <SidebarResizer sidebar={sidebar} />
         <aside className={styles.sidebar} aria-label={user ? "Your projects" : "Account"}>
           <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => router.push("/editor")}>
             <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />

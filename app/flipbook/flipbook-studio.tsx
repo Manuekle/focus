@@ -16,6 +16,7 @@ import { LoginDialog } from "../_auth/login-dialog";
 import { refreshSession, useSession } from "../_auth/session-client";
 import { ago } from "../_editor/ago";
 import { ModeSwitch } from "../_editor/mode-switch";
+import { SidebarResizer, useSidebar } from "../_editor/sidebar-resizer";
 import { SidebarListSkeleton } from "../_editor/studio-skeletons";
 import { FlipbookCreate, type CreateOptions } from "./flipbook-create";
 import { FlipbookApiError, flipbookApi, isActive, useFlipbook } from "./flipbook-client";
@@ -34,6 +35,7 @@ export function FlipbookStudio({ flipbookId }: { readonly flipbookId: string | n
   const { session } = useSession();
   const user = session?.user ?? null;
   const { toast } = useToast();
+  const sidebar = useSidebar();
   const { flipbook, setFlipbook, loadError, pollError } = useFlipbook(flipbookId);
   const [creating, setCreating] = useState(false);
   const [login, setLogin] = useState<"quota" | "save" | null>(null);
@@ -136,7 +138,8 @@ export function FlipbookStudio({ flipbookId }: { readonly flipbookId: string | n
         <div className={shell.headerEnd}><AccountButton session={session} next={here} /></div>
       </header>
 
-      <div className={shell.body}>
+      <div className={shell.body} {...sidebar.bodyProps}>
+        <SidebarResizer sidebar={sidebar} />
         <aside className={shell.sidebar} aria-label={user ? "Your animations" : "Account"}>
           <Button variant="outline" size="sm" className="w-full justify-start" onClick={startOver}>
             <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />

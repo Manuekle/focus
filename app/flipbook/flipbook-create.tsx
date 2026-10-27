@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { AiMagicIcon, AiSearch02Icon, ArrowLeftRightIcon, Cancel01Icon } from "@hugeicons/core-free-icons";
+import { AiPaintbrushIcon, AiSearch02Icon, ArrowLeftRightIcon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
 import { Skeleton } from "../../components/ui/skeleton";
 import { SuggestionChip } from "../../components/ui/suggestion-chip";
@@ -24,7 +24,9 @@ import {
   type ImageLook,
 } from "../../shared/flipbook";
 import { cn } from "../../lib/utils";
+import { livingUrls } from "../../shared/living";
 import { FlipbookApiError, flipbookApi, uploadCharacter, type UploadHandle } from "./flipbook-client";
+import { LivingPanel, type LivingPreview } from "./living-panel";
 import shell from "../editor/studio.module.css";
 import composer from "../_editor/composer.module.css";
 import upload from "../_editor/studio-upload.module.css";
@@ -33,13 +35,21 @@ import styles from "./flipbook.module.css";
 
 type Direction = "left" | "in_place" | "right";
 
+/** Redraw the character in new poses, or keep the picture exactly as it is and move its own pixels. */
+type Mode = "cycle" | "living";
+
+const MODES: readonly { id: Mode; label: string; note: string }[] = [
+  { id: "cycle", label: "Redraw a cycle", note: "Focus redraws your character in eight new poses: a walk, a run, a jump. Best for a full-body drawing." },
+  { id: "living", label: "Animate as is", note: "Nothing is redrawn: hair sways, leaves fly and the sky drifts, made only of your picture’s own pixels." },
+];
+
 const ACTIONS: readonly { action: AnimationAction; label: string; note: string }[] = [
   { action: "walk", label: "Walk", note: "A relaxed stride in eight drawings, with the classic up-and-down bob." },
   { action: "run", label: "Run", note: "Fast and leaning forward; both feet leave the ground mid-stride." },
   { action: "jump", label: "Jump", note: "Crouch, push off, tuck at the top, land and recover, on the spot." },
   { action: "fight", label: "Fight", note: "Shadowboxing in place: guard, a jab, a cross, back to guard." },
   { action: "wave", label: "Wave", note: "Raises a hand and waves hello, then lowers it again." },
-  { action: "idle", label: "Idle", note: "Breathes, blinks and shifts its weight a little: alive while standing still." },
+  { action: "idle", label: "Idle", note: "Breathes, blinks and gently sways. Describe a posture, or keep the one in your drawing." },
 ];
 
 /** Walks and runs can travel; the other motions stay on the spot and only face a side. */
@@ -71,7 +81,7 @@ const PLACEHOLDER: Record<AnimationAction, string> = {
   jump: "How does it jump? e.g. “a big joyful leap”",
   fight: "How does it fight? e.g. “quick and light on its feet”",
   wave: "How does it wave? e.g. “shy, a small wave”",
-  idle: "How does it stand? e.g. “calm, a slow breath”",
+  idle: "How does it rest? e.g. “sitting calmly, slow breathing”",
 };
 
 const IDEAS: Record<AnimationAction, readonly string[]> = {
@@ -80,7 +90,7 @@ const IDEAS: Record<AnimationAction, readonly string[]> = {
   jump: ["a big joyful leap", "a small excited hop", "a heavy, powerful jump"],
   fight: ["quick and light on its feet", "heavy, powerful punches", "a confident boxer"],
   wave: ["an excited, big wave", "shy, a small wave", "waving goodbye"],
-  idle: ["calm, slow breathing", "impatient, tapping its foot", "proud, chest out"],
+  idle: ["sitting calmly, slow breathing", "crouching, looking around", "proud, chest out"],
 };
 
 /** The instruction the pickers stand for; the analysis reads it like typed text. */
@@ -90,7 +100,7 @@ function instruction(action: AnimationAction, direction: Direction, detail: stri
     action === "fight" ? `Shadowbox: a jab and a cross, facing ${side}`
     : action === "jump" ? `Jump in place, facing ${side}`
     : action === "wave" ? `Wave hello, facing ${side}`
-    : action === "idle" ? `Stand idle, breathing and blinking, facing ${side}`
+    : action === "idle" ? `Rest in place, breathing and blinking, facing ${side}`
     : direction === "in_place" ? `${action === "run" ? "Run" : "Walk"} in place, facing ${side}`
     : action === "run" ? `Run across the screen to the ${direction}`
     : `Walk to the ${direction}`;
@@ -124,6 +134,8 @@ export function FlipbookCreate({
   const [lookFailed, setLookFailed] = useState(false);
   const [keepScene, setKeepScene] = useState(true);
   const [layer, setLayer] = useState<"original" | "character" | "scene">("original");
+  const [mode, setMode] = useState<Mode>("cycle");
+  const [living, setLiving] = useState<LivingPreview>({ video: null, busy: false, highlight: null });
   const touched = useRef(false);
   const handle = useRef<UploadHandle | null>(null);
 
@@ -139,6 +151,7 @@ export function FlipbookCreate({
     setLook(null);
     setLookFailed(false);
     setLayer("original");
+    setLiving({ video: null, busy: false, highlight: null });
     touched.current = false;
     flipbookApi.look(imageId).then(
       (next) => {
@@ -192,24 +205,35 @@ export function FlipbookCreate({
   const prompt = instruction(action, direction, detail, facing);
   const canSubmit = Boolean(image) && !creating && !blockedReason;
   const submit = () => {
-    if (!image || !canSubmit) return;
+    if (!image || !canSubmit || mode === "living") return;
     // With a reading, the picked motion says which action it is, and its character facts are reused.
-    onCreate(image, prompt, look ? { action, keepScene: look.layers.scene && keepScene } : {});
+    onCreate(image, prompt, { action, keepScene: Boolean(look?.layers.scene && keepScene) });
   };
-  const layerSrc = image && layer !== "original" ? imageUrls.layer(image.id, layer) : image?.url;
+  const layerSrc = image && layer !== "original" && mode === "cycle" ? imageUrls.layer(image.id, layer) : image?.url;
+  const shown = mode === "cycle" ? layer : "original";
 
   if (image) return (
     <div className={view.editor} data-variant="page">
       <h1 id="flipbook-title" className="sr-only">Make your drawing move</h1>
       <section aria-label="Drawing" className={view.preview}>
         <figure className={styles.drawingFigure}>
-          <div className={styles.drawingStage} data-transparent={image.hasAlpha || layer !== "original" || undefined}>
-            {/* eslint-disable-next-line @next/next/no-img-element -- media route */}
-            <img key={layer} src={layerSrc} alt={layer === "character" ? "Your character, cut out" : layer === "scene" ? "The scene with the character taken out" : "Your character illustration"} width={image.width} height={image.height} className={layer === "character" ? styles.layerCharacter : undefined} />
-            {!look && !lookFailed ? <Skeleton className={styles.readingSweep} /> : null}
+          <div className={styles.drawingStage} data-transparent={image.hasAlpha || shown !== "original" || undefined}>
+            <div className={styles.mediaBox}>
+              {mode === "living" && living.video ? (
+                // Muted so it can autoplay; with sound, the controls turn it on.
+                <video key={living.video} src={living.video} width={image.width} height={image.height} autoPlay loop muted playsInline controls={living.hasAudio || undefined} aria-label="Your picture in motion" />
+              ) : (
+                /* eslint-disable-next-line @next/next/no-img-element -- media route */
+                <img key={shown} src={layerSrc} alt={shown === "character" ? "Your character, cut out" : shown === "scene" ? "The scene with the character taken out" : "Your character illustration"} width={image.width} height={image.height} className={shown === "character" ? styles.layerCharacter : undefined} />
+              )}
+              {mode === "living" && living.highlight ? (
+                <span className={styles.layerHighlight} style={{ maskImage: `url(${livingUrls.mask(image.id, living.highlight)})`, WebkitMaskImage: `url(${livingUrls.mask(image.id, living.highlight)})` }} aria-hidden="true" />
+              ) : null}
+            </div>
+            {(!look && !lookFailed) || (mode === "living" && living.busy) ? <Skeleton className={styles.readingSweep} /> : null}
           </div>
         </figure>
-        {look?.layers.character ? (
+        {look?.layers.character && mode === "cycle" ? (
           <SlidingTabs
             className={cn(composer.tabs, styles.layerTabs)}
             tabs={[
@@ -245,7 +269,8 @@ export function FlipbookCreate({
                   <span className={styles.fact}>{VIEW_LABEL[look.analysis.view]}</span>
                   {look.setting ? <span className={styles.fact}>{look.setting}</span> : <span className={styles.fact}>No background</span>}
                 </div>
-                {look.warnings.length ? (
+                {/* The caveats are about redrawing; animating as is redraws nothing. */}
+                {look.warnings.length && mode !== "living" ? (
                   <ul className={styles.readingNotes}>
                     {look.warnings.map((warning) => <li key={warning}>{warning}</li>)}
                   </ul>
@@ -264,6 +289,13 @@ export function FlipbookCreate({
             )}
           </section>
 
+          <fieldset className={composer.effects}>
+            <legend className="sr-only">How it moves</legend>
+            <SlidingTabs className={composer.tabs} tabs={MODES.map((entry) => ({ id: entry.id, label: entry.label }))} value={mode} onValueChange={(id) => { touched.current = true; setMode(id as Mode); }} />
+            <p className={composer.summary} aria-live="polite">{MODES.find((entry) => entry.id === mode)!.note}</p>
+          </fieldset>
+
+          {mode === "living" ? <LivingPanel image={image} onPreview={setLiving} /> : <>
           <fieldset className={composer.effects}>
             <legend className="sr-only">Choose a motion</legend>
             <SlidingTabs
@@ -343,11 +375,12 @@ export function FlipbookCreate({
 
           <div className={composer.submit}>
             <Button className={composer.generate} type="submit" variant="ai" size="lg" disabled={!canSubmit} aria-busy={creating || undefined}>
-              {creating ? <Spinner /> : <HugeiconsIcon icon={AiMagicIcon} size={16} strokeWidth={1.75} />}
+              {creating ? <Spinner /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={16} strokeWidth={1.75} />}
               Create animation
             </Button>
             {blockedReason ? <p className={composer.blocked}>{blockedReason}</p> : null}
           </div>
+          </>}
         </form>
       </aside>
     </div>

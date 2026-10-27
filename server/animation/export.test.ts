@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { inflateRawSync } from "node:zlib";
 import sharp from "sharp";
 import { beforeAll, describe, expect, it } from "vitest";
-import { WALK_POSES, cellLeftAt, stageSize, type ExportRequest, type FlipbookAlignment, type FrameId, type PlaybackSettings } from "../../shared/flipbook";
+import { WALK_POSES, cellLeftAt, cellTopAt, stageSize, type ExportRequest, type FlipbookAlignment, type FrameId, type PlaybackSettings } from "../../shared/flipbook";
 import { probe } from "../ffmpeg";
 import { readFrames } from "../video/frames";
 import { DRIFT, walkerPng } from "./__fixtures__/walker";
@@ -33,15 +33,16 @@ const rgba = async (png: Buffer): Promise<Rgba> => {
 /** Expected stage picture: the sprite of `tick` over a flat color, at the shared placement. */
 async function expectedFrame(tick: number, settings: PlaybackSettings, background: [number, number, number]): Promise<Buffer> {
   const cell = { width: alignment.cellWidth, height: alignment.cellHeight, strideX: alignment.strideX };
-  const stage = stageSize(settings.motion, cell);
+  const stage = stageSize(settings, cell);
   const left = cellLeftAt(tick, settings, cell, 8);
+  const top = cellTopAt(settings, cell);
   const sprite = sprites[tick % 8];
   const base = sharp({ create: { width: stage.width, height: stage.height, channels: 3, background: { r: background[0], g: background[1], b: background[2] } } });
   const x0 = Math.max(0, left);
   const x1 = Math.min(stage.width, left + cell.width);
   if (x1 <= x0) return base.raw().toBuffer();
   const visible = await sharp(sprite).extract({ left: x0 - left, top: 0, width: x1 - x0, height: cell.height }).png().toBuffer();
-  return base.composite([{ input: visible, left: x0, top: 0 }]).removeAlpha().raw().toBuffer();
+  return base.composite([{ input: visible, left: x0, top }]).removeAlpha().raw().toBuffer();
 }
 
 function meanDiff(a: Buffer, aChannels: number, b: Buffer, bChannels: number, pixels: number): number {
@@ -60,7 +61,9 @@ function alphaIou(a: Rgba, b: Rgba): number {
   return either ? both / either : 1;
 }
 
-const settings = (overrides: Partial<PlaybackSettings> = {}): PlaybackSettings => ({ drawingFps: 8, durationSeconds: 2, motion: "in_place", speed: 1, ...overrides });
+const cellOf = () => ({ width: alignment.cellWidth, height: alignment.cellHeight, strideX: alignment.strideX });
+
+const settings = (overrides: Partial<PlaybackSettings> = {}): PlaybackSettings => ({ drawingFps: 8, durationSeconds: 2, motion: "in_place", aspect: "16:9", speed: 1, ...overrides });
 const request = (format: ExportRequest["format"], overrides: Partial<ExportRequest> = {}): ExportRequest => ({ format, settings: settings(), background: { kind: "color", color: "#ffffff" }, ...overrides });
 const exportTo = async (name: string, value: ExportRequest) =>
   renderExport({ request: value, frames, alignment, plate: null, outputDir: path.join(work, name), baseName: "walk" });
@@ -90,13 +93,14 @@ describe("MP4", () => {
     expect(Number(video.nb_frames)).toBe(48);
     expect(Math.abs(Number(facts.format.duration) - 2)).toBeLessThan(0.05);
     expect(facts.streams.some((stream) => stream.codec_type === "audio")).toBe(false);
-    expect(result.facts).toMatchObject({ width: alignment.cellWidth, height: alignment.cellHeight, frames: 48 });
+    const stage = stageSize(settings(), cellOf());
+    expect(result.facts).toMatchObject({ width: stage.width, height: stage.height, frames: 48 });
 
     // Decoded frame k is drawing floor(k/3) mod 8: the real sequence, looping after 24 frames.
     const decoded: Buffer[] = [];
-    for await (const frame of readFrames(file, alignment.cellWidth, alignment.cellHeight)) decoded.push(frame);
+    for await (const frame of readFrames(file, stage.width, stage.height)) decoded.push(frame);
     expect(decoded.length).toBe(48);
-    const pixels = alignment.cellWidth * alignment.cellHeight;
+    const pixels = stage.width * stage.height;
     for (const k of [0, 2, 3, 10, 23, 24, 47]) {
       const expected = await expectedFrame(Math.floor(k / 3), settings(), [255, 255, 255]);
       expect(meanDiff(decoded[k], 4, expected, 3, pixels)).toBeLessThan(4);
@@ -110,7 +114,7 @@ describe("MP4", () => {
     const value = request("mp4", { settings: settings({ motion: "right" }) });
     const result = await exportTo("mp4-right", value);
     const cell = { width: alignment.cellWidth, height: alignment.cellHeight, strideX: alignment.strideX };
-    const stage = stageSize("right", cell);
+    const stage = stageSize(value.settings, cell);
     expect(result.facts.width).toBe(stage.width);
     const decoded: Buffer[] = [];
     for await (const frame of readFrames(result.files[0].path, stage.width, stage.height)) decoded.push(frame);
@@ -118,6 +122,19 @@ describe("MP4", () => {
       expect(meanDiff(decoded[k], 4, await expectedFrame(Math.floor(k / 3), value.settings, [255, 255, 255]), 3, stage.width * stage.height)).toBeLessThan(4);
     }
     expect(cellLeftAt(4, value.settings, cell, 8)).toBeGreaterThan(cellLeftAt(0, value.settings, cell, 8));
+  });
+
+  it("renders a 9:16 portrait stage with the drawing standing on the bottom", async () => {
+    const value = request("mp4", { settings: settings({ aspect: "9:16" }) });
+    const result = await exportTo("mp4-portrait", value);
+    const stage = stageSize(value.settings, cellOf());
+    expect(stage.height).toBeGreaterThan(stage.width);
+    expect(result.facts).toMatchObject({ width: stage.width, height: stage.height });
+    const decoded: Buffer[] = [];
+    for await (const frame of readFrames(result.files[0].path, stage.width, stage.height)) decoded.push(frame);
+    for (const k of [0, 10, 30]) {
+      expect(meanDiff(decoded[k], 4, await expectedFrame(Math.floor(k / 3), value.settings, [255, 255, 255]), 3, stage.width * stage.height)).toBeLessThan(4);
+    }
   });
 
   it("is never transparent", async () => {
@@ -136,11 +153,20 @@ describe("GIF", () => {
     const decoded: Rgba[] = [];
     for await (const frame of readFrames(result.files[0].path, width, height)) decoded.push({ data: frame, width, height });
     expect(decoded.length).toBe(8);
-    const expected = await Promise.all(sprites.map(async (sprite) => rgba(await sharp(sprite).resize(width, height, { fit: "fill" }).png().toBuffer())));
+    // The drawing sits centered on the stage; compare that region, scaled like the GIF.
+    const stage = stageSize(settings(), cellOf());
+    const scale = width / stage.width;
+    const region = { left: Math.round(cellLeftAt(0, settings(), cellOf(), 8) * scale), width: Math.round(alignment.cellWidth * scale), height: Math.round(alignment.cellHeight * scale) };
+    const crop = (frame: Rgba): Rgba => {
+      const data = Buffer.alloc(region.width * region.height * 4);
+      for (let y = 0; y < region.height; y++) frame.data.copy(data, y * region.width * 4, (y * frame.width + region.left) * 4, (y * frame.width + region.left + region.width) * 4);
+      return { data, width: region.width, height: region.height };
+    };
+    const expected = await Promise.all(sprites.map(async (sprite) => rgba(await sharp(sprite).resize(region.width, region.height, { fit: "fill" }).png().toBuffer())));
     // Each decoded frame matches its own drawing best. The fixture's two half-cycles share
     // silhouettes (only the leg shading swaps), so the phase is compared modulo four.
     decoded.forEach((frame, index) => {
-      const scores = expected.map((sprite) => alphaIou(frame, sprite));
+      const scores = expected.map((sprite) => alphaIou(crop(frame), sprite));
       expect(scores[index]).toBeGreaterThan(0.85);
       expect(scores.indexOf(Math.max(...scores)) % 4).toBe(index % 4);
     });
@@ -250,10 +276,11 @@ describe("moving scenes", () => {
     const value = request("mp4", { background: { kind: "scene", motion: "zoom" } });
     const result = await renderExport({ request: value, frames, alignment, plate: await plateWithMarks("zoom.png"), outputDir: path.join(work, "zoom"), baseName: "walk" });
     const decoded: Buffer[] = [];
-    for await (const frame of readFrames(result.files[0].path, alignment.cellWidth, alignment.cellHeight)) decoded.push(frame);
+    const stageWidth = stageSize(value.settings, cellOf()).width;
+    for await (const frame of readFrames(result.files[0].path, stageWidth, stageSize(value.settings, cellOf()).height)) decoded.push(frame);
     expect(decoded).toHaveLength(48);
     // The corner pixel moves toward the center as the picture zooms in, and comes back at the end.
-    const start = corner(decoded[0], alignment.cellWidth), middle = corner(decoded[24], alignment.cellWidth), end = corner(decoded[47], alignment.cellWidth);
+    const start = corner(decoded[0], stageWidth), middle = corner(decoded[24], stageWidth), end = corner(decoded[47], stageWidth);
     expect(Math.abs(middle[0] - start[0]) + Math.abs(middle[1] - start[1])).toBeGreaterThan(4);
     expect(Math.abs(end[0] - start[0]) + Math.abs(end[1] - start[1])).toBeLessThan(Math.abs(middle[0] - start[0]) + Math.abs(middle[1] - start[1]));
   });

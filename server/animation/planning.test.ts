@@ -4,8 +4,10 @@ import { LOOK_INSTRUCTIONS, LOOK_JSON_SCHEMA, assessInput, parseAnalysisOutput, 
 import { decideReference, depthLayers } from "./reference-manager";
 import sharp from "sharp";
 import { defaultMotion } from "./flipbooks";
-import { actionFor, keyColorFor, parsePlanOutput, planInstructions, planJsonSchema, posePrompt, referencePrompt } from "./pose-planning";
+import { actionFor, keyColorFor, parsePlanOutput, planInstructions, planJsonSchema, posePrompt, referencePrompt, repairPrompt } from "./pose-planning";
 import { parseReview } from "./quality-control";
+import { poseCandidates, poseReferenceFor } from "./pose-catalog";
+import { CreateFlipbookRequestSchema, FlipbookPlanSchema } from "../../shared/flipbook";
 
 // Muse Spark output parsing and prompt building, on recorded-shape JSON.
 // The shapes follow the strict schemas sent to the model; nothing is fetched.
@@ -70,6 +72,50 @@ describe("character analysis", () => {
 });
 
 describe("pose plan", () => {
+  it("selects an idle posture internally and normalizes its angle without changing phases", () => {
+    const seen = { ...analysis, requestedAction: "idle" as const };
+    const plan = parsePlanOutput(planJson({ poseId: "full_single_P061_front", poses: ACTION_SPECS.idle.poses.map((pose) => ({ phase: pose.phase, detail: "", referenceId: "upper80v2_P001_side" })) }), seen);
+    expect(plan.poseId).toBe("full_single_P061_side");
+    expect(plan.poses.every((pose) => pose.referenceId === plan.poseId && pose.description.includes("Crouching low"))).toBe(true);
+    expect(plan.motion).toBe("in_place");
+    expect(planInstructions("idle")).not.toContain("Standing at ease");
+  });
+
+  it("uses compatible guides per phase while rejecting unknown, paired and seated walk references", () => {
+    const references = ["upper80v2_P001_front", "full_single_P041_side", "pair60_P001_side", "https://example.com/pose.png"];
+    const plan = parsePlanOutput(planJson({ poseId: "full_single_P061_side", poses: WALK_PHASES.map((phase, index) => ({ phase, detail: "", referenceId: references[index] ?? null })) }), analysis);
+    expect(plan.poseId).toBeUndefined();
+    expect(plan.poses[0].referenceId).toBe("upper80v2_P001_side");
+    expect(plan.poses.slice(1).every((pose) => !pose.referenceId)).toBe(true);
+    expect(plan.poses[0].description).toBe(WALK_POSES[0].constraints);
+    expect(plan.motion).toBe("left");
+  });
+
+  it("keeps each gallery posture throughout all eight idle phases and bounds the request", () => {
+    const seen = { ...analysis, requestedAction: "idle" as const };
+    const json = planJson({ motion: "in_place", poses: ACTION_SPECS.idle.poses.map((pose) => ({ phase: pose.phase, detail: "The scarf settles." })) });
+    for (const candidate of poseCandidates()) {
+      const selected = { ...poseReferenceFor(candidate.id), id: candidate.id };
+      const plan = parsePlanOutput(json, seen, "idle", selected.id);
+      expect(plan.poseId).toBe(selected.id);
+      expect(plan.poses.map((pose) => pose.phase)).toEqual(ACTION_SPECS.idle.poses.map((pose) => pose.phase));
+      for (const pose of plan.poses) {
+        expect(pose.description).toContain(selected.description);
+        expect(pose.description).toContain("same support points");
+        expect(pose.relativeRootY).toBe(0);
+        expect(pose.lift).toBe(0);
+      }
+      expect(planInstructions("idle", selected.id)).toContain(selected.description);
+      expect(FlipbookPlanSchema.safeParse({ ...plan, motion: "right" }).success).toBe(false);
+      expect(FlipbookPlanSchema.safeParse({ ...plan, action: "walk" }).success).toBe(false);
+    }
+    const request = { imageId: "aa16bf53-7f3e-4c71-883d-b1f03c9b07e4", prompt: "Breathe in the pose", poseId: poseCandidates()[0].id };
+    expect(CreateFlipbookRequestSchema.safeParse(request).success).toBe(true);
+    expect(CreateFlipbookRequestSchema.safeParse({ ...request, poseId: "../../secret" }).success).toBe(false);
+    expect(CreateFlipbookRequestSchema.safeParse({ ...request, action: "walk" }).success).toBe(false);
+    expect(CreateFlipbookRequestSchema.safeParse({ imageId: request.imageId, prompt: "walk" }).success).toBe(true);
+  });
+
   it("merges Muse Spark's detail into the fixed walk library", () => {
     const plan = parsePlanOutput(planJson(), analysis);
     expect(plan.direction).toBe("left");
@@ -115,6 +161,25 @@ describe("drawing prompts", () => {
     expect(redraw).toContain("do NOT copy its pose");
     expect(redraw).toContain("lift the back heel");
     expect(referencePrompt(analysis, "right")).toContain("strict side view (profile), facing right");
+  });
+
+  it("names extra reference images, and a repair keeps the anchor first and the drawing to fix second", () => {
+    const plan = parsePlanOutput(planJson(), analysis);
+    const withExtras = posePrompt({ analysis, plan, index: 1, hasNeighbor: true, extraCount: 2 });
+    expect(withExtras).toContain("Images 3 to 4 are extra references");
+    expect(posePrompt({ analysis, plan, index: 1, hasNeighbor: false, extraCount: 1 })).toContain("Image 2 is extra reference");
+    expect(posePrompt({ analysis, plan, index: 1, hasNeighbor: false })).not.toContain("extra reference");
+    expect(referencePrompt(analysis, "right", 1)).toContain("Image 2 is extra reference");
+
+    const repair = repairPrompt({ analysis, plan, index: 2, hasNeighbor: true, extraCount: 1, problems: ["Extra limb: three legs."], note: "fix the hands" });
+    expect(repair).toContain("Image 1");
+    expect(repair).toContain("Image 2 is a drawing");
+    expect(repair).toContain("Image 3 is the neighboring drawing");
+    expect(repair).toContain("Image 4 is extra reference");
+    expect(repair).toContain("Extra limb: three legs.");
+    expect(repair).toContain("fix the hands");
+    expect(repair).toContain(plan.poses[2].description);
+    expect(repairPrompt({ analysis, plan, index: 2, hasNeighbor: false, problems: [] })).toContain("look for anatomy and identity mistakes");
   });
 
   it("picks a key color away from the character's own colors", () => {

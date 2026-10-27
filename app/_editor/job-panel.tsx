@@ -3,10 +3,11 @@
 import { Download04Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { Disclosure } from "../../components/ui/disclosure";
 import { ProgressMeter } from "../../components/ui/progress-meter";
 import { Spinner } from "../../components/ui/spinner";
 import { ToggleChip } from "../../components/ui/toggle-chip";
-import { useState, type ReactNode } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { useToast } from "../../components/toast-provider";
 import { cn } from "../../lib/utils";
 import { RenderParamsSchema, type RenderParams, type RenderResult } from "../../shared/render";
@@ -271,6 +272,9 @@ export function ResultPanel({
   // key order. Compare the schema's canonical shape, including nested keys.
   const dirty = JSON.stringify(RenderParamsSchema.parse(draft)) !== JSON.stringify(RenderParamsSchema.parse(render.params));
   const temporal = draft.effect === "time_freeze_echo";
+  // Unapplied changes open the hand controls; after that it is the person's to fold.
+  const [fineTuneOpen, setFineTuneOpen] = useState(dirty);
+  useEffect(() => { if (dirty) setFineTuneOpen(true); }, [dirty]);
   // The dedicated controls now explain the suggestion next to its marker.
   // Keep actual render warnings in the existing notice without duplicating
   // a long, persistent suggestion toast over the mobile timeline.
@@ -326,15 +330,13 @@ export function ResultPanel({
 
       <AiEditor messages={job.chat} current={render.params} {...chat} />
 
-      {!temporal ? <details className="group" open={dirty || undefined}>
-        <summary className="flex cursor-pointer list-none items-center justify-between text-xs font-medium text-foreground [&::-webkit-details-marker]:hidden">
-          Fine-tune by hand
-          <span aria-hidden className="text-muted-foreground transition-transform duration-200 group-open:rotate-45">+</span>
-        </summary>
-        <div className="mt-4 flex flex-col gap-4">
-          {adjustments}
-        </div>
-      </details> : null}
+      {!temporal ? (
+        <Disclosure title={<span className="text-foreground">Fine-tune by hand</span>} open={fineTuneOpen} onOpenChange={setFineTuneOpen}>
+          <div className="mt-2 flex flex-col gap-4">
+            {adjustments}
+          </div>
+        </Disclosure>
+      ) : null}
 
       <div className="flex flex-wrap gap-2">
         <Button variant="outline" size="sm" onClick={onChangeSelection}>

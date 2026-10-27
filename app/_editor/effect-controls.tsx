@@ -2,6 +2,7 @@
 
 import { useId, type CSSProperties } from "react";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
+import { Disclosure } from "../../components/ui/disclosure";
 import { Switch } from "../../components/ui/switch";
 import { ToggleChip } from "../../components/ui/toggle-chip";
 import { cn } from "../../lib/utils";
@@ -226,9 +227,8 @@ export function EffectControls({
       ) : null}
 
       {value.effect === "time_freeze_echo" ? (
-        <details>
-          <summary className="cursor-pointer text-xs text-muted-foreground">Finish and playback</summary>
-          <div className="mt-4 flex flex-col gap-4">
+        <Disclosure title="Finish and playback">
+          <div className="mt-2 flex flex-col gap-4">
             <span className="flex items-center justify-between text-xs">
               <span aria-hidden className="text-muted-foreground">Resume playback</span>
               <Switch checked={value.resume} onCheckedChange={(resume) => onChange({ ...value, resume })} label="Resume playback" />
@@ -236,7 +236,7 @@ export function EffectControls({
             <Range label="Edge softness" value={value.feather} min={0} max={4} step={0.5} format={(px) => `${px} px`} onChange={(feather) => onChange({ ...value, feather })} />
             <FinishControls value={value.finish} onChange={(finish) => onChange({ ...value, finish })} />
           </div>
-        </details>
+        </Disclosure>
       ) : (
         <>
           <Range label="Edge softness" value={value.feather} min={0} max={4} step={0.5} format={(px) => `${px} px`} onChange={(feather) => onChange({ ...value, feather })} />

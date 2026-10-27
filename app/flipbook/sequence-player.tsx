@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
-import { NextIcon, PauseIcon, PlayIcon, PreviousIcon, RepeatIcon, RotateLeft01Icon } from "@hugeicons/core-free-icons";
+import { NextIcon, PauseIcon, PlayIcon, PreviousIcon, Exchange01Icon, RotateLeft01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
@@ -14,6 +14,7 @@ import {
   backgroundShiftAt,
   backgroundZoomAt,
   cellLeftAt,
+  cellTopAt,
   stageSize,
   tickCount,
   type Cell,
@@ -88,7 +89,7 @@ export function SequencePlayer({
   const [onionNext, setOnionNext] = useState(true);
 
   const count = frames.length;
-  const stage = stageSize(settings.motion, cell);
+  const stage = stageSize(settings, cell);
   const total = tickCount(settings.durationSeconds, settings.drawingFps);
   const ready = count > 0 && frames.every((frame) => frame.src);
 
@@ -149,18 +150,19 @@ export function SequencePlayer({
     }
     const index = mod(at, count);
     const left = cellLeftAt(at, settings, cell, count);
+    const top = cellTopAt(settings, cell);
     if (onion && count > 1) {
       context.globalAlpha = onionOpacity;
       const previous = imageFor(frames[mod(index - 1, count)].src, again);
-      if (previous) context.drawImage(previous, left, 0, cell.width, cell.height);
+      if (previous) context.drawImage(previous, left, top, cell.width, cell.height);
       if (onionNext) {
         const next = imageFor(frames[mod(index + 1, count)].src, again);
-        if (next) context.drawImage(next, left, 0, cell.width, cell.height);
+        if (next) context.drawImage(next, left, top, cell.width, cell.height);
       }
       context.globalAlpha = 1;
     }
     const current = imageFor(frames[index].src, again);
-    if (current) context.drawImage(current, left, 0, cell.width, cell.height);
+    if (current) context.drawImage(current, left, top, cell.width, cell.height);
   }, [background, cell, count, facing, frames, imageFor, onion, onionNext, onionOpacity, settings]);
 
   // Preload every drawing of the cycle (eight images), nothing else.
@@ -188,6 +190,10 @@ export function SequencePlayer({
   const selectedRef = useRef(selectedIndex);
   selectedRef.current = selectedIndex;
 
+  // Bumped by a restart: the running playback re-bases its clock on it, or
+  // its next frame would put the old timeline back.
+  const clockRef = useRef(0);
+
   const seek = useCallback((next: number) => {
     tickRef.current = next;
     setTick(next);
@@ -204,10 +210,16 @@ export function SequencePlayer({
 
   useEffect(() => {
     if (!playing || !count) return;
-    const started = performance.now();
-    const from = !loop && tickRef.current >= total - 1 ? 0 : tickRef.current;
+    let started = performance.now();
+    let from = !loop && tickRef.current >= total - 1 ? 0 : tickRef.current;
+    let clock = clockRef.current;
     let raf = 0;
     const step = (now: number) => {
+      if (clock !== clockRef.current) {
+        clock = clockRef.current;
+        started = now;
+        from = tickRef.current;
+      }
       const next = from + Math.floor(((now - started) * rate * settings.drawingFps) / 1000);
       if (!loop && next >= total - 1) {
         seek(total - 1);
@@ -242,6 +254,7 @@ export function SequencePlayer({
     seek(loop ? tickRef.current + delta : Math.max(0, Math.min(total - 1, tickRef.current + delta)));
   };
   const restart = () => {
+    clockRef.current++;
     seek(0);
   };
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
@@ -282,7 +295,7 @@ export function SequencePlayer({
           </Button>
           <Button size="icon-sm" variant="ghost" aria-label="Next drawing" onClick={() => stepBy(1)}><HugeiconsIcon icon={NextIcon} size={16} strokeWidth={1.75} /></Button>
           <ToggleChip selected={loop} size="xs" onClick={() => setLoop((value) => !value)} aria-label="Loop">
-            <HugeiconsIcon icon={RepeatIcon} size={13} strokeWidth={1.75} />Loop
+            <HugeiconsIcon icon={Exchange01Icon} size={13} strokeWidth={1.75} />Loop
           </ToggleChip>
         </div>
         <output className={styles.readout} aria-live={playing ? "off" : "polite"}>

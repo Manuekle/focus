@@ -27,7 +27,10 @@ export async function POST(request: Request) {
   try {
     assertFlipbookEnabled();
     const parsed = CreateFlipbookRequestSchema.safeParse(await readJsonBody(request));
-    if (!parsed.success) throw new AppError("invalid_flipbook", 400, "Describe how your character should move (at least 3 characters).");
+    if (!parsed.success) {
+      if (parsed.error.issues.some((issue) => issue.path[0] === "poseId")) throw new AppError("invalid_pose", 400, "The posture couldn’t be planned. Describe the movement again.");
+      throw new AppError("invalid_flipbook", 400, "Describe how your character should move (at least 3 characters).");
+    }
     const user = await currentUser(request);
     const anon = user ? null : anonymousId(request);
     const flipbook = await createFlipbook({ ...parsed.data, ownerId: user?.id ?? null }, async (cost) => {

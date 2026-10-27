@@ -17,6 +17,7 @@ import {
   type FrameAction,
 } from "../../shared/flipbook";
 import { ApiErrorBodySchema, VideoAssetSchema } from "../../shared/schemas";
+import { LivingInventorySchema, LivingRenderSchema, LivingTrackSchema, livingUrls, type LivingRequest } from "../../shared/living";
 import { knownErrorMessage } from "../_editor/messages";
 
 // The browser side of Flipbook: typed calls to /api/flipbooks and a poller
@@ -83,7 +84,24 @@ export const flipbookApi = {
   frame: (id: string, frameId: string, action: FrameAction) => call(`/api/flipbooks/${id}/frames/${frameId}`, json(action), parseFlipbook),
   replaceFrame: (id: string, frameId: string, file: File) => call(`/api/flipbooks/${id}/frames/${frameId}`, upload(file), parseFlipbook),
   uploadReference: (id: string, file: File) => call(`/api/flipbooks/${id}/reference`, upload(file), parseFlipbook),
+  /** One more image of the same character, kept beside the reference. */
+  addReference: (id: string, file: File) => call(`/api/flipbooks/${id}/reference`, upload(file, "POST"), parseFlipbook),
+  removeReference: (id: string, version: string) => call(`/api/flipbooks/${id}/reference?v=${encodeURIComponent(version)}`, { method: "DELETE" }, parseFlipbook),
   uploadBackground: (id: string, file: File) => call(`/api/flipbooks/${id}/background`, upload(file), parseFlipbook),
+  /** "Animate as is": what was found in an upload that can move, or null before anyone looked. */
+  living: (imageId: string) => call(livingUrls.layers(imageId), { cache: "no-store" }, (value) => LivingInventorySchema.nullable().parse((value as { inventory?: unknown }).inventory ?? null)),
+  /** Finds what can move (paid, once per upload). */
+  findLiving: (imageId: string) => call(livingUrls.layers(imageId), { method: "POST" }, (value) => LivingInventorySchema.parse((value as { inventory?: unknown }).inventory)),
+  /** Renders the picture in motion (local work; the same request reuses its files). */
+  /** The track uploaded for "Animate as is", or null. */
+  livingTrack: (imageId: string) => call(livingUrls.audio(imageId), { cache: "no-store" }, (value) => LivingTrackSchema.nullable().parse((value as { track?: unknown }).track ?? null)),
+  uploadLivingTrack: (imageId: string, file: File) => call(livingUrls.audio(imageId), upload(file, "POST"), (value) => LivingTrackSchema.parse((value as { track?: unknown }).track)),
+  /** The rendered animation as a video-editor clip; saved as a project when signed in. */
+  livingToEditor: (imageId: string, key: string) => call(livingUrls.editor(imageId), json({ key }), (value) => {
+    const body = value as { video?: unknown; saved?: unknown };
+    return { video: VideoAssetSchema.parse(body.video), saved: body.saved === true };
+  }),
+  renderLiving: (imageId: string, request: LivingRequest) => call(livingUrls.render(imageId), json(request), (value) => LivingRenderSchema.parse((value as { render?: unknown }).render)),
   export: (id: string, request: ExportRequest) =>
     call(`/api/flipbooks/${id}/export`, json(request), (value) => {
       const body = value as { flipbook?: unknown; record?: unknown };

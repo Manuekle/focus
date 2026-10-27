@@ -1,8 +1,10 @@
 "use client";
 
-import { Download01Icon, Video01Icon } from "@hugeicons/core-free-icons";
+import { useState } from "react";
+import { Download01Icon, Video01Icon, ViewIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { MediaLightbox, type LightboxMedia } from "../../components/ui/media-lightbox";
 import { Spinner } from "../../components/ui/spinner";
 import { ToggleChip } from "../../components/ui/toggle-chip";
 import { formatBytes } from "../../shared/media";
@@ -11,6 +13,7 @@ import {
   backgroundMoves,
   holdFrames,
   type ExportFormat,
+  type FlipbookAspect,
   type Flipbook,
   type FlipbookBackground,
   type PlaybackSettings,
@@ -18,6 +21,11 @@ import {
 import styles from "./flipbook.module.css";
 
 const FORMAT_LABEL: Record<ExportFormat, string> = { mp4: "MP4", gif: "GIF", spritesheet: "Sprite sheet", frames: "PNG frames" };
+
+const ASPECTS: readonly { readonly value: FlipbookAspect; readonly label: string; readonly hint: string }[] = [
+  { value: "16:9", label: "16:9", hint: "Landscape" },
+  { value: "9:16", label: "9:16", hint: "Portrait" },
+];
 
 const BACKGROUND_LABEL: Record<FlipbookBackground["kind"], string> = { transparent: "Transparent", color: "Color", scene: "Scene", custom: "Image", generated: "Generated" };
 
@@ -57,6 +65,14 @@ export function ExportPanel({
   const timed = format === "mp4" || (format === "gif" && (settings.motion !== "in_place" || backgroundMoves(background)));
   const allowed = backgroundAllowed(format, background.kind);
   const latest = flipbook.exports.slice(0, 6);
+  const [preview, setPreview] = useState<LightboxMedia | null>(null);
+  // What can be looked at in the page: a clip or a picture. A zip of frames cannot.
+  const previewOf = (record: (typeof latest)[number], file: (typeof latest)[number]["files"][number]): LightboxMedia | null => {
+    const caption = `${FORMAT_LABEL[record.format]} · ${record.facts.width}×${record.facts.height}`;
+    if (file.type.startsWith("video/")) return { kind: "video", src: file.url, alt: `${FORMAT_LABEL[record.format]} export`, caption };
+    if (file.type.startsWith("image/")) return { kind: "image", src: file.url, alt: `${FORMAT_LABEL[record.format]} export`, caption, transparent: record.background.kind === "transparent" };
+    return null;
+  };
 
   return (
     <section className={styles.panel} aria-labelledby="export-title">
@@ -70,6 +86,16 @@ export function ExportPanel({
           ))}
         </div>
       </div>
+
+      <div className={styles.controlRow}>
+        <span className={styles.controlLabel}>Aspect</span>
+        <div className={styles.chips} role="group" aria-label="Aspect ratio">
+          {ASPECTS.map(({ value, label, hint }) => (
+            <ToggleChip key={value} size="xs" selected={settings.aspect === value} onClick={() => onSettingsChange({ ...settings, aspect: value })} title={hint}>{label}</ToggleChip>
+          ))}
+        </div>
+      </div>
+      {format === "spritesheet" || format === "frames" ? <p className={styles.hint}>Sprite sheets and PNG frames keep the drawing size; the aspect applies to MP4, GIF and the preview.</p> : null}
 
       <div className={styles.controlRow}>
         <span className={styles.controlLabel}>Length</span>
@@ -113,6 +139,14 @@ export function ExportPanel({
                   {record.facts.durationSeconds !== null ? ` · ${record.facts.durationSeconds.toFixed(2)} s` : ""}
                 </span>
                 <span className={styles.exportFiles}>
+                  {record.files.map((file) => {
+                    const media = previewOf(record, file);
+                    return media ? (
+                      <button key={`${file.name}-view`} type="button" className={styles.exportView} onClick={() => setPreview(media)}>
+                        <HugeiconsIcon icon={ViewIcon} size={12} strokeWidth={1.9} />View
+                      </button>
+                    ) : null;
+                  })}
                   {record.files.map((file) => (
                     <a key={file.name} href={`${file.url}&download=1`} download={file.name} className="text-xs text-primary hover:underline">
                       {file.name.endsWith(".json") ? "Atlas JSON" : "Download"} ({formatBytes(file.bytes)})
@@ -124,6 +158,7 @@ export function ExportPanel({
           </ul>
         </div>
       ) : null}
+      <MediaLightbox items={preview ? [preview] : []} index={preview ? 0 : null} onClose={() => setPreview(null)} />
     </section>
   );
 }

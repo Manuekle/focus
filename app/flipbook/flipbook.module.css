@@ -100,6 +100,24 @@
 .referenceImage { position: relative; display: grid; aspect-ratio: 2 / 3; place-items: center; overflow: hidden; border-radius: 12px; background: #ffffff04; box-shadow: inset 0 0 0 1px #ffffff0a; }
 /* Absolutely placed: a percentage height inside an aspect-ratio grid cell would overflow and crop the feet. */
 .referenceImage img, .stripThumb img, .inspect img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+/* Extra views of the character: small squares, removable. */
+.extras { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
+.extra { position: relative; }
+.extraImage { position: relative; display: block; width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 10px; background: #ffffff04; box-shadow: inset 0 0 0 1px #ffffff0a; }
+.extraImage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.extraRemove { position: absolute; top: 4px; right: 4px; display: grid; width: 18px; height: 18px; place-items: center; padding: 0; border: 0; border-radius: 999px; background: #000000a6; color: #fff; cursor: pointer; opacity: 0; scale: 0.85; transition: opacity 150ms var(--ease-smooth-out), scale 150ms var(--ease-smooth-out), background-color 150ms; }
+.extra:hover .extraRemove, .extraRemove:focus-visible { opacity: 1; scale: 1; }
+.extraRemove:hover { background: var(--destructive); }
+.extraRemove:disabled { display: none; }
+@media (hover: none) { .extraRemove { opacity: 1; scale: 1; } }
+/* The backgrounds that exist, as pictures: the active one is ringed. */
+.plates { display: grid; grid-template-columns: repeat(auto-fill, minmax(112px, 1fr)); gap: 8px; }
+.plates figure { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.plates figcaption { color: var(--muted-foreground); font-size: 11px; transition: color 150ms; }
+.plates figure[data-active] figcaption { color: var(--foreground); }
+.plate { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 10px; background: #ffffff04; box-shadow: inset 0 0 0 1px #ffffff0f; transition: box-shadow 150ms var(--ease-smooth-out); }
+.plates figure[data-active] .plate { box-shadow: inset 0 0 0 1px #ffffff0f, 0 0 0 2px var(--primary); }
+.plate img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .palette { display: flex; gap: 4px; }
 .palette span { width: 16px; height: 16px; border-radius: 5px; box-shadow: inset 0 0 0 1px #ffffff1f; }
 .metrics { display: grid; gap: 4px; font-size: 12px; }
@@ -112,8 +130,7 @@
 .checkList li::before { position: absolute; top: 0.62em; left: 0; width: 5px; height: 5px; border-radius: 999px; background: var(--alert-warning, #e0a43a); content: ""; }
 .checkList li[data-source="review"]::before { background: var(--primary); }
 .caveats li::before { background: var(--muted-foreground); }
-.details summary { color: var(--muted-foreground); font-size: 12px; cursor: pointer; }
-.details p { margin-top: 6px; color: var(--muted-foreground); font-size: 12px; line-height: 1.55; }
+.poseText { color: var(--muted-foreground); font-size: 12px; line-height: 1.55; }
 .actions { display: flex; flex-direction: column; gap: 8px; }
 
 /* Player */
@@ -152,11 +169,13 @@
 .inspect:not([data-transparent]) { background: #ffffff04; }
 
 /* Export */
-.color { width: 28px; height: 24px; padding: 0; border: 0; border-radius: 6px; background: transparent; cursor: pointer; }
 .exportsList { display: flex; flex-direction: column; gap: 8px; }
 .exportsList ul { display: flex; flex-direction: column; gap: 10px; }
 .exportsList li { display: flex; flex-direction: column; gap: 2px; }
-.exportFiles { display: flex; flex-wrap: wrap; gap: 10px; }
+.exportFiles { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.exportView { display: inline-flex; align-items: center; gap: 4px; padding: 0; border: 0; background: none; color: var(--foreground); font: inherit; font-size: 12px; cursor: pointer; transition: color 150ms; }
+.exportView:hover { color: var(--primary); }
+.exportView:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
 
 @container (max-width: 1080px) {
   .grid { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); }
@@ -174,7 +193,7 @@
   .fieldInput { font-size: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .stripFrame, .field { transition: none; }
+  .stripFrame, .field, .extraRemove { transition: none; }
 }
 
 /* Skeletons: the same boxes as the real panels, so nothing moves when they fill in. */
@@ -214,3 +233,15 @@
 @keyframes lift { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
 .keepScene { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 12px; background: linear-gradient(180deg, #ffffff06, #ffffff02); box-shadow: inset 0 0 0 1px #ffffff0d; cursor: pointer; }
 @media (prefers-reduced-motion: reduce) { .layerCharacter { animation: none; } }
+
+/* Animate as is: the picture or its preview, with a layer's mask tinted over it while that layer is hovered. */
+.mediaBox { position: relative; line-height: 0; }
+.mediaBox video { display: block; width: auto; max-width: 100%; height: auto; max-height: min(62vh, 620px); }
+.layerHighlight { position: absolute; inset: 0; background: color-mix(in oklab, var(--primary) 55%, transparent); mask-size: 100% 100%; -webkit-mask-size: 100% 100%; mask-mode: luminance; pointer-events: none; animation: highlightIn 160ms ease-out both; }
+@keyframes highlightIn { from { opacity: 0; } to { opacity: 1; } }
+.livingLayers { display: flex; flex-direction: column; gap: 14px; }
+.livingLayer { display: flex; flex-direction: column; gap: 6px; outline: none; }
+.livingLayerName { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
+.livingDownload { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; box-shadow: inset 0 0 0 1px #ffffff14; color: var(--foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
+.livingDownload:hover { background: #ffffff0a; }
+@media (prefers-reduced-motion: reduce) { .layerHighlight { animation: none; } }

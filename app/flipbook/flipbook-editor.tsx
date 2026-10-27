@@ -2,13 +2,15 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AiMagicIcon, Cancel01Icon } from "@hugeicons/core-free-icons";
+import { AiPaintbrushIcon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
+import { MediaLightbox } from "../../components/ui/media-lightbox";
 import { Spinner } from "../../components/ui/spinner";
 import { useToast } from "../../components/toast-provider";
 import {
+  MAX_EXTRA_REFERENCES,
   WALK_FRAME_COUNT,
   actionSpec,
   backgroundMotion,
@@ -43,6 +45,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
     drawingFps: flipbook.plan?.drawingFps ?? 8,
     durationSeconds: flipbook.plan?.durationSeconds ?? 4,
     motion: flipbook.plan?.motion ?? "in_place",
+    aspect: "16:9",
     speed: 1,
   });
   // The plan arrives after the editor opens: its timing becomes the starting settings, once.
@@ -71,6 +74,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   const [sending, setSending] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [sheetOpen, setSheetOpen] = useState(false);
 
   const active = isActive(flipbook);
   const spec = actionSpec(flipbook.plan?.action);
@@ -160,8 +164,28 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
 
   const onFrameAction = (action: FrameAction) => {
     if (!frame) return;
-    if (action.action === "regenerate") void run((confirmExtra) => flipbookApi.frame(flipbook.id, frame.id, { ...action, confirmExtra }));
+    if (action.action === "regenerate" || action.action === "enhance") void run((confirmExtra) => flipbookApi.frame(flipbook.id, frame.id, { ...action, confirmExtra }));
     else void run(() => flipbookApi.frame(flipbook.id, frame.id, action));
+  };
+
+  /**
+   * Several images at once. Extra views go first: they are quick, and the
+   * anchor starts a worker that makes the flipbook busy until it is done.
+   */
+  const uploadReferences = async (files: File[], asAnchor: boolean) => {
+    const anchor = asAnchor ? files[0] : undefined;
+    const extras = (asAnchor ? files.slice(1) : files).slice(0, Math.max(0, MAX_EXTRA_REFERENCES - flipbook.extraReferences.length));
+    const dropped = files.length - (anchor ? 1 : 0) - extras.length;
+    setBusy(true);
+    try {
+      for (const file of extras) onChange(await flipbookApi.addReference(flipbook.id, file));
+      if (anchor) onChange(await flipbookApi.uploadReference(flipbook.id, anchor));
+      if (dropped > 0) toast({ title: "Some images were left out", description: `A character keeps up to ${MAX_EXTRA_REFERENCES} extra views. ${dropped} ${dropped === 1 ? "image was" : "images were"} not added.`, status: "info" });
+    } catch (error) {
+      toast({ title: "That didn’t work", description: error instanceof Error ? error.message : "Try again.", status: "error" });
+    } finally {
+      setBusy(false);
+    }
   };
 
   const exportNow = async () => {
@@ -233,13 +257,11 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
         <div className={styles.headActions}>
           <span className={styles.pill} title="Muse Image drawings used by this animation">Drawings {flipbook.budget.used}/{flipbook.budget.limit}</span>
           {readyCount >= 1 ? (
-            <Button asChild size="sm" variant="ghost">
-              <a href={flipbookUrls.contactSheet(flipbook.id, flipbook.updatedAt)} target="_blank" rel="noreferrer">Contact sheet</a>
-            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setSheetOpen(true)}>Contact sheet</Button>
           ) : null}
           {readyCount >= 2 ? (
             <Button size="sm" variant="outline" disabled={locked || reviewing} onClick={() => void review()} title="Muse Spark compares the contact sheet with the reference (1 AI call).">
-              {reviewing ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={AiMagicIcon} size={14} strokeWidth={1.75} />}AI review
+              {reviewing ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={14} strokeWidth={1.75} />}AI review
             </Button>
           ) : null}
           {active ? (
@@ -286,7 +308,8 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             flipbook={flipbook}
             busy={locked}
             onReference={(kind) => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "reference", kind, confirmExtra }))}
-            onUploadReference={(file) => void run(() => flipbookApi.uploadReference(flipbook.id, file))}
+            onUploadReferences={(files, asAnchor) => void uploadReferences(files, asAnchor)}
+            onRemoveReference={(version) => void run(() => flipbookApi.removeReference(flipbook.id, version))}
           />
           {flipbook.plan && flipbook.reference && missing > 0 && !active ? (
             <div className={styles.cta}>
@@ -305,6 +328,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             onGenerate={generateBackground}
             creatingScene={creatingScene}
             onCreateScene={createScene}
+            stamp={backgroundStamp}
             onUploadBackground={(file) => void run(async () => {
               const next = await flipbookApi.uploadBackground(flipbook.id, file);
               setBackground({ kind: "custom" });
@@ -360,6 +384,12 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
           />
         </div>
       </div>
+
+      <MediaLightbox
+        items={[{ kind: "image", src: flipbookUrls.contactSheet(flipbook.id, flipbook.updatedAt), alt: "Contact sheet: every drawing in playback order", caption: "Contact sheet · every drawing in playback order", transparent: true }]}
+        index={sheetOpen ? 0 : null}
+        onClose={() => setSheetOpen(false)}
+      />
     </div>
   );
 }

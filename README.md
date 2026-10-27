@@ -45,7 +45,7 @@ pnpm dev                  # http://localhost:3200
 ```
 
 - `/` — the editor.
-- `/api/health` — readiness (FFmpeg, FFprobe, storage, AI switch, daily budget).
+- `/api/health` — readiness (FFmpeg, FFprobe, storage, AI switch).
 
 Uploads, masks and renders live in `.focus-data/` (git-ignored) and expire after 24 h.
 
