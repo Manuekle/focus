@@ -1,6 +1,7 @@
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import { expect, test, type Page } from "@playwright/test";
+import { limits } from "./media-limits";
 
 const fixture = (name: string) => path.join(import.meta.dirname, ".fixtures", name);
 
@@ -54,7 +55,7 @@ test("asks for a clip before revealing editing options", async ({ page }) => {
   await page.goto("/");
   await expect(page.getByRole("heading", { name: /Make anything\s*stand out$/ })).toBeVisible();
   await expect(page.getByText("Drop your video here")).toBeVisible();
-  await expect(page.getByText(/MP4 or MOV · up to 60s · 150 MB/)).toBeVisible();
+  await expect(page.getByText(`MP4 or MOV · up to ${limits.maxDurationSeconds}s · ${limits.maxUploadMb} MB max`, { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Generate edit" })).toHaveCount(0);
   await expect(page.getByLabel("Describe the change")).toHaveCount(0);
   await expect(page.locator('[aria-label="Editing steps"] [aria-current="step"]')).toHaveText("1Add a clip");
@@ -69,10 +70,10 @@ test("rejects a file that is not a video, with a retry", async ({ page }) => {
   await expect(page.getByRole("button", { name: /Retry/ })).toBeVisible();
 });
 
-test("rejects a clip longer than 60 seconds", async ({ page }) => {
+test("rejects a clip longer than the configured limit", async ({ page }) => {
   await page.goto("/");
   await page.locator('input[type="file"]').setInputFiles(fixture("long.mp4"));
-  await expect(page.getByText(/Trim it to 60s or less/)).toBeVisible();
+  await expect(page.getByText(`Trim it to ${limits.maxDurationSeconds}s or less`, { exact: false })).toBeVisible();
 });
 
 test("uploads, plays, and reports that AI editing is paused", async ({ page }) => {

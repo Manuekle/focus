@@ -1,6 +1,7 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { limits } from "./media-limits";
 
 /** Synthetic, rights-free fixtures generated with FFmpeg on every run. */
 export default function globalSetup() {
@@ -16,7 +17,7 @@ export default function globalSetup() {
   ]);
   execFileSync("ffmpeg", [
     "-hide_banner", "-loglevel", "error", "-y",
-    "-f", "lavfi", "-i", "testsrc2=size=320x240:rate=24:duration=61",
+    "-f", "lavfi", "-i", `testsrc2=size=320x240:rate=24:duration=${limits.maxDurationSeconds + 1}`,
     "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
     path.join(dir, "long.mp4"),
   ]);
