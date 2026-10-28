@@ -14,7 +14,6 @@
 .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .buttonRow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .inline { display: inline-flex; align-items: center; gap: 8px; }
-.pill { padding: 3px 9px; border-radius: 999px; box-shadow: inset 0 0 0 1px #ffffff14; color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
 
 /* The transparent-pixel checkerboard behind sprites. */
 .stage[data-transparent], .stripThumb[data-transparent], .inspect[data-transparent], .referenceImage[data-transparent] {
@@ -159,8 +158,8 @@
 .stripFrame[data-status="failed"] .stripThumb { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--destructive) 55%, transparent); }
 .stripEmpty { color: var(--muted-foreground); font-size: 11px; }
 .badgeApproved, .badgeWarning { position: absolute; top: 4px; display: grid; width: 16px; height: 16px; place-items: center; border-radius: 999px; }
-.badgeApproved { left: 4px; background: var(--primary); color: #fff; }
-.badgeWarning { right: 4px; background: var(--alert-warning, #e0a43a); color: #1a1a1a; }
+.badgeApproved { left: 4px; background: var(--status-success-bg); color: var(--status-success-fg); box-shadow: var(--shadow-inset); }
+.badgeWarning { right: 4px; background: var(--status-pending-bg); color: var(--status-pending-fg); box-shadow: var(--shadow-inset); }
 .stripMeta { display: flex; min-width: 0; gap: 4px; font-size: 11px; }
 .stripLabel { overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
 .stripState { color: var(--muted-foreground); font-size: 10px; }
@@ -228,7 +227,6 @@
 .readingNotes { display: flex; flex-direction: column; gap: 4px; color: var(--muted-foreground); font-size: 11px; line-height: 1.5; }
 .readingNotes li { position: relative; padding-left: 11px; }
 .readingNotes li::before { position: absolute; top: 0.6em; left: 0; width: 4px; height: 4px; border-radius: 999px; background: var(--alert-warning, #e0a43a); content: ""; }
-.fact { display: inline-flex; align-items: center; min-height: 24px; padding: 2px 9px; border-radius: 999px; background: #ffffff06; box-shadow: inset 0 0 0 1px #ffffff0d; color: var(--foreground); font-size: 11px; line-height: 1.35; }
 /* A sheen over the drawing while it is being read. */
 .readingSweep { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; background: transparent; box-shadow: none; pointer-events: none; }
 .layerTabs { width: auto; align-self: center; }
@@ -245,8 +243,6 @@
 .livingLayers { display: flex; flex-direction: column; gap: 14px; }
 .livingLayer { display: flex; flex-direction: column; gap: 6px; outline: none; }
 .livingLayerName { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
-.livingDownload { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; box-shadow: inset 0 0 0 1px #ffffff14; color: var(--foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
-.livingDownload:hover { background: #ffffff0a; }
 @media (prefers-reduced-motion: reduce) { .layerHighlight { animation: none; } }
 .mediaBox img[data-picking] { cursor: crosshair; }
 
@@ -275,9 +271,6 @@
 .cost { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
 .cost strong { color: var(--foreground); font-weight: 600; font-variant-numeric: tabular-nums; }
 .pickerEmpty { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
-.sideLink { display: flex; align-items: center; gap: 8px; min-height: 36px; margin-top: -10px; padding: 8px 10px; border-radius: 8px; color: var(--muted-foreground); font-size: 12px; text-decoration: none; transition: background-color 150ms, color 150ms; }
-.sideLink:hover { background: var(--muted); color: var(--foreground); }
-.sideLink:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 
 .referenceRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .referenceThumb { height: 48px; width: auto; max-width: 96px; border-radius: 6px; object-fit: cover; box-shadow: inset 0 0 0 1px #ffffff0f; }

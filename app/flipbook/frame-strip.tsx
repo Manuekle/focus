@@ -45,6 +45,8 @@ export function FrameStrip({
   /** A scene's drawings are beats of one choreography: small thumbnails, and no reordering. */
   readonly scene?: boolean;
 }) {
+  const pageSize = 40;
+  const start = Math.floor(Math.min(selected, frames.length - 1) / pageSize) * pageSize;
   const onKeyDown = (event: KeyboardEvent<HTMLOListElement>) => {
     const delta = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
     if (!delta) return;
@@ -55,18 +57,22 @@ export function FrameStrip({
       return;
     }
     onSelect(target);
-    (event.currentTarget.querySelectorAll("button")[target] as HTMLButtonElement | undefined)?.focus();
+    const list = event.currentTarget;
+    requestAnimationFrame(() => (list.querySelector(`[data-frame-index="${target}"]`) as HTMLButtonElement | null)?.focus());
   };
 
   return (
+    <>
     <ol className={styles.strip} data-dense={scene || undefined} aria-label={scene ? "Drawings in order" : "Frames in playback order. Alt plus arrow keys reorder."} onKeyDown={onKeyDown}>
-      {frames.map((frame, index) => {
+      {frames.slice(Math.max(0, start), start + pageSize).map((frame, offset) => {
+        const index = start + offset;
         const thumb = frameThumb(flipbook, frame);
         const flagged = frame.warnings.length > 0 || (frame.review && !frame.review.ok);
         return (
           <li key={frame.id}>
             <button
               type="button"
+              data-frame-index={index}
               className={cn(styles.stripFrame, index === selected && styles.stripFrameActive)}
               aria-current={index === selected ? "true" : undefined}
               aria-label={`Frame ${index + 1}, ${frame.label}, ${STATE_LABEL[frame.status]}${frame.approved ? ", approved" : ""}${flagged ? ", needs a look" : ""}`}
@@ -77,7 +83,7 @@ export function FrameStrip({
               <span className={styles.stripThumb} data-transparent="">
                 {thumb ? (
                   // eslint-disable-next-line @next/next/no-img-element -- versioned sprite from the media route
-                  <img src={thumb} alt="" draggable={false} />
+                  <img src={`${thumb}&thumb=1`} alt="" draggable={false} loading="lazy" decoding="async" />
                 ) : frame.status === "generating" || frame.status === "processing" ? (
                   <Skeleton className={styles.working} delay={index * 90} />
                 ) : (
@@ -88,7 +94,7 @@ export function FrameStrip({
               </span>
               <span className={styles.stripMeta}>
                 <span className="tabular-nums">{index + 1}</span>
-                <span className={styles.stripLabel}>{frame.label}</span>
+                <span className={styles.stripLabel}>{flipbook.sequence ? `${(Number(frame.id.slice(1)) / 24).toFixed(2)} s` : frame.label}</span>
               </span>
               <span className={styles.stripState}>{STATE_LABEL[frame.status]}</span>
             </button>
@@ -96,5 +102,11 @@ export function FrameStrip({
         );
       })}
     </ol>
+    {frames.length > pageSize ? <nav className={styles.buttonRow} aria-label="Drawing pages">
+      <button type="button" disabled={start === 0} onClick={() => onSelect(Math.max(0, start - pageSize))}>Previous drawings</button>
+      <span className={styles.hint}>{start + 1}–{Math.min(start + pageSize, frames.length)} of {frames.length}</span>
+      <button type="button" disabled={start + pageSize >= frames.length} onClick={() => onSelect(start + pageSize)}>Next drawings</button>
+    </nav> : null}
+    </>
   );
 }

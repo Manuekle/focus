@@ -23,6 +23,8 @@ import { LivingInventorySchema, LivingRenderSchema, LivingTrackSchema, livingUrl
 import { knownErrorMessage } from "../_editor/messages";
 import type { CharacterSource } from "../../shared/characters";
 import type { ViewPreference } from "../../shared/animation-view";
+import type { SequenceSettings } from "../../shared/sequence";
+import type { FlipbookAudio } from "../../shared/sequence";
 
 // The browser side of Flipbook: typed calls to /api/flipbooks and a poller
 // that follows a flipbook while it works. Codes the editor already words
@@ -109,7 +111,13 @@ const upload = (file: File, method: "PUT" | "POST" = "PUT"): RequestInit => ({
 });
 
 export const flipbookApi = {
-  create: (imageId: string, prompt: string, options: { action?: CycleAction; keepScene?: boolean; characterSource?: CharacterSource; view?: ViewPreference } = {}) =>
+  uploadMotion: (id: string, file: File) => call(`/api/flipbooks/${id}/motion`, upload(file, "POST"), parseFlipbook),
+  attachMotion: (id: string, input: { version: string; start: number; durationSeconds: number; useAudio: boolean }) => call(`/api/flipbooks/${id}/motion`, json(input), parseFlipbook),
+  duplicate: (id: string, target: { imageId?: string; characterSource?: CharacterSource }) => call(`/api/flipbooks/${id}/duplicate`, json(target), parseFlipbook),
+  uploadAudio: (id: string, file: File) => call(`/api/flipbooks/${id}/audio`, upload(file, "POST"), parseFlipbook),
+  audioSettings: (id: string, settings: Pick<FlipbookAudio, "offset" | "startsAt" | "volume">) => call(`/api/flipbooks/${id}/audio`, json(settings, "PATCH"), parseFlipbook),
+  removeAudio: (id: string) => call(`/api/flipbooks/${id}/audio`, { method: "DELETE" }, parseFlipbook),
+  create: (imageId: string, prompt: string, options: { action?: CycleAction; keepScene?: boolean; characterSource?: CharacterSource; view?: ViewPreference; sequence?: SequenceSettings } = {}) =>
     call("/api/flipbooks", json({ ...(options.characterSource ? {} : { imageId }), prompt, ...options }), parseFlipbook),
   /** Several saved characters in one scene, as long as `seconds`. */
   createEnsemble: (request: CreateEnsembleRequest) => call("/api/flipbooks", json(request), parseFlipbook),

@@ -281,4 +281,3 @@
 }
 
 /* "New" next to Flipbook in the header: small, quiet, primary-tinted. */
-.newBadge { margin-left: 6px; padding: 1px 6px; border-radius: 999px; background: color-mix(in srgb, var(--primary) 18%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 35%, transparent); color: color-mix(in srgb, var(--primary) 45%, var(--foreground)); font-size: 10px; font-weight: 500; line-height: 16px; letter-spacing: 0.02em; }

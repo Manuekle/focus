@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ACTION_SPECS, type CharacterAnalysis } from "../../shared/flipbook";
-import { drawPose } from "./frame-generation";
+import { drawInbetween, drawPose } from "./frame-generation";
 import { generateImage } from "./muse-image";
 import { parsePlanOutput } from "./pose-planning";
 
@@ -15,6 +15,17 @@ const anchor = Buffer.from("character");
 const mannequin = Buffer.from("pose");
 
 beforeEach(() => vi.mocked(generateImage).mockClear());
+
+it("draws distinct temporal positions from the same two keys and identity", async () => {
+  const from = Buffer.from("before"), to = Buffer.from("after");
+  for (const [position, progress] of [[1 / 3, "33.3%"], [2 / 3, "66.7%"]] as const) {
+    await drawInbetween({ reference: anchor, from, to, analysis, plan, fromIndex: 0, toIndex: 1, position, flipbookId: "test" });
+    const request = vi.mocked(generateImage).mock.lastCall![0];
+    expect(request.references.map((entry) => entry.png)).toEqual([anchor, from, to]);
+    expect(request.prompt).toContain(`exactly ${progress} of the way from Image 2 to Image 3`);
+    expect(request.prompt).toContain("swing along arcs from their joints");
+  }
+});
 
 describe("pose reference roles", () => {
   it("keeps the original identity portrait beside the selected outfit when animating a saved character", async () => {

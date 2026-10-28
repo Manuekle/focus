@@ -5,6 +5,9 @@ import sharp from "sharp";
 import { afterAll, beforeAll, expect, it } from "vitest";
 import {
   PlaybackSettingsSchema,
+  drawingAtOutputFrame,
+  exposures,
+  outputFrameAtTick,
   type ExportRequest,
   type FlipbookAlignment,
 } from "../../shared/flipbook";
@@ -83,7 +86,7 @@ it("preserves legacy timing and validates the optional playback mode", () => {
 });
 
 it.each([8, 12] as const)(
-  "renders a legacy smooth request as held drawings at 24 fps, %i drawings/s, never blended",
+  "renders a legacy smooth request as held drawings at 60 fps, %i drawings/s, never blended",
   async (fps) => {
     const result = await renderExport({
       request: request(fps),
@@ -95,17 +98,18 @@ it.each([8, 12] as const)(
     });
     const facts = await probe(result.files[0].path);
     const stream = facts.streams.find((item) => item.codec_type === "video")!;
-    expect(stream.avg_frame_rate).toBe("24/1");
-    expect(result.facts).toMatchObject({ frames: 48, durationSeconds: 2 });
+    expect(stream.avg_frame_rate).toBe("60/1");
+    expect(result.facts).toMatchObject({ frames: 120, durationSeconds: 2, fps: 60 });
     const decoded: Buffer[] = [];
     for await (const frame of readFrames(result.files[0].path, result.facts.width, result.facts.height)) decoded.push(frame);
-    expect(decoded).toHaveLength(48);
-    const hold = 24 / fps;
+    expect(decoded).toHaveLength(120);
+    const holds = exposures(frames.map((frame) => frame.phase), fps);
+    // Inside a hold the picture repeats; it only changes on a new drawing.
     for (let index = 0; index < decoded.length; index++) {
-      // Inside a hold the picture repeats; it only changes on a new drawing.
-      const start = index - (index % hold);
+      const { tick } = drawingAtOutputFrame(index, holds);
+      const start = outputFrameAtTick(tick, holds);
       expect(diff(decoded[index], decoded[start])).toBeLessThan(1);
-      if (index % hold === 0 && index > 0) expect(diff(decoded[index], decoded[index - 1])).toBeGreaterThan(0.15);
+      if (index === start && index > 0) expect(diff(decoded[index], decoded[index - 1])).toBeGreaterThan(0.15);
     }
     expect(await readdir(path.dirname(result.files[0].path))).toEqual(["legacy.mp4"]);
   },

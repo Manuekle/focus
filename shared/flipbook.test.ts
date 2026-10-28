@@ -4,6 +4,7 @@ import {
   ANIMATION_ACTIONS,
   ZOOM_DEPTH,
   backgroundMoves,
+  backgroundImageRect,
   backgroundScrolls,
   backgroundZoomAt,
   FlipbookPlanSchema,
@@ -20,17 +21,87 @@ import {
   cellLeftAt,
   cellTopAt,
   drawingAtFrame,
+  drawingAtOutputFrame,
+  exposureFrameCount,
   exposureSheet,
   exposures,
   frameAtTick,
   holdFrames,
+  inbetweenAt,
+  outputClock,
+  playbackClock,
+  poseSmoothingAt,
+  outputFrameAtTick,
   outputFrameCount,
   stageClock,
   stageSize,
+  tickClock,
   tickCount,
 } from "./flipbook";
 
 const cell = { width: 600, height: 768, strideX: 400 };
+
+describe("independent cycle tempo and light smoothing", () => {
+  it("fits all four image edges in either aspect, including the full-image zoom range", () => {
+    for (const stage of [{ width: 514, height: 912 }, { width: 1366, height: 768 }]) {
+      for (const image of [{ width: 1600, height: 900 }, { width: 736, height: 1227 }]) {
+        for (const zoom of [1 / (1 + ZOOM_DEPTH), 1]) {
+          const rect = backgroundImageRect(stage, image, undefined, zoom);
+          expect(rect.left).toBeGreaterThanOrEqual(0);
+          expect(rect.top).toBeGreaterThanOrEqual(0);
+          expect(rect.left + rect.width).toBeLessThanOrEqual(stage.width);
+          expect(rect.top + rect.height).toBeLessThanOrEqual(stage.height);
+        }
+      }
+    }
+    expect(backgroundImageRect({ width: 64, height: 114 }, { width: 160, height: 90 })).toEqual({ left: 0, top: 39, width: 64, height: 36 });
+  });
+  const drawings = WALK_PHASES.flatMap((phase) => [
+    { phase },
+    ...[1, 2, 3, 4, 5].map((step) => ({ phase, inbetween: true, position: step / 6 })),
+  ]);
+
+  it("plays all 48 drawings in four seconds: 12 drawings/s, five output frames each, five cycles in 20 s", () => {
+    for (const sourceRate of [4, 8, 12, 24] as const) {
+      const sheet = exposureSheet(drawings, sourceRate, 4);
+      expect(sheet.drawings).toEqual(drawings);
+      expect(sheet.holds.reduce((sum, hold) => sum + hold, 0)).toBeCloseTo(96);
+      for (let frame = 0; frame < 1200; frame++) {
+        expect(drawingAtOutputFrame(frame, sheet.holds)).toEqual({ tick: Math.floor(frame / 5), index: Math.floor((frame % 240) / 5) });
+      }
+      expect(outputFrameAtTick(48, sheet.holds)).toBe(240);
+      expect(outputFrameAtTick(240, sheet.holds)).toBe(1200);
+    }
+  });
+
+  it("keeps every generated pose when only the cycle duration changes", () => {
+    for (const seconds of [1, 2, 4]) {
+      const sheet = exposureSheet(drawings, 12, seconds);
+      const shown = new Set(Array.from({ length: seconds * 60 }, (_, frame) => drawingAtOutputFrame(frame, sheet.holds).index));
+      expect(shown.size).toBe(48);
+      expect(sheet.holds.reduce((sum, hold) => sum + hold, 0) / 24).toBeCloseTo(seconds);
+    }
+  });
+
+  it("fades the previous pose from 12% to zero in two output frames, without stretching the cycle", () => {
+    const { holds } = exposureSheet(drawings, 4, 4);
+    expect(poseSmoothingAt(0, holds, 0.12)).toMatchObject({ index: 0, previousIndex: 47, previousWeight: 0.12 });
+    expect(poseSmoothingAt(1, holds, 0.12).previousWeight).toBe(0.06);
+    for (const frame of [2, 3, 4]) expect(poseSmoothingAt(frame, holds, 0.12).previousWeight).toBe(0);
+    expect(poseSmoothingAt(240, holds, 0.12)).toMatchObject({ tick: 48, index: 0, previousWeight: 0.12 });
+    expect(poseSmoothingAt(5, holds, 1).previousWeight).toBe(0.2);
+    expect(poseSmoothingAt(5, holds, -1).previousWeight).toBe(0);
+    expect(poseSmoothingAt(5, holds).previousWeight).toBe(0);
+  });
+
+  it("keeps travel and background zoom synchronized with the retimed cycle", () => {
+    const settings = { drawingFps: 12 as const, cycleSeconds: 4, durationSeconds: 20 };
+    expect(playbackClock(240, settings, 8)).toBe(8);
+    expect(playbackClock(1200, settings, 8)).toBe(40);
+    expect(backgroundZoomAt(playbackClock(1200, settings, 8), settings, 8)).toBe(1);
+    expect(backgroundZoomAt(playbackClock(600, settings, 8), settings, 8)).toBeCloseTo(1 + ZOOM_DEPTH);
+  });
+});
 
 describe("walk cycle library", () => {
   it("is eight distinct phases in stride order, each half mirroring only the gait", () => {
@@ -56,6 +127,17 @@ describe("walk cycle library", () => {
 
 describe("timing", () => {
   const phases = (action: (typeof ANIMATION_ACTIONS)[number]) => ACTION_SPECS[action].poses.map((pose) => pose.phase);
+
+  it("reuses the same intermediate drawing at equivalent fractions of a slow dance", () => {
+    expect(inbetweenAt("f0", 1, 6)).toBe("i0-1of6");
+    expect(inbetweenAt("f0", 2, 6)).toBe("i0-1of3");
+    expect(inbetweenAt("f0", 3, 6)).toBe("i0");
+    expect(inbetweenAt("f0", 4, 6)).toBe("i0-2of3");
+    expect(inbetweenAt("f0", 5, 6)).toBe("i0-5of6");
+    for (const divisions of [2, 3, 4, 6, 8]) {
+      for (let step = 1; step < divisions; step++) expect(DrawingIdSchema.safeParse(inbetweenAt("f7", step, divisions)).success).toBe(true);
+    }
+  });
 
   it("holds an even cycle on threes at 8 drawings/s and on twos at 12", () => {
     expect(holdFrames(8)).toBe(3);
@@ -96,18 +178,63 @@ describe("timing", () => {
   });
 
   it("makes every supported length a whole number of cycles for every action", () => {
-    for (const duration of [2, 4, 6] as const) {
-      expect(outputFrameCount(duration)).toBe(duration * 24);
-      for (const fps of [8, 12] as const) {
+    for (const duration of [2, 4, 6, 20] as const) {
+      expect(exposureFrameCount(duration)).toBe(duration * 24);
+      expect(outputFrameCount(duration)).toBe(duration * 60);
+      for (const fps of [4, 8, 12] as const) {
         expect(tickCount(duration, fps) % 8).toBe(0);
         for (const action of ANIMATION_ACTIONS) {
           const holds = exposures(phases(action), fps);
           expect(holds.reduce((sum, hold) => sum + hold, 0)).toBe(8 * holdFrames(fps));
           // The last output frame shows the last drawing of a cycle: the loop restarts cleanly on frame 1.
-          expect(drawingAtFrame(outputFrameCount(duration) - 1, holds).index).toBe(7);
+          expect(drawingAtOutputFrame(outputFrameCount(duration) - 1, holds).index).toBe(7);
         }
       }
     }
+  });
+
+  it.each([4, 8, 12] as const)("fills every exposure slot at %i key poses/s without changing the cycle length", (fps) => {
+    for (const action of ANIMATION_ACTIONS) {
+      const keys = phases(action);
+      const holds = exposures(keys, fps);
+      const dense = keys.flatMap((phase, index) => [
+        { phase, inbetween: false, position: 0 },
+        ...Array.from({ length: holds[index] - 1 }, (_, offset) => ({ phase, inbetween: true, position: (offset + 1) / holds[index] })),
+      ]);
+      const sheet = exposureSheet(dense, fps);
+      const duration = holds.reduce((sum, hold) => sum + hold, 0);
+      expect(sheet.drawings).toHaveLength(duration);
+      expect(sheet.holds).toEqual(Array(duration).fill(1));
+      expect(outputFrameAtTick(duration, sheet.holds)).toBe(outputFrameAtTick(keys.length, holds));
+    }
+  });
+
+  it("selects one pose per time slot when saved densities overlap", () => {
+    const sheet = exposureSheet([
+      { phase: "left_contact", inbetween: false, position: 0 },
+      { phase: "left_contact", inbetween: true, position: 1 / 3 },
+      { phase: "left_contact", inbetween: true, position: 0.5 },
+      { phase: "left_contact", inbetween: true, position: 2 / 3 },
+    ], 8);
+    expect(sheet.drawings.map((drawing) => drawing.position)).toEqual([0, 1 / 3, 2 / 3]);
+    expect(sheet.holds).toEqual([1, 1, 1]);
+  });
+
+  it("maps the 60 fps clock onto the 24 fps exposure sheet without blending", () => {
+    const walk = exposures(phases("walk"), 8);
+    // Every drawing holds for three exposure frames, so at 60 fps it holds for
+    // seven or eight frames (7.5 on average): the same 125 ms, no in-betweens.
+    expect(exposureFrameCount(1)).toBe(24);
+    expect(outputFrameCount(1)).toBe(60);
+    expect([0, 7, 8, 14, 15, 59].map((frame) => drawingAtOutputFrame(frame, walk).index)).toEqual([0, 0, 1, 1, 2, 7]);
+    expect(outputFrameAtTick(1, walk)).toBe(8);
+    expect(outputFrameAtTick(8, walk)).toBe(60);
+    // The camera clock advances on every 60 fps frame.
+    expect(outputClock(0, 8)).toBe(0);
+    expect(outputClock(1, 8)).toBeCloseTo(8 / 60, 6);
+    expect(outputClock(60, 8)).toBe(8);
+    expect(tickClock(1, walk, 8)).toBeCloseTo(1, 6);
+    expect(tickClock(8, walk, 8)).toBeCloseTo(8, 6);
   });
 
   it("runs the camera clock on every output frame", () => {
@@ -258,6 +385,9 @@ describe("a scene of several characters", () => {
     expect(FrameIdSchema.safeParse(frameIdAt(47)).success).toBe(true);
     for (const bad of ["f48", "f-1", "f01", "i3", "f", "x1"]) expect(FrameIdSchema.safeParse(bad).success).toBe(false);
     expect(DrawingIdSchema.safeParse("i7").success).toBe(true);
+    expect(DrawingIdSchema.safeParse("i7-2of3").success).toBe(true);
+    expect(DrawingIdSchema.safeParse("i0-3of4").success).toBe(true);
+    for (const invalid of ["i8-1of3", "i0-4of4", "i0-1of60", "i0/../../secret"]) expect(DrawingIdSchema.safeParse(invalid).success).toBe(false);
     expect(DrawingIdSchema.safeParse("f47").success).toBe(true);
     expect(DrawingIdSchema.safeParse("g1").success).toBe(false);
   });
@@ -267,9 +397,9 @@ describe("a scene of several characters", () => {
       const phases = Array.from({ length: ensembleDrawings(seconds) }, (_, index) => beatPhase(index));
       const holds = exposures(phases, 8);
       expect(new Set(holds)).toEqual(new Set([3]));
-      expect(holds.reduce((sum, hold) => sum + hold, 0)).toBe(outputFrameCount(seconds));
-      expect(drawingAtFrame(outputFrameCount(seconds) - 1, holds)).toEqual({ tick: phases.length - 1, index: phases.length - 1 });
-      expect(frameAtTick(phases.length - 1, holds)).toBe(outputFrameCount(seconds) - 3);
+      expect(holds.reduce((sum, hold) => sum + hold, 0)).toBe(exposureFrameCount(seconds));
+      expect(drawingAtOutputFrame(outputFrameCount(seconds) - 1, holds)).toEqual({ tick: phases.length - 1, index: phases.length - 1 });
+      expect(frameAtTick(phases.length - 1, holds)).toBe(exposureFrameCount(seconds) - 3);
     }
     expect(ACTION_SPECS.ensemble).toMatchObject({ travels: false, drawingFps: 8, subtle: true, stride: null });
   });

@@ -7,7 +7,7 @@ import { getFlipbook } from "./store";
  * including their copied references and exports. */
 export async function requireFlipbookAccess(request: Request, id: string) {
   const flipbook = await getFlipbook(id);
-  if (flipbook.characterSource || flipbook.cast.length) {
+  if (flipbook.ownerId || flipbook.characterSource || flipbook.cast.length) {
     const user = await currentUser(request);
     if (!user || user.id !== flipbook.ownerId)
       throw new AppError(

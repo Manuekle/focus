@@ -15,6 +15,7 @@ import { AppError } from "../errors";
 import { metaClient, metaError, plannerLimiter, requireMetaConfig, withRetry } from "../ai/meta";
 import { nullable } from "../ai/finish-schema";
 import { recordUsage } from "../ai/usage";
+import { storeProposal } from "./proposals";
 
 // The Flipbook chat. Muse Spark reads the plan (the eight poses, in playback
 // order) and one sentence from the person, and answers with a short reply
@@ -27,7 +28,7 @@ export const chatServices = {
   complete: completeWithMuseSpark,
 };
 
-export function chatJsonSchema() {
+export function chatJsonSchema(positions?: readonly number[]) {
   return {
     type: "object",
     additionalProperties: false,
@@ -42,7 +43,7 @@ export function chatJsonSchema() {
           additionalProperties: false,
           required: ["position", "summary", "description"],
           properties: {
-            position: { type: "integer", enum: Array.from({ length: WALK_FRAME_COUNT }, (_, index) => index + 1) },
+            position: { type: "integer", enum: positions ?? Array.from({ length: WALK_FRAME_COUNT }, (_, index) => index + 1) },
             summary: { type: "string" },
             description: { type: "string" },
           },
@@ -53,9 +54,9 @@ export function chatJsonSchema() {
         additionalProperties: false,
         required: ["drawingFps", "speed", "durationSeconds", "motion"],
         properties: {
-          drawingFps: nullable({ type: "integer", enum: [8, 12] }),
+          drawingFps: nullable({ type: "integer", enum: [4, 8, 12] }),
           speed: nullable({ type: "number" }),
-          durationSeconds: nullable({ type: "integer", enum: [2, 4, 6] }),
+          durationSeconds: nullable({ type: "integer", enum: [2, 4, 6, 20] }),
           motion: nullable({ type: "string", enum: ["in_place", "across"] }),
         },
       },
@@ -64,15 +65,16 @@ export function chatJsonSchema() {
 }
 
 export function chatInstructions(flipbook: Pick<Flipbook, "plan">): string {
+  if (flipbook.plan?.mode === "sequence") return `You edit a finite continuous animation of ${flipbook.plan.durationSeconds} seconds at ${flipbook.plan.drawingFps} drawings/s. Return a proposed change, never execute or draw. You see one window of the full timeline; position numbers are ABSOLUTE frame numbers and timestamps are seconds. Only propose edits to positions explicitly shown in this window, and only when the person's request applies there. Keep neighboring movement continuous, camera and staging fixed, identity unchanged. Describe body movement only, never clothing or appearance. Protect approved frames. The action does not loop back to its first pose. For duration, density, audio, a different character or a reference video, explain the corresponding studio controls and return no playback changes. Return reply (brief English), action propose or none, poses with absolute position, summary and complete English description, and playback with all fields null. Greeting or informational question: no changed poses. No costs in the reply.`;
   const spec = actionSpec(flipbook.plan?.action);
   return `You are the animation assistant inside Focus Flipbook. The person already has a ${spec.label} of one character: eight hand-drawn frames that loop forever, made by a drawing model from a short written description of each pose. They tell you in a chat what they want different. You never draw and never execute anything; you return a proposal as JSON, and the person approves it before anything is redrawn.
 
 What you can change:
 1. Poses. Each of the eight frames is drawn from its description. To change a frame, return that frame in "poses" with its position (1 to 8, as numbered) and a complete NEW description. Each changed frame costs one paid drawing, so change only the frames the request really needs: "wave with the other hand" changes every frame where the hand is raised; "change frame 4 so the arm is higher" changes frame 4 only; a mood or style request ("happier", "more energetic", "smaller movement") changes the frames where that shows, usually most of them.
 2. Playback (free, no redraw), in "playback" (null for everything that should stay):
-   - drawingFps 8 (relaxed, on threes) or 12 (fast, energetic). "Slower" → 8; "faster" → 12.
+   - drawingFps 4 (a relaxed two-second dance cycle), 8 or 12 (faster cycles). This sets key-pose pace; in-betweens control smoothness.
    - speed 0.5–1.5: how far a travelling cycle moves per stride (1 keeps the feet planted). Only meaningful when the motion travels.
-   - durationSeconds 2, 4 or 6: how long the clip is. Every length is a whole number of cycles.
+   - durationSeconds 2, 4, 6 or 20: how long the clip is. Every length is a whole number of cycles.
    - motion "in_place" or "across" (the cycle carried across the stage; only for actions that travel).
 Looping is always on and cannot be turned off.
 
@@ -99,7 +101,7 @@ export function chatContext(flipbook: Flipbook, playback: ChatPlayback | undefin
     `Character: ${flipbook.analysis?.subject ?? "the character"}. ${flipbook.analysis?.clothing ?? ""}`.trim(),
     `Action: ${spec.label}. Camera: ${plan.view ?? "side"}. Heading: ${plan.direction}. Travels: ${spec.travels ? "yes" : "no (stays on the spot)"}.`,
     `Playback now: ${shown.drawingFps} drawings per second, ${shown.durationSeconds} s, ${shown.motion === "in_place" ? "in place" : `travelling ${shown.motion}`}, speed ×${shown.speed}.`,
-    `Frames in playback order:\n${frames.map((frame, index) => describeFrame(frame, index + 1, plan.poses[frame.poseIndex]?.description ?? "")).join("\n")}`,
+    `Frames in playback order:\n${frames.map((frame, index) => describeFrame(frame, plan.mode === "sequence" ? frame.poseIndex + 1 : index + 1, plan.poses[frame.poseIndex]?.description ?? "")).join("\n")}`,
     `Conversation so far:\n${recent.length ? recent.map((turn) => `${turn.role === "user" ? "Person" : "Assistant"}: ${turn.text}`).join("\n") : "none"}`,
     `Person: ${message}`,
   ].join("\n\n");
@@ -116,7 +118,7 @@ const ChatOutputSchema = z.object({
         description: z.string().trim().max(2000),
       }),
     )
-    .max(24)
+    .max(48)
     .default([]),
   playback: z
     .object({
@@ -172,11 +174,11 @@ export function parseChatOutput(text: string, flipbook: Flipbook, playback?: Cha
   }
 
   const patch: PlaybackPatch = {};
-  if (turn.action === "propose") {
+  if (turn.action === "propose" && plan.mode !== "sequence") {
     const now = playback ?? { drawingFps: plan.drawingFps, durationSeconds: plan.durationSeconds, motion: plan.motion, speed: 1 };
     const { drawingFps, durationSeconds, speed, motion } = turn.playback;
-    if ((drawingFps === 8 || drawingFps === 12) && drawingFps !== now.drawingFps) patch.drawingFps = drawingFps;
-    if ((durationSeconds === 2 || durationSeconds === 4 || durationSeconds === 6) && durationSeconds !== now.durationSeconds) patch.durationSeconds = durationSeconds;
+    if ((drawingFps === 4 || drawingFps === 8 || drawingFps === 12) && drawingFps !== now.drawingFps) patch.drawingFps = drawingFps;
+    if ((durationSeconds === 2 || durationSeconds === 4 || durationSeconds === 6 || durationSeconds === 20) && durationSeconds !== now.durationSeconds) patch.durationSeconds = durationSeconds;
     const spec = actionSpec(plan.action);
     // Only a cycle that travels can be carried across the stage.
     const nextMotion = motion === "across" ? (spec.travels ? plan.direction : undefined) : motion === "in_place" ? "in_place" : undefined;
@@ -209,6 +211,22 @@ export async function proposeChange(input: {
   readonly signal?: AbortSignal;
 }): Promise<FlipbookProposal> {
   if (!input.flipbook.plan) throw new AppError("flipbook_not_ready", 409, "The pose plan isn’t ready yet.");
+  if (input.flipbook.sequence) {
+    const all = orderedFrames(input.flipbook);
+    const changes: PoseChange[] = [], skipped: SkippedFrame[] = [];
+    let reply = "";
+    for (let start = 0; start < all.length; start += 48) {
+      const window = all.slice(start, start + 48);
+      const positions = window.map((frame) => frame.poseIndex + 1);
+      const text = await chatServices.complete({ instructions: chatInstructions(input.flipbook), input: chatContext({ ...input.flipbook, frames: window, order: window.map((frame) => frame.id) }, input.playback, input.history, input.message), flipbookId: input.flipbook.id, signal: input.signal, positions });
+      const parsed = parseChatOutput(text, input.flipbook, input.playback);
+      if (!reply || parsed.changes.length) reply = parsed.reply;
+      changes.push(...parsed.changes.filter((entry) => positions.includes(entry.position)));
+      skipped.push(...parsed.skipped.filter((entry) => positions.includes(entry.position)));
+    }
+    const { used, limit } = input.flipbook.budget;
+    return storeProposal(input.flipbook, FlipbookProposalSchema.parse({ reply, changes, skipped, playback: null, cost: { drawings: changes.length, used, limit, overBy: Math.max(0, used + changes.length - limit) } }));
+  }
   const text = await chatServices.complete({
     instructions: chatInstructions(input.flipbook),
     input: chatContext(input.flipbook, input.playback, input.history, input.message),
@@ -218,7 +236,7 @@ export async function proposeChange(input: {
   return parseChatOutput(text, input.flipbook, input.playback);
 }
 
-async function completeWithMuseSpark(input: { readonly instructions: string; readonly input: string; readonly flipbookId: string; readonly signal?: AbortSignal }): Promise<string> {
+async function completeWithMuseSpark(input: { readonly instructions: string; readonly input: string; readonly flipbookId: string; readonly signal?: AbortSignal; readonly positions?: readonly number[] }): Promise<string> {
   const config = requireMetaConfig();
   const client = metaClient(config);
   const started = Date.now();
@@ -232,7 +250,7 @@ async function completeWithMuseSpark(input: { readonly instructions: string; rea
               instructions: input.instructions,
               reasoning: { effort: "low" },
               input: [{ type: "message", role: "user", content: [{ type: "input_text", text: input.input }] }],
-              text: { format: { type: "json_schema", name: "flipbook_chat", strict: true, schema: chatJsonSchema() } },
+              text: { format: { type: "json_schema", name: "flipbook_chat", strict: true, schema: chatJsonSchema(input.positions) } },
             },
             { signal: input.signal },
           ),

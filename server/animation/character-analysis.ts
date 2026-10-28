@@ -50,7 +50,7 @@ Fields:
 - hair, clothing, proportions: precise visible facts for redrawing the same character (colors, lengths, which side an asymmetric element is on, head-to-body ratio). Write "not visible" for what cannot be seen.
 - accessories: visible accessories, each with its color and on which side of the body it is.
 - palette: up to 6 main colors of the character as #RRGGBB hex.
-- requestedAction: what the user's instruction asks the character to do. "fight" for punching, boxing, shadowboxing, sparring or any fighting move. "run" for running, sprinting or jogging. "jump" for jumping, hopping or leaping. "wave" for waving, greeting or saying hello or goodbye with a hand. "idle" for resting in a posture, sitting, crouching, standing still, breathing, waiting or an idle loop. "gesture" for other hand or arm gestures (pointing, clapping). "none" when the instruction names no movement.
+- requestedAction: what the user's instruction asks the character to do. "fight" for punching, boxing, shadowboxing, sparring or any fighting move. "run" for running, sprinting or jogging. "jump" for jumping, hopping or leaping. "wave" for waving, greeting or saying hello or goodbye with a hand. "idle" for resting in a posture, sitting, crouching, standing still, breathing, waiting or an idle loop. "dance" for dancing, choreography, rhythmic steps, hip sways and coordinated arm swings. "gesture" for other hand or arm gestures (pointing, clapping). "none" when the instruction names no movement.
 - notes: anything that would make redrawing the same character in new poses unreliable (cropped body, heavy occlusion, several characters, very small character), in one short sentence, or null.`;
 
 function stripNulls(value: unknown): unknown {
@@ -151,7 +151,7 @@ export async function analyzeCharacter(input: { readonly imagePng: Buffer; reado
 export function assessInput(analysis: CharacterAnalysis): { supported: boolean; reason: string | null; warnings: string[] } {
   if (analysis.characterCount === 0) return { supported: false, reason: "We couldn’t find a character in this image. Upload an illustration of one character.", warnings: [] };
   if (![...ANIMATION_ACTIONS, "none"].includes(analysis.requestedAction as CycleAction)) {
-    return { supported: false, reason: "Flipbook animates walks, runs, jumps, waves, idle loops and fighting combos for now. Ask your character for one of those.", warnings: [] };
+    return { supported: false, reason: "Flipbook animates walks, runs, jumps, waves, idle loops, dance cycles and fighting combos. Ask your character for one of those.", warnings: [] };
   }
   const warnings: string[] = [];
   if (analysis.characterCount > 1) {
@@ -190,7 +190,7 @@ export const LOOK_JSON_SCHEMA = {
         additionalProperties: false,
         required: ["action", "direction", "detail"],
         properties: {
-          action: { type: "string", enum: ["walk", "run", "fight", "jump", "wave", "idle"] },
+          action: { type: "string", enum: ["walk", "run", "fight", "jump", "wave", "idle", "dance"] },
           direction: { type: "string", enum: ["left", "right", "in_place"] },
           detail: { type: "string" },
         },
@@ -208,7 +208,7 @@ Fields:
 ${ANALYSIS_FIELDS.split("\n").filter((line) => !line.startsWith("- requestedAction")).join("\n")}
 - summary: one short sentence saying what the picture shows, for the person who uploaded it (e.g. "A girl with horse ears running through falling leaves under a blue sky.").
 - setting: the scene behind the character in a few words ("blue sky with falling green leaves"), or null when the background is plain.
-- ideas: up to 3 different motions this character could do, chosen from what Focus can animate: "walk", "run", "fight" (one character shadowboxing), "jump" (a jump on the spot), "wave" (waving hello) or "idle" (breathing and blinking on the spot). Pick what suits the picture: its pose, its energy, its expression, its setting; a calm portrait suits wave or idle, an action shot suits run, jump or fight. direction: for walk and run, "left" or "right" to travel across the screen or "in_place" to stay on the spot; for fight, jump, wave and idle, the side the character should face, "left" or "right" (never "in_place"). detail: 2 to 6 words of manner that fit this character ("hair and tail flowing", "sneaking, wary"), no action verb, no direction.`;
+- ideas: up to 3 different motions this character could do, chosen from what Focus can animate: "walk", "run", "fight" (one character shadowboxing), "jump" (a jump on the spot), "wave" (waving hello) "idle" (breathing and blinking on the spot), or "dance" (coordinated arm swings, side steps and a rhythmic bounce). Pick what suits the picture: its pose, its energy, its expression, its setting; a calm portrait suits wave or idle, an action shot suits run, jump or fight. direction: for walk and run, "left" or "right" to travel across the screen or "in_place" to stay on the spot; for fight, jump, wave, idle and dance, the side the character should face, "left" or "right" (never "in_place"). detail: 2 to 6 words of manner that fit this character ("hair and tail flowing", "sneaking, wary"), no action verb, no direction.`;
 
 export type ImageReading = {
   readonly analysis: CharacterAnalysis;

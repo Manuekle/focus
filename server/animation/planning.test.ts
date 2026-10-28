@@ -55,7 +55,7 @@ describe("character analysis", () => {
 
   it("supports the actions it can animate, and says what may make a result unreliable", () => {
     expect(assessInput(analysis)).toEqual({ supported: true, reason: null, warnings: [] });
-    expect(assessInput({ ...analysis, requestedAction: "dance" }).supported).toBe(false);
+    expect(assessInput({ ...analysis, requestedAction: "dance" }).supported).toBe(true);
     expect(assessInput({ ...analysis, characterCount: 0 }).supported).toBe(false);
     const risky = assessInput({ ...analysis, view: "front", feetVisible: false, characterCount: 2, notes: "n".repeat(320) });
     expect(risky.supported).toBe(true);
@@ -227,7 +227,7 @@ describe("run and fight", () => {
     const duel = assessInput({ ...analysis, requestedAction: "fight", characterCount: 2 });
     expect(duel.supported).toBe(true);
     expect(duel.warnings.join(" ")).toMatch(/fighting each other isn’t supported/);
-    expect(assessInput({ ...analysis, requestedAction: "dance" }).supported).toBe(false);
+    expect(assessInput({ ...analysis, requestedAction: "dance" }).supported).toBe(true);
   });
 
   it("plans a run with a flight phase, faster by default, able to travel", () => {
@@ -294,7 +294,7 @@ describe("reading an upload", () => {
     expect(reading.ideas).toEqual([
       { action: "run", direction: "right", detail: "hair and tail flowing" },
       { action: "fight", direction: "right", detail: "light on her feet" },
-      { action: "walk", direction: "left", detail: "calm" },
+      { action: "dance", direction: "left", detail: "twirling" },
     ]);
   });
 
@@ -305,10 +305,20 @@ describe("reading an upload", () => {
 });
 
 describe("jump, wave and idle", () => {
+  it("plans a two-second dance cycle that repeats for a 20-second export", () => {
+    const dancing = { ...analysis, requestedAction: "dance" as const };
+    const poses = ACTION_SPECS.dance.poses.map((pose) => ({ phase: pose.phase, detail: "" }));
+    const plan = parsePlanOutput(JSON.stringify({ direction: "right", motion: "across", drawingFps: 4, durationSeconds: 20, poses }), dancing);
+    expect(plan).toMatchObject({ action: "dance", motion: "in_place", drawingFps: 4, durationSeconds: 20 });
+    expect(plan.poses).toHaveLength(8);
+    expect(planInstructions("dance")).toContain("rate of KEY POSES, not the output frame rate");
+    expect(plan.poses.map((pose) => pose.description).join(" ")).toContain("cycle closes smoothly");
+  });
+
   const base = { ...analysis, requestedAction: "none" as const };
 
   it("are chosen from the instruction and stay on the spot", () => {
-    for (const action of ["jump", "wave", "idle"] as const) {
+    for (const action of ["jump", "wave", "idle", "dance"] as const) {
       const seen = { ...base, requestedAction: action };
       expect(actionFor(seen)).toBe(action);
       expect(assessInput(seen).supported).toBe(true);
@@ -322,8 +332,8 @@ describe("jump, wave and idle", () => {
       expect(prompt).not.toContain("opponent");
       expect(prompt).toContain("staying on the spot");
     }
-    expect(actionFor({ requestedAction: "dance" })).toBe("walk");
-    expect(assessInput({ ...base, requestedAction: "dance" }).supported).toBe(false);
+    expect(actionFor({ requestedAction: "dance" })).toBe("dance");
+    expect(assessInput({ ...base, requestedAction: "dance" }).supported).toBe(true);
   });
 
   it("are suggested from a reading, facing a side rather than in place", () => {

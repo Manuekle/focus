@@ -3,33 +3,36 @@
 import { AiPaintbrushIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
-import { exposureSheet, inbetweenTargets, playbackCycle, type DrawingFps, type Flipbook } from "../../shared/flipbook";
+import { Badge } from "../../components/ui/badge";
+import { EXPOSURE_FPS, denseInbetweenTargets, exposureSheet, playbackCycle, type DrawingFps, type Flipbook } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
 
 /**
- * In-betweens: one drawing halfway between each pair of key poses, made from
- * both. The cost is stated before anything is drawn; past the budget, the
+ * In-betweens fill the exposure slots between the key poses. The cost is
+ * stated before anything is drawn; past the budget, the
  * editor's usual confirmation asks first.
  */
 export function InbetweenPanel({
   flipbook,
   drawingFps,
+  cycleSeconds,
   keysReady,
   disabled,
   onDraw,
 }: {
   readonly flipbook: Flipbook;
   readonly drawingFps: DrawingFps;
+  readonly cycleSeconds?: number;
   /** Every key drawing is finished and registered. */
   readonly keysReady: boolean;
   readonly disabled: boolean;
   readonly onDraw: () => void;
 }) {
-  const keys = flipbook.order.length;
-  const targets = inbetweenTargets(flipbook).length;
+  const targets = denseInbetweenTargets(flipbook, drawingFps).length;
   const cycle = playbackCycle(flipbook, true);
   const current = cycle.filter((drawing) => drawing.inbetween).length;
-  const shown = exposureSheet(cycle, drawingFps).drawings.filter((drawing) => drawing.inbetween).length;
+  const sheet = exposureSheet(cycle, drawingFps, cycleSeconds);
+  const actualFps = Math.round((sheet.drawings.length * EXPOSURE_FPS) / sheet.holds.reduce((sum, hold) => sum + hold, 0));
   const { used, limit } = flipbook.budget;
   const over = Math.max(0, used + targets - limit);
   const noun = targets === 1 ? "in-between" : "in-betweens";
@@ -38,9 +41,9 @@ export function InbetweenPanel({
     <section className={styles.panel} aria-labelledby="inbetween-title">
       <div className={styles.panelHead}>
         <h2 id="inbetween-title" className={styles.panelTitle}>In-betweens</h2>
-        {current ? <span className={styles.pill}>{current}/{keys} drawn</span> : null}
+        <Badge>{actualFps} drawings/s</Badge>
       </div>
-      <p className={styles.hint}>One drawing halfway between each pair of poses, made from both. The poses keep their holds and the in-betweens play on ones, so the motion flows like hand-drawn anime.</p>
+      <p className={styles.hint}>Add the missing poses between key drawings. Cycle length sets the speed; MP4 plays at 60 fps.</p>
       {targets ? (
         <>
           <Button size="sm" variant="ai" disabled={disabled || !keysReady} onClick={onDraw}>
@@ -55,8 +58,7 @@ export function InbetweenPanel({
             {current ? " A redrawn or moved pose needs its in-between drawn again." : ""}
           </p>
         </>
-      ) : <p className={styles.hint}>Every in-between matches the current drawings.</p>}
-      {current && shown < current ? <p className={styles.hint}>At {drawingFps} drawings per second, a pose held for a single frame leaves no room: {shown} of {current} play. Choose 8 to see them all.</p> : null}
+      ) : <p className={styles.hint}>All the poses are ready. You can change the cycle length without drawing them again.</p>}
     </section>
   );
 }

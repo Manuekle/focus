@@ -15,6 +15,7 @@ import {
   flipbookUrls,
   inbetweenAfter,
   inbetweenTargets,
+  denseInbetweenTargets,
   nextInOrder,
   orderedFrames,
   playbackCycle,
@@ -23,6 +24,8 @@ import {
   type FlipbookPlan,
   type Inbetween,
   type InbetweenId,
+  type InbetweenTarget,
+  type DrawingFps,
   type ExportRecord,
   type ExportRequest,
   type Flipbook,
@@ -55,6 +58,10 @@ import { loadPoseReference } from "./pose-references";
 import { compatiblePoseId } from "./pose-catalog";
 import { decodeImage, getCharacterImage, imageFiles, readUpload } from "./image-input";
 import { actionFor, planPoses } from "./pose-planning";
+import { planSequence, sequenceSkeleton } from "./sequence-planning";
+import { SequenceSettingsSchema, type SequenceSettings } from "../../shared/sequence";
+import { prepareExportTrack } from "./flipbook-audio";
+import { motionGuide } from "./motion-reference";
 import { checkFrames, contactSheet, reviewFrames } from "./quality-control";
 import { FAR_CONCEPTS, castSheet, decideReference, growMask, drawBackdrop, drawCleanReference, drawScenePlate, readReference, restoreScene, seamlessPlate, splitDepth, storeReference, subjectMask } from "./reference-manager";
 import type { VideoAsset } from "../../shared/schemas";
@@ -94,6 +101,7 @@ export const services = {
   describe: lookAtImage,
   analyze: analyzeCharacter,
   plan: planPoses,
+  planSequence,
   planEnsemble,
   draw: drawPose,
   drawEnsemble: drawEnsembleFrame,
@@ -111,8 +119,8 @@ export function imageBudget(): number {
 }
 
 const exportLimiter = ((globalThis as { __focusFlipbookExport?: Limiter }).__focusFlipbookExport ??= new Limiter(1));
-// 4: anime exposure sheet, backgrounds on every frame, no interpolated MP4.
-const EXPORT_VERSION = 4;
+// 6: continuous root travel and position-aware, dense in-betweens.
+const EXPORT_VERSION = 9;
 type ExportOptions = { readonly signal?: AbortSignal; readonly beforeRender?: () => void };
 
 function skeleton(): FlipbookFrame[] {
@@ -161,6 +169,7 @@ function assertIdle(flipbook: Flipbook): void {
 
 /** Cycle-only features (in-betweens, reordering, a changed reference): a scene's drawings are fixed beats of one choreography. */
 function assertScenelessCycle(flipbook: Flipbook, what: string): void {
+  if (flipbook.sequence) throw new AppError("not_for_sequences", 409, `${what} is for repeated cycles. Edit the sequence's timed drawings instead.`);
   if (flipbook.cast.length) throw new AppError("not_for_scenes", 409, `${what} isn’t available for a scene with several characters. Redraw a drawing instead.`);
 }
 
@@ -229,10 +238,11 @@ function refundImages(id: string, count: number): Promise<unknown> {
 // ── Create and run ─────────────────────────────────────────────────────────
 
 export async function createFlipbook(
-  input: { readonly imageId?: string; readonly characterSource?: CharacterSource; readonly view?: ViewPreference; readonly prompt: string; readonly ownerId?: string | null; readonly action?: CycleAction; readonly poseId?: PoseId; readonly keepScene?: boolean },
+  input: { readonly imageId?: string; readonly characterSource?: CharacterSource; readonly view?: ViewPreference; readonly prompt: string; readonly ownerId?: string | null; readonly action?: CycleAction; readonly poseId?: PoseId; readonly keepScene?: boolean; readonly sequence?: SequenceSettings },
   gate?: PaidWorkGate,
 ): Promise<Flipbook> {
   assertFlipbookEnabled();
+  const sequence = input.sequence ? SequenceSettingsSchema.parse(input.sequence) : undefined;
   if (input.poseId !== undefined && (!PoseIdSchema.safeParse(input.poseId).success || !CameraViewSchema.options.some((view) => compatiblePoseId(input.poseId, "idle", view) === input.poseId) || (input.action && input.action !== "idle"))) {
     throw new AppError("invalid_pose", 400, "This posture isn’t compatible with the animation. Try describing the movement again.");
   }
@@ -274,12 +284,13 @@ export async function createFlipbook(
     progress: null,
     source: { width: image.width, height: image.height, hasAlpha: image.hasAlpha },
     analysis,
+    ...(sequence ? { sequence } : {}),
     plan: null,
     warnings: [],
     reference: null,
     extraReferences: [],
-    frames: skeleton(),
-    order: [...FRAME_IDS],
+    frames: sequence ? sequenceSkeleton(sequence) : skeleton(),
+    order: sequence ? sequenceSkeleton(sequence).map((frame) => frame.id) : [...FRAME_IDS],
     alignment: null,
     inbetweens: [],
     budget: { limit: imageBudget(), used: 0 },
@@ -414,13 +425,15 @@ async function runPipeline(id: string, signal: AbortSignal, options: { keepScene
     await workerUpdate(id, signal, (current) => ({ ...current, analysis, status: "unsupported", error: { code: "unsupported_animation", message: assessed.reason! } }));
     return;
   }
-  await workerUpdate(id, signal, (current) => ({ ...current, analysis, warnings: assessed.warnings, status: "planning", detail: `Planning eight ${actionSpec(actionFor(analysis)).label} poses with Muse Spark` }));
+  await workerUpdate(id, signal, (current) => ({ ...current, analysis, warnings: assessed.warnings, status: "planning", detail: flipbook.sequence ? `Planning ${flipbook.frames.length} drawings across ${flipbook.sequence.durationSeconds} seconds` : `Planning eight ${actionSpec(actionFor(analysis)).label} poses with Muse Spark` }));
 
-  const proposedPlan = await services.plan({ analysis, prompt: flipbook.prompt, flipbookId: id, imagePng: sourceFlat, poseId: flipbook.poseId, view: flipbook.requestedView, signal });
+  const proposedPlan = flipbook.sequence
+    ? await services.planSequence({ analysis, prompt: flipbook.prompt, flipbookId: id, settings: flipbook.sequence, view: flipbook.requestedView, action, signal })
+    : await services.plan({ analysis, prompt: flipbook.prompt, flipbookId: id, imagePng: sourceFlat, poseId: flipbook.poseId, view: flipbook.requestedView, signal });
   // The camera is user intent, not a model suggestion. Keep it even if a
   // provider or an older injected planner omits the new plan field.
   const cameraView = resolveCameraView(flipbook.requestedView, analysis, flipbook.prompt);
-  const plan = { ...proposedPlan, view: cameraView,
+  const plan = { ...proposedPlan, ...(flipbook.sequence ? { motionId: randomUUID() } : {}), view: cameraView,
     poseId: compatiblePoseId(proposedPlan.poseId, proposedPlan.action, cameraView),
     poses: proposedPlan.poses.map((pose) => ({ ...pose, referenceId: compatiblePoseId(pose.referenceId, proposedPlan.action, cameraView), description: phaseForView(pose.description, cameraView) })),
   };
@@ -440,6 +453,10 @@ async function runPipeline(id: string, signal: AbortSignal, options: { keepScene
     if (decision.kind === "clean") await reserveImages(id, 1, false);
     await prepareReference(id, decision, signal);
     if (signal.aborted) return;
+    if (flipbook.sequence) {
+      await workerUpdate(id, signal, (current) => ({ ...current, status: "reference_ready", detail: `Motion ready. Generate ${current.frames.length} timed drawings to complete the clip.` }));
+      return;
+    }
 
     // Caveats about the input: let the person check the reference before
     // eight drawings are paid for, unless they already read them on the
@@ -623,19 +640,27 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
     progress: { done: 0, total },
     error: null,
     frames: current.frames.map((frame) => (frameIds.includes(frame.id) ? { ...frame, status: "generating", error: null } : frame)),
+    queuedDrawings: [...frameIds],
   }));
 
   const drawn: FrameId[] = [];
   let refundable = 0;
-  await Promise.all(frameIds.map(async (frameId) => {
+  let started = 0;
+  const drawOne = async (frameId: FrameId) => {
+    if (signal.aborted) return;
+    await workerUpdate(id, signal, (current) => ({ ...current, queuedDrawings: current.queuedDrawings?.filter((id) => id !== frameId) }));
+    if (signal.aborted) return;
+    started++;
     const frame = flipbook.frames.find((entry) => entry.id === frameId)!;
     try {
       let neighbor: Buffer | null = null;
-      if (options.withNeighbor) {
+      if (options.withNeighbor || flipbook.sequence) {
         const order = flipbook.order;
-        const previousId = order[(order.indexOf(frameId) - 1 + order.length) % order.length];
-        const previous = flipbook.frames.find((entry) => entry.id === previousId);
-        if (previous?.version && previous.status === "ready") neighbor = await readFile(path.join(flipbookFiles.versionDir(id, previous.id, previous.version), "raw.png")).catch(() => null);
+        const previousIndex = order.indexOf(frameId) - 1;
+        const previousId = order[flipbook.sequence ? previousIndex : (previousIndex + order.length) % order.length];
+        const latest = flipbook.sequence ? await getFlipbook(id) : flipbook;
+        const previous = latest.frames.find((entry) => entry.id === previousId);
+        if (previous?.version) neighbor = await readFile(path.join(flipbookFiles.versionDir(id, previous.id, previous.version), "raw.png")).catch(() => null);
       }
       let repair: { png: Buffer; problems: string[] } | null = null;
       if (options.repair && frame.version) {
@@ -644,7 +669,9 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
         repair = { png, problems: problemsOf(frame) };
       }
       const guideId = compatiblePoseId(flipbook.plan.poseId ?? flipbook.plan.poses[frame.poseIndex].referenceId, flipbook.plan.action, flipbook.plan.view ?? "side");
-      const image = await services.draw({ reference: reference.png, neighbor, extras, identityReference, repair, poseReference: guideId ? poseReferences.get(guideId) : undefined, requirePoseReference: Boolean(flipbook.poseId), analysis: flipbook.analysis, plan: flipbook.plan, index: frame.poseIndex, note: options.note, flipbookId: id, signal });
+      const tick = flipbook.sequence ? Number(frame.phase.slice(7)) : -1;
+      const guide = flipbook.motionReference ? await motionGuide(id, flipbook.motionReference, tick) : null;
+      const image = await services.draw({ reference: reference.png, neighbor, extras, identityReference, repair, motionGuide: guide ?? undefined, poseReference: guideId ? poseReferences.get(guideId) : undefined, requirePoseReference: Boolean(flipbook.poseId), analysis: flipbook.analysis, plan: flipbook.plan, index: frame.poseIndex, note: options.note, flipbookId: id, signal });
       if (signal.aborted) return;
       const version = newVersionId();
       await writeAtomic(path.join(flipbookFiles.versionDir(id, frameId, version), "raw.png"), image.png);
@@ -673,8 +700,15 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
         error: { code: failure.code, message: failure.message },
       })));
     }
-  }));
-  await refundImages(id, refundable);
+  };
+  try {
+    for (let offset = 0; offset < frameIds.length && !signal.aborted; offset += 2) {
+      await Promise.all(frameIds.slice(offset, offset + 2).map(drawOne));
+    }
+  } finally {
+    await refundImages(id, refundable + frameIds.length - started);
+    await updateFlipbook(id, (current) => ({ ...current, queuedDrawings: [] }), { evenIfCanceled: true });
+  }
   if (signal.aborted) return;
   await cutOut(id, signal, [...drawn, ...(options.alsoCut ?? [])]);
 }
@@ -830,8 +864,7 @@ async function finalize(id: string, signal?: AbortSignal): Promise<Flipbook> {
     lift: plan?.poses[frame.poseIndex].lift ?? 0,
     measure,
   }));
-  // In-betweens with a cut-out are registered on the same cell, halfway up the
-  // bob chart between their keys; their size counts toward the cell's width.
+  // Register each in-between at its own progress along the keys' bob chart.
   const poseOf = (frameId: FrameId) => {
     const index = flipbook.frames.find((frame) => frame.id === frameId)?.poseIndex ?? 0;
     return { relativeRootY: plan?.poses[index].relativeRootY ?? WALK_POSES[index]?.relativeRootY ?? 0, lift: plan?.poses[index].lift ?? WALK_POSES[index]?.lift ?? 0 };
@@ -844,10 +877,11 @@ async function finalize(id: string, signal?: AbortSignal): Promise<Flipbook> {
   }
   for (const { entry, measure } of inbetweens) {
     const from = poseOf(entry.from), to = poseOf(entry.to);
-    entries.push({ frameId: entry.id, version: entry.version!, phase: "inbetween", relativeRootY: (from.relativeRootY + to.relativeRootY) / 2, lift: (from.lift + to.lift) / 2, measure });
+    const position = entry.position ?? 0.5;
+    entries.push({ frameId: entry.id, version: entry.version!, phase: "inbetween", relativeRootY: from.relativeRootY + (to.relativeRootY - from.relativeRootY) * position, lift: from.lift + (to.lift - from.lift) * position, measure });
   }
   // A scene's camera is fixed: its drawings keep the place they were drawn at instead of being registered on one body.
-  const alignment = entries.length ? (flipbook.cast.length ? computeEnsembleAlignment(entries) : computeAlignment(entries, flipbook.alignment, plan?.action, plan?.view)) : flipbook.alignment;
+  const alignment = entries.length ? (flipbook.cast.length || flipbook.sequence ? computeEnsembleAlignment(entries) : computeAlignment(entries, flipbook.alignment, plan?.action, plan?.view)) : flipbook.alignment;
   const sprites = new Map<string, Buffer>();
   if (alignment) {
     for (const { entry, measure } of inbetweens) {
@@ -866,7 +900,7 @@ async function finalize(id: string, signal?: AbortSignal): Promise<Flipbook> {
         sprite = await renderSprite(cutout, measure, transform, { width: alignment.cellWidth, height: alignment.cellHeight });
         await writeAtomic(file, sprite);
       }
-      sprites.set(frame.id, sprite);
+      sprites.set(frame.id, flipbook.sequence ? await sharp(sprite).resize(96, 96, { fit: "fill" }).png().toBuffer() : sprite);
     }
   }
   const reference = flipbook.reference ? await readReference(id, flipbook.reference.version).catch(() => null) : null;
@@ -881,7 +915,7 @@ async function finalize(id: string, signal?: AbortSignal): Promise<Flipbook> {
       scale: alignment.transforms[frame.id]!.scale,
       relativeRootY: plan?.poses[frame.poseIndex].relativeRootY ?? WALK_POSES[frame.poseIndex]?.relativeRootY ?? 0,
       sprite: sprites.get(frame.id)!,
-    })), reference?.measure?.histogram ?? null, plan?.action, plan?.view)
+    })), reference?.measure?.histogram ?? null, plan?.action, plan?.view, Boolean(flipbook.sequence))
     : new Map();
   const update = (current: Flipbook): Flipbook => ({
     ...current,
@@ -952,23 +986,50 @@ export async function generateMissing(id: string, confirmExtra: boolean, gate?: 
   assertDrawable(flipbook);
   const targets = flipbook.frames.filter((frame) => !frame.approved && (frame.status === "pending" || frame.status === "failed")).map((frame) => frame.id);
   if (!targets.length) throw new AppError("nothing_to_generate", 409, "Every frame already has a drawing. Redraw a single frame instead.");
+  const recut = targets.filter((frameId) => {
+    const frame = flipbook.frames.find((entry) => entry.id === frameId)!;
+    return frame.version && ["extraction_failed", "no_subject", "canceled", "interrupted"].includes(frame.error?.code ?? "");
+  });
+  const redraw = targets.filter((frameId) => !recut.includes(frameId));
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: targets.length });
-  await reserveImages(id, targets.length, confirmExtra);
+  await reserveImages(id, redraw.length, confirmExtra);
   return startVisible(id, markGenerating(targets, "Drawing the poses with Muse Image"), async (signal) => {
-    // A failed cut-out keeps its drawing: only cut it out again.
-    const current = await getFlipbook(id);
-    const recut = targets.filter((frameId) => {
-      const frame = current.frames.find((entry) => entry.id === frameId)!;
-      return frame.version && ["extraction_failed", "no_subject"].includes(frame.error?.code ?? "");
-    });
-    const redraw = targets.filter((frameId) => !recut.includes(frameId));
-    await refundImages(id, recut.length);
     if (recut.length) {
       await workerUpdate(id, signal, (state) => ({ ...state, frames: state.frames.map((frame) => (recut.includes(frame.id) ? { ...frame, status: "processing", error: null } : frame)) }));
     }
     if (redraw.length) await drawFrames(id, signal, redraw, { alsoCut: recut });
     else await cutOut(id, signal, recut);
   });
+}
+
+function revisionOf(current: Flipbook) {
+  return { id: newVersionId(), createdAt: new Date().toISOString(), plan: current.plan!, frames: current.frames, order: current.order, alignment: current.alignment, motionReference: current.motionReference };
+}
+
+export async function reviseSequence(id: string, settings: SequenceSettings, gate?: PaidWorkGate, motion?: { reference: NonNullable<Flipbook["motionReference"]>; guide: (tick: number) => Promise<Buffer | null>; audio?: NonNullable<Flipbook["audio"]> }): Promise<Flipbook> {
+  const source = await getFlipbook(id);
+  assertIdle(source);
+  assertDrawable(source);
+  if (source.cast.length || !source.analysis) throw new AppError("sequence_not_supported", 409, "Choose a single character with a prepared reference.");
+  const parsed = SequenceSettingsSchema.parse(settings);
+  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 0 });
+  return startVisible(id, (current) => ({ ...current, status: "planning", detail: `Planning ${parsed.durationSeconds * parsed.drawingFps} timed drawings`, error: null }), async (signal) => {
+    const eligible = motion ? [] : (source.revisions ?? []).filter((entry) => source.plan?.motionId && entry.plan.motionId === source.plan.motionId && entry.motionReference?.version === source.motionReference?.version);
+    const planned = await services.planSequence({ analysis: source.analysis!, prompt: source.prompt, settings: parsed, flipbookId: id, view: source.requestedView, action: source.plan!.action === "ensemble" ? undefined : source.plan!.action, previous: motion ? undefined : source.plan!, reusePoses: eligible.flatMap((entry) => entry.plan.poses), guide: motion?.guide ?? (source.motionReference ? (tick) => motionGuide(id, source.motionReference!, tick) : undefined), signal });
+    const plan = { ...planned, motionId: motion ? randomUUID() : source.plan?.motionId ?? randomUUID() };
+    const reusable = new Map(motion ? [] : [...eligible.flatMap((entry) => entry.frames), ...source.frames].map((frame) => [frame.id, frame]));
+    const frames = sequenceSkeleton(parsed).map((frame) => ({ ...(reusable.get(frame.id) ?? frame), poseIndex: frame.poseIndex, phase: frame.phase, label: plan.poses[frame.poseIndex].label }));
+    await workerUpdate(id, signal, (current) => ({ ...current, sequence: parsed, plan, frames, order: frames.map((frame) => frame.id), inbetweens: [], revisions: [...(current.revisions ?? []), revisionOf(source)].slice(-20), ...(motion ? { motionReference: motion.reference, ...(motion.audio ? { audio: motion.audio } : {}) } : {}), look: { settings: { ...(current.look?.settings ?? { aspect: "16:9", speed: 1 }), ...parsed, motion: "in_place", cycleSeconds: undefined, smoothing: 0 }, background: current.look?.background ?? { kind: "color", color: "#ffffff" } }, alignment: null, status: "reference_ready", detail: null, error: null }));
+    await finalize(id, signal);
+  });
+}
+
+export async function restoreSequenceRevision(id: string, revisionId: string): Promise<Flipbook> {
+  const source = await getFlipbook(id);
+  assertIdle(source);
+  const selected = source.revisions?.find((entry) => entry.id === revisionId);
+  if (!selected) throw new AppError("revision_not_found", 404, "That motion revision is no longer available.");
+  return updateFlipbook(id, (current) => ({ ...current, plan: selected.plan, sequence: selected.plan.mode === "sequence" ? SequenceSettingsSchema.parse(selected.plan) : undefined, frames: selected.frames, order: selected.order, alignment: selected.alignment, motionReference: selected.motionReference, inbetweens: [], look: current.look ? { ...current.look, settings: { ...current.look.settings, drawingFps: selected.plan.drawingFps, durationSeconds: selected.plan.durationSeconds, motion: selected.plan.motion } } : null, revisions: [...(current.revisions ?? []).filter((entry) => entry.id !== revisionId), revisionOf(current)].slice(-20), status: "ready", error: null }));
 }
 
 export async function applyFrameAction(id: string, frameId: FrameId, action: FrameAction, gate?: PaidWorkGate): Promise<Flipbook> {
@@ -978,6 +1039,7 @@ export async function applyFrameAction(id: string, frameId: FrameId, action: Fra
   if (!frame) throw new AppError("frame_not_found", 404, "That frame doesn’t exist.");
 
   if (action.action === "approve") {
+    assertIdle(flipbook);
     if (action.approved && frame.status !== "ready") throw new AppError("frame_not_ready", 409, "Only a finished frame can be approved.");
     return updateFlipbook(id, (current) => patchFrame(current, frameId, (entry) => ({ ...entry, approved: action.approved })));
   }
@@ -1005,10 +1067,10 @@ export async function applyFrameAction(id: string, frameId: FrameId, action: Fra
  * the budget each, same cut-out and checks), all in one run. Approved frames
  * are never touched, and nothing changes if the budget or a guard refuses.
  */
-export async function applyPoseChanges(id: string, changes: ApplyPoseChangesRequest["changes"], options: { confirmExtra?: boolean } = {}, gate?: PaidWorkGate): Promise<Flipbook> {
+export async function applyPoseChanges(id: string, changes: NonNullable<ApplyPoseChangesRequest["changes"]>, options: { confirmExtra?: boolean } = {}, gate?: PaidWorkGate): Promise<Flipbook> {
   assertFlipbookEnabled();
   const flipbook = await getFlipbook(id);
-  assertScenelessCycle(flipbook, "The movement chat");
+  if (flipbook.cast.length) throw new AppError("not_for_scenes", 409, "The movement chat is for one character.");
   assertIdle(flipbook);
   assertDrawable(flipbook);
   const descriptions = new Map(changes.map((change) => [change.frame, change.description] as const));
@@ -1025,7 +1087,7 @@ export async function applyPoseChanges(id: string, changes: ApplyPoseChangesRequ
     await updateFlipbook(id, (current) => {
       if (!current.plan) return current;
       const poseIndexes = new Map(frames.map((frame) => [frame.poseIndex, descriptions.get(frame.id)!] as const));
-      return { ...current, plan: { ...current.plan, poses: current.plan.poses.map((pose, index) => (poseIndexes.has(index) ? { ...pose, description: poseIndexes.get(index)! } : pose)) } };
+      return { ...current, ...(current.sequence ? { revisions: [...(current.revisions ?? []), revisionOf(current)].slice(-20) } : {}), plan: { ...current.plan, ...(current.sequence ? { motionId: randomUUID() } : {}), poses: current.plan.poses.map((pose, index) => (poseIndexes.has(index) ? { ...pose, description: poseIndexes.get(index)! } : pose)) } };
     });
   } catch (error) {
     await refundImages(id, frames.length);
@@ -1035,12 +1097,12 @@ export async function applyPoseChanges(id: string, changes: ApplyPoseChangesRequ
 }
 
 /**
- * Draws an in-between after every key drawing whose current one is missing,
- * failed or stale (a key was redrawn, or the order changed): one drawing from
+ * Draws missing or stale exposure slots at the requested pace (one midpoint
+ * per key for older requests): one drawing from
  * the budget each, refunded when Meta doesn't bill it. The key drawings never
  * change. Each is cut out and registered on the same cell as the keys.
  */
-export async function drawInbetweens(id: string, confirmExtra: boolean, gate?: PaidWorkGate): Promise<Flipbook> {
+export async function drawInbetweens(id: string, confirmExtra: boolean, gate?: PaidWorkGate, drawingFps?: DrawingFps): Promise<Flipbook> {
   assertFlipbookEnabled();
   const flipbook = await getFlipbook(id);
   assertScenelessCycle(flipbook, "In-betweens");
@@ -1051,21 +1113,24 @@ export async function drawInbetweens(id: string, confirmExtra: boolean, gate?: P
   if (frames.length < 2 || unready.length) {
     throw new AppError("frames_not_ready", 409, `Finish every key drawing before adding in-betweens. Not ready: ${unready.map((frame) => frame.label).join(", ") || "all frames"}.`);
   }
-  const targets = inbetweenTargets(flipbook);
+  const targets: InbetweenTarget[] = drawingFps
+    ? denseInbetweenTargets(flipbook, drawingFps)
+    : inbetweenTargets(flipbook).map((from) => ({ id: inbetweenAfter(from), from, position: 0.5 }));
   if (!targets.length) throw new AppError("nothing_to_generate", 409, "Every in-between is already drawn for the current drawings.");
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: targets.length });
   await reserveImages(id, targets.length, confirmExtra);
   const detail = `Drawing ${targets.length} ${targets.length === 1 ? "in-between" : "in-betweens"} with Muse Image`;
   return startVisible(id, (current) => {
-    const fresh = targets.map((fromId): Inbetween => {
+    const fresh = targets.map(({ id: targetId, from: fromId, position }): Inbetween => {
       const to = nextInOrder(current, fromId);
-      const old = current.inbetweens.find((entry) => entry.from === fromId);
+      const old = current.inbetweens.find((entry) => entry.id === targetId);
       return {
-        id: inbetweenAfter(fromId),
+        id: targetId,
         from: fromId,
         to,
         fromVersion: current.frames.find((frame) => frame.id === fromId)!.version!,
         toVersion: current.frames.find((frame) => frame.id === to)!.version!,
+        position,
         status: "generating",
         version: old?.version ?? null,
         error: null,
@@ -1077,12 +1142,12 @@ export async function drawInbetweens(id: string, confirmExtra: boolean, gate?: P
       detail,
       progress: { done: 0, total: targets.length },
       error: null,
-      inbetweens: [...current.inbetweens.filter((entry) => !targets.includes(entry.from)), ...fresh],
+      inbetweens: [...current.inbetweens.filter((entry) => !targets.some((target) => target.id === entry.id)), ...fresh],
     };
   }, (signal) => runInbetweens(id, signal, targets, detail));
 }
 
-async function runInbetweens(id: string, signal: AbortSignal, targets: readonly FrameId[], detail: string): Promise<void> {
+async function runInbetweens(id: string, signal: AbortSignal, targets: readonly InbetweenTarget[], detail: string): Promise<void> {
   const flipbook = await getFlipbook(id);
   assertDrawable(flipbook);
   const reference = await readReference(id, flipbook.reference.version);
@@ -1095,12 +1160,11 @@ async function runInbetweens(id: string, signal: AbortSignal, targets: readonly 
   let refundable = 0;
   const drawn: InbetweenId[] = [];
   await workerUpdate(id, signal, (current) => ({ ...current, status: "generating", detail, progress: { done: 0, total } }));
-  await Promise.all(targets.map(async (fromId) => {
-    const inbetweenId = inbetweenAfter(fromId);
+  await Promise.all(targets.map(async ({ id: inbetweenId, from: fromId, position }) => {
     const from = frameOf(fromId);
     const to = frameOf(nextInOrder(flipbook, fromId));
     try {
-      const image = await services.inbetween({ reference: reference.png, from: await raw(from), to: await raw(to), extras, identityReference, analysis: flipbook.analysis, plan: flipbook.plan, fromIndex: from.poseIndex, toIndex: to.poseIndex, flipbookId: id, signal });
+      const image = await services.inbetween({ reference: reference.png, from: await raw(from), to: await raw(to), extras, identityReference, analysis: flipbook.analysis, plan: flipbook.plan, fromIndex: from.poseIndex, toIndex: to.poseIndex, position, flipbookId: id, signal });
       if (signal.aborted) return;
       const version = newVersionId();
       await writeAtomic(path.join(flipbookFiles.versionDir(id, inbetweenId, version), "raw.png"), image.png);
@@ -1433,19 +1497,19 @@ export async function reviewFlipbook(id: string): Promise<Flipbook> {
   const alignment = flipbook.alignment;
   const frames = orderedFrames(flipbook).filter((frame) => frame.status === "ready" && alignment?.transforms[frame.id]);
   if (!alignment || frames.length < 2 || !flipbook.reference) throw new AppError("review_not_ready", 409, "Generate the frames before asking for a review.");
-  const sprites = await Promise.all(frames.map((frame) => readFile(flipbookFiles.sprite(id, frame.id, alignment.transforms[frame.id]!.key))));
-  const sheet = await contactSheet(sprites, { width: alignment.cellWidth, height: alignment.cellHeight });
   const reference = await readReference(id, flipbook.reference.version);
-  const result = await services.review({
-    reference: reference.png,
-    sheet,
-    labels: frames.map((frame) => frame.label),
-    analysis: flipbook.analysis,
-    direction: cameraDescription(flipbook.plan?.view ?? "side", flipbook.plan?.direction ?? "right"),
-    action: flipbook.plan?.action,
-    flipbookId: id,
-  });
-  const reviewed = new Map(frames.map((frame, index) => [frame.id, { version: frame.version, review: result.frames.get(index) ?? null }]));
+  const reviewed = new Map<string, { version: string | null; review: FlipbookFrame["review"] }>();
+  const results: Awaited<ReturnType<typeof services.review>>[] = [];
+  const pageSize = flipbook.sequence ? 16 : frames.length;
+  for (let start = 0; start < frames.length; start += pageSize) {
+    const page = frames.slice(start, start + pageSize);
+    const sprites = await Promise.all(page.map((frame) => readFile(flipbookFiles.sprite(id, frame.id, alignment.transforms[frame.id]!.key))));
+    const sheet = await contactSheet(sprites, { width: alignment.cellWidth, height: alignment.cellHeight });
+    const result = await services.review({ reference: reference.png, sheet, labels: page.map((frame) => flipbook.sequence ? `${frame.poseIndex + 1} at ${Number(frame.phase.slice(7)) / 24} s: ${frame.label}` : frame.label), analysis: flipbook.analysis, direction: cameraDescription(flipbook.plan?.view ?? "side", flipbook.plan?.direction ?? "right"), action: flipbook.plan?.action, flipbookId: id, finite: Boolean(flipbook.sequence) });
+    results.push(result);
+    page.forEach((frame, index) => reviewed.set(frame.id, { version: frame.version, review: result.frames.get(index) ?? null }));
+  }
+  const result = { recognizableWalk: results.every((entry) => entry.recognizableWalk), summary: results.length === 1 ? results[0].summary : `${frames.length} drawings reviewed in ${results.length} windows. ${[...results].sort((a, b) => Number(a.recognizableWalk) - Number(b.recognizableWalk)).map((entry) => entry.summary).join(" ")}`.slice(0, 400) };
   return updateFlipbook(id, (current) => ({
     ...current,
     review: { summary: result.summary || "Review finished.", recognizableWalk: result.recognizableWalk, at: new Date().toISOString() },
@@ -1499,13 +1563,13 @@ function exportKey(value: unknown): string {
 
 /** A scene plays its own length, at its own pace, once through: nothing the request says about timing changes that. */
 function sceneRequest(plan: FlipbookPlan, request: ExportRequest): ExportRequest {
-  return { ...request, settings: { ...request.settings, drawingFps: plan.drawingFps, durationSeconds: plan.durationSeconds, motion: "in_place", inbetweens: false } };
+  return { ...request, settings: { ...request.settings, drawingFps: plan.drawingFps, durationSeconds: plan.durationSeconds, motion: "in_place", inbetweens: false, cycleSeconds: undefined, ...(plan.mode === "sequence" ? { smoothing: 0 } : {}) } };
 }
 
 export async function exportFlipbook(id: string, asked: ExportRequest, options: ExportOptions = {}): Promise<{ flipbook: Flipbook; record: ExportRecord }> {
   assertFlipbookEnabled();
   const flipbook = await getFlipbook(id);
-  const request = flipbook.cast.length && flipbook.plan ? sceneRequest(flipbook.plan, asked) : asked;
+  const request = (flipbook.cast.length || flipbook.sequence) && flipbook.plan ? sceneRequest(flipbook.plan, asked) : asked;
   const alignment = flipbook.alignment;
   const frames = orderedFrames(flipbook);
   const missing = frames.filter((frame) => frame.status !== "ready" || !alignment?.transforms[frame.id] || alignment.transforms[frame.id]!.version !== frame.version);
@@ -1524,7 +1588,7 @@ export async function exportFlipbook(id: string, asked: ExportRequest, options: 
     // The played cycle: keys, and their current in-betweens unless they're switched off.
   const cycle = playbackCycle(flipbook, request.settings.inbetweens !== false);
   // A legacy "smooth" setting renders exactly like "drawn", and the cycle itself says whether in-betweens play.
-  const key = exportKey({ v: EXPORT_VERSION, request: { ...request, settings: { ...request.settings, renderMode: undefined, inbetweens: undefined } }, frames: cycle.map((drawing) => [drawing.id, alignment.transforms[drawing.id]!.key]), strideX: alignment.strideX, backgroundStamp });
+  const key = exportKey({ v: EXPORT_VERSION, request: { ...request, settings: { ...request.settings, renderMode: undefined, inbetweens: undefined } }, frames: cycle.map((drawing) => [drawing.id, alignment.transforms[drawing.id]!.key]), strideX: alignment.strideX, backgroundStamp, audio: request.format === "mp4" ? flipbook.audio : null });
   const existing = flipbook.exports.find((entry) => entry.key === key);
   const dir = flipbookFiles.exportDir(id, key);
   if (existing && (await stat(dir).catch(() => null))) return { flipbook, record: existing };
@@ -1534,9 +1598,13 @@ export async function exportFlipbook(id: string, asked: ExportRequest, options: 
     if (signal.aborted) throw signal.reason;
     const temp = `${dir}.tmp-${process.pid}-${Date.now()}`;
     try {
+      await mkdir(temp, { recursive: true });
+      const audioFrom = request.format === "mp4" && flipbook.audio ? await prepareExportTrack(id, flipbook.audio, request.settings.durationSeconds, path.join(temp, "sound.m4a"), signal) : undefined;
       const output = await renderExport({
+        audioFrom,
+        finite: Boolean(flipbook.sequence),
         request,
-        frames: cycle.map((drawing) => ({ frameId: drawing.id, label: drawing.label, phase: drawing.phase, inbetween: drawing.inbetween, spritePath: flipbookFiles.sprite(id, drawing.id, alignment.transforms[drawing.id]!.key) })),
+        frames: cycle.map((drawing) => ({ frameId: drawing.id, label: drawing.label, phase: drawing.phase, inbetween: drawing.inbetween, position: drawing.position, spritePath: flipbookFiles.sprite(id, drawing.id, alignment.transforms[drawing.id]!.key) })),
         alignment,
         plate: plateFile ? flipbookFiles.background(id, plateFile) : null,
         far: farFile ? flipbookFiles.background(id, farFile) : null,
@@ -1547,6 +1615,7 @@ export async function exportFlipbook(id: string, asked: ExportRequest, options: 
         signal,
       });
       if (signal.aborted) throw signal.reason;
+      await rm(path.join(temp, "sound.m4a"), { force: true });
       await rm(path.join(temp, "gif-source"), { recursive: true, force: true });
       await rm(dir, { recursive: true, force: true });
       await rename(temp, dir);

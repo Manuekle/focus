@@ -46,7 +46,7 @@ export function ChatPanel({
   readonly busy: boolean;
   readonly onPlayback: (patch: PlaybackPatch) => void;
   /** Redraws the proposal's frames; resolves true when the request was accepted. */
-  readonly onApplyPoses: (changes: readonly { frame: string; description: string }[], confirmExtra: boolean) => Promise<boolean>;
+  readonly onApplyPoses: (changes: readonly { frame: string; description: string }[], confirmExtra: boolean, proposalId?: string) => Promise<boolean>;
 }) {
   const [entries, setEntries] = useState<readonly Entry[]>([]);
   const [text, setText] = useState("");
@@ -127,7 +127,7 @@ export function ChatPanel({
     try {
       // Redraw first: if the server refuses, nothing else has changed.
       if (proposal.changes.length) {
-        const accepted = await onApplyPoses(proposal.changes.map((change) => ({ frame: change.frame, description: change.description })), proposal.cost.overBy > 0);
+        const accepted = await onApplyPoses(proposal.changes.map((change) => ({ frame: change.frame, description: change.description })), proposal.cost.overBy > 0, proposal.proposalId);
         if (!accepted) return;
       }
       if (proposal.playback) onPlayback(proposal.playback);

@@ -15,6 +15,8 @@ import {
   saveFlipbook,
   saveLook,
   unsaveFlipbook,
+  reviseSequence,
+  restoreSequenceRevision,
 } from "../../../../server/animation/flipbooks";
 import { assertFlipbookEnabled } from "../../../../server/animation/store";
 import { requireFlipbookAccess } from "../../../../server/animation/access";
@@ -42,8 +44,10 @@ export async function POST(request: Request, { params }: Context) {
     const action = parsed.data;
     const gate = paidGate(request);
     const flipbook =
-      action.action === "generate" ? await generateMissing(id, action.confirmExtra === true, gate)
-      : action.action === "inbetweens" ? await drawInbetweens(id, action.confirmExtra === true, gate)
+      action.action === "sequence" ? await reviseSequence(id, action.settings, gate)
+      : action.action === "revision" ? await restoreSequenceRevision(id, action.id)
+      : action.action === "generate" ? await generateMissing(id, action.confirmExtra === true, gate)
+      : action.action === "inbetweens" ? await drawInbetweens(id, action.confirmExtra === true, gate, action.drawingFps)
       : action.action === "reorder" ? await reorderFrames(id, action.order)
       : action.action === "reference" ? await changeReference(id, action.kind, { confirmExtra: action.confirmExtra }, gate)
       : action.action === "scene" ? await createScene(id, action.confirmExtra === true, gate)

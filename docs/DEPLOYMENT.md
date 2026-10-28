@@ -44,14 +44,16 @@ The selected [Railway demo profile](RAILWAY.md) is smaller: 1 vCPU / 1 GiB RAM, 
 
 ### Animate as is: CPU, memory and disk
 
-"Animate as is" renders on the instance's CPU with no AI call, one render at a time (`renderLimiter`), at most 4 waiting; past that the server answers `render_busy` (503). A cached render is free and skips the queue. Measured on the reference picture (1536×864, Apple Silicon, native), with all five layers moving:
+"Animate as is" renders on the instance's CPU with no AI call, one render at a time (`renderLimiter`), at most 4 waiting; past that the server answers `render_busy` (503). A cached render is free and skips the queue. The earlier 24 fps renders of the reference picture (1536×864, Apple Silicon, native, all five layers moving) took 11 s, 13 s, 18 s and 26 s. A 60 fps loop draws 2.5× the frames, so expect:
 
 | Render | Time | Result |
 | --- | --- | --- |
-| 4 s loop, still camera | 11 s | MP4 1.1 MB + GIF 4.5 MB |
-| 4 s loop, Pan | 13 s | MP4 1.1 MB + GIF 5.3 MB |
-| 4 s loop, Depth | 18 s | MP4 1.1 MB + GIF 5.1 MB |
-| 6 s loop, Depth + blinking | 26 s | MP4 1.4 MB + GIF 7.4 MB |
+| 4 s loop, still camera | 28 s | MP4 1.1 MB + GIF 4.5 MB |
+| 4 s loop, Pan | 33 s | MP4 1.1 MB + GIF 5.3 MB |
+| 4 s loop, Depth | 43 s | MP4 1.1 MB + GIF 5.1 MB |
+| 6 s loop, Depth + blinking | 65 s | MP4 1.4 MB + GIF 7.4 MB |
+
+Re-measure on the target host.
 
 - **CPU.** The drawing is single-threaded JavaScript (about one core for the whole render), followed by FFmpeg for the MP4 and the GIF. Time grows with pixels × frames. A 2 vCPU instance keeps one render going while still answering requests; on a shared vCPU expect about twice these times. Renders are limited by `FOCUS_RENDERS_PER_HOUR` and the queue above, not by `FOCUS_MAX_ACTIVE_JOBS`.
 - **Memory.** About 0.5 GB resident for a render at this size (the process measured with the test runner included). It holds the picture, the masks, one frame and, for Depth, the scene; nothing grows with the loop's length. The 2 GB recommended above is enough, but a render and a 60 s clip render do not run together safely on 1 GB.

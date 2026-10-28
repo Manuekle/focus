@@ -1,4 +1,5 @@
 import { crc32, deflateRawSync } from "node:zlib";
+import { open } from "node:fs/promises";
 
 // A minimal ZIP writer (deflate, no ZIP64) for the PNG frame sequence, plus a
 // reader of its central directory so an archive is verified before it is
@@ -75,4 +76,52 @@ export function listZip(archive: Buffer): { name: string; size: number }[] {
     at += 46 + nameLength + extra + comment;
   }
   return entries;
+}
+
+/** Writes one entry at a time; only the small central directory stays in memory. */
+export async function writeZipFile(file: string, entries: AsyncIterable<ZipEntry>): Promise<{ name: string; size: number }[]> {
+  const output = await open(file, "w");
+  const central: Buffer[] = [];
+  const listed: { name: string; size: number }[] = [];
+  let offset = 0;
+  try {
+    for await (const entry of entries) {
+      const single = writeZip([entry]);
+      const at = single.readUInt32LE(single.length - 6);
+      const directory = Buffer.from(single.subarray(at, single.length - 22));
+      directory.writeUInt32LE(offset, 42);
+      await output.writeFile(single.subarray(0, at));
+      offset += at;
+      if (offset > 0xffffffff) throw new Error("Frame archive exceeds ZIP32 size");
+      central.push(directory);
+      listed.push({ name: entry.name, size: entry.data.length });
+    }
+    const directory = Buffer.concat(central);
+    const end = Buffer.alloc(22);
+    end.writeUInt32LE(0x06054b50, 0);
+    end.writeUInt16LE(listed.length, 8);
+    end.writeUInt16LE(listed.length, 10);
+    end.writeUInt32LE(directory.length, 12);
+    end.writeUInt32LE(offset, 16);
+    await output.writeFile(directory);
+    await output.writeFile(end);
+    return listed;
+  } finally { await output.close(); }
+}
+
+/** Verify a streamed ZIP using only its bounded directory, never its image payloads. */
+export async function listZipFile(file: string): Promise<{ name: string; size: number }[]> {
+  const input = await open(file, "r");
+  try {
+    const size = (await input.stat()).size;
+    if (size < 22) throw new Error("zip: missing end record");
+    const end = Buffer.alloc(22);
+    if ((await input.read(end, 0, 22, size - 22)).bytesRead !== 22 || end.readUInt32LE(0) !== 0x06054b50) throw new Error("zip: invalid end record");
+    const length = end.readUInt32LE(12), offset = end.readUInt32LE(16);
+    if (length > 10 * 1024 * 1024 || offset + length !== size - 22) throw new Error("zip: invalid directory bounds");
+    const directory = Buffer.alloc(length);
+    if ((await input.read(directory, 0, length, offset)).bytesRead !== length) throw new Error("zip: incomplete directory");
+    end.writeUInt32LE(0, 16);
+    return listZip(Buffer.concat([directory, end]));
+  } finally { await input.close(); }
 }

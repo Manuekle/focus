@@ -10,9 +10,10 @@ import { ToggleChip } from "../../components/ui/toggle-chip";
 import { formatBytes } from "../../shared/media";
 import {
   DURATIONS,
+  EXPOSURE_FPS,
   backgroundMoves,
-  exposures,
-  orderedFrames,
+  exposureSheet,
+  playbackCycle,
   type ExportFormat,
   type FlipbookAspect,
   type Flipbook,
@@ -63,8 +64,9 @@ export function ExportPanel({
   readonly sending: boolean;
   readonly onSendToEditor: () => void;
 }) {
-  const scene = flipbook.cast.length > 0;
-  const holds = exposures(orderedFrames(flipbook).map((frame) => frame.phase), settings.drawingFps);
+  const scene = flipbook.cast.length > 0 || Boolean(flipbook.sequence);
+  const { drawings, holds } = exposureSheet(playbackCycle(flipbook, settings.inbetweens !== false), settings.drawingFps, settings.cycleSeconds);
+  const actualFps = Math.round((drawings.length * EXPOSURE_FPS) / holds.reduce((sum, hold) => sum + hold, 0));
   const [shortest, longest] = [Math.min(...holds), Math.max(...holds)];
   const timed = format === "mp4" || (format === "gif" && (settings.motion !== "in_place" || backgroundMoves(background)));
   const allowed = backgroundAllowed(format, background.kind);
@@ -116,9 +118,9 @@ export function ExportPanel({
           </div>
         </div>
       )}
-      {!timed ? <p className={styles.hint}>{scene ? "The scene plays once through, as long as you asked." : format === "gif" ? "The GIF is one cycle that loops forever." : "One cycle, eight drawings, with frame order and timing."}</p> : null}
+      {!timed ? <p className={styles.hint}>{scene ? "The complete action, with every drawing and its original timing." : format === "gif" ? "The GIF is one cycle that loops forever." : "One cycle, with frame order and timing."}</p> : null}
 
-      {format === "mp4" ? <p className={styles.hint}>MP4 · H.264 · 24 fps. {shortest === longest ? <>Each drawing is held for {shortest} frames ({settings.drawingFps} drawings per second).</> : <>Anime timing: each drawing is held {shortest}–{longest} frames ({settings.drawingFps} drawings per second on average).</>} MP4 has no transparency.</p> : null}
+      {format === "mp4" ? <p className={styles.hint}>MP4 · H.264 · 60 fps. {Math.abs(shortest - longest) < 1e-6 ? <>Each drawing is held for {Math.round((shortest * 1000) / EXPOSURE_FPS)} ms ({actualFps} drawings per second).</> : <>{actualFps} drawings per second on average, with pose timing.</>} {(settings.smoothing ?? 0) > 0 ? "Light smoothing softens pose changes. " : ""}MP4 has no transparency.</p> : null}
       {!allowed ? <p className={styles.hint} data-invalid="">{BACKGROUND_LABEL[background.kind]} backgrounds aren’t available for {FORMAT_LABEL[format]}. Pick another background or format.</p> : null}
       {!exportable.ok ? <p className={styles.hint} data-invalid="">{exportable.reason}</p> : null}
 

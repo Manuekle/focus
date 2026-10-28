@@ -1,5 +1,6 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
+import sharp from "sharp";
 import { DrawingIdSchema, FrameIdSchema, orderedFrames } from "../../shared/flipbook";
 import { AppError } from "../errors";
 import { guardAiRequest } from "../guard";
@@ -61,8 +62,11 @@ export async function flipbookMedia(request: Request, id: string): Promise<Respo
       if (!frame?.versions.some((entry) => entry.id === version)) throw new AppError("media_not_found", 404, "This file is no longer available.");
       return png(path.join(flipbookFiles.versionDir(flipbook.id, frame.id, version), "raw.png"));
     }
-    case "sprite":
-      return png(flipbookFiles.sprite(flipbook.id, parseDrawing(search.get("frame") ?? ""), search.get("a") ?? ""));
+    case "sprite": {
+      const file = flipbookFiles.sprite(flipbook.id, parseDrawing(search.get("frame") ?? ""), search.get("a") ?? "");
+      if (search.get("thumb") === "1") return new Response(new Uint8Array(await sharp(file).resize(120, 120, { fit: "inside" }).png().toBuffer()), { headers: { "Content-Type": "image/png", "Cache-Control": "private, max-age=31536000, immutable" } });
+      return png(file);
+    }
     case "scene":
     case "custom":
       if (!flipbook.backgrounds[kind]) throw new AppError("media_not_found", 404, "This file is no longer available.");
@@ -92,7 +96,10 @@ export async function flipbookMedia(request: Request, id: string): Promise<Respo
     case "contact": {
       // Every registered drawing in playback order on one sheet, for review by eye.
       const alignment = flipbook.alignment;
-      const frames = orderedFrames(flipbook).filter((frame) => frame.version && alignment?.transforms[frame.id]?.version === frame.version);
+      const page = Number(search.get("page") ?? "0");
+      if (!Number.isInteger(page) || page < 0 || page > 29) throw new AppError("invalid_variant", 400, "Choose a valid contact-sheet page.");
+      const ordered = orderedFrames(flipbook);
+      const frames = (flipbook.sequence ? ordered.slice(page * 16, page * 16 + 16) : ordered).filter((frame) => frame.version && alignment?.transforms[frame.id]?.version === frame.version);
       if (!alignment || !frames.length) throw new AppError("media_not_found", 404, "There are no drawings to show yet.");
       const sprites = await Promise.all(frames.map((frame) => readFile(flipbookFiles.sprite(flipbook.id, frame.id, alignment.transforms[frame.id]!.key))));
       const sheet = await contactSheet(sprites, { width: alignment.cellWidth, height: alignment.cellHeight });

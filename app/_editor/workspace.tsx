@@ -10,6 +10,7 @@ import { EASE_OUT } from "../../lib/ease";
 import { useReducedMotion } from "../../lib/hooks/use-reduced-motion";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { Badge } from "../../components/ui/badge";
 import { useToast } from "../../components/toast-provider";
 import { formatSeconds } from "../../shared/media";
 import type { EffectId, VideoAsset } from "../../shared/schemas";
@@ -154,7 +155,7 @@ export function Workspace() {
         <nav className={styles.nav} aria-label="Main navigation">
           <Button asChild size="sm" variant="ghost" className={styles.navLink}><a href="#how-it-works">How it works</a></Button>
           <Button asChild size="sm" variant="ghost" className={styles.navLink}><Link href="/editor">{session?.user ? "My projects" : "Editor"}</Link></Button>
-          {flipbookEnabled() ? <Button asChild size="sm" variant="ghost" className={styles.navLink}><Link href="/flipbook">Flipbook<span className={styles.newBadge}>New</span></Link></Button> : null}
+          {flipbookEnabled() ? <Button asChild size="sm" variant="ghost" className={styles.navLink}><Link href="/flipbook">Flipbook<Badge tone="info" size="sm">New</Badge></Link></Button> : null}
           <AccountButton session={session} next="/editor" />
         </nav>
       </motion.header>

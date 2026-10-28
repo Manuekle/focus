@@ -9,14 +9,13 @@ import { growMask } from "./reference-manager";
 // t ∈ [0, 1), so the loop closes exactly. Pixels no motion reaches are the
 // upload's own, byte for byte.
 
-export const LIVING_FPS = 24;
+export const LIVING_FPS = 60;
 /**
- * The character moves on twos (12 drawings a second), the way anime animates
- * characters: each pose holds for two frames, crisp, instead of sliding
- * continuously like a puppet warp. The camera, the sky and floating pieces
- * keep moving on every frame, like a pan behind held drawings.
+ * The character moves on every frame, smoothly: the warp is continuous, not
+ * a series of held poses, so a 60 Hz screen shows it at 60 fps. The camera,
+ * the sky and floating pieces also move on every frame.
  */
-export const LIVING_BODY_HOLD = 2;
+export const LIVING_BODY_HOLD = 1;
 
 /** Loop time of the character's pose at an output frame: it steps every LIVING_BODY_HOLD frames. */
 export function bodyTime(frame: number, frames: number): number {
@@ -518,8 +517,8 @@ export function livingFrame(prepared: PreparedLiving, t: number, body = t): Buff
 /**
  * One frame, and where the character covers it at that moment (0..1, when
  * the character is kept). `body` is the loop time of the character's own
- * motion (breathing, flowing parts, the blink), held on twos by the renderer
- * (bodyTime); the sky and floating pieces follow `t`.
+ * motion (breathing, flowing parts, the blink); the sky and floating pieces
+ * follow `t`. The renderer advances both every frame at 60 fps.
  */
 export function livingLayers(prepared: PreparedLiving, t: number, body = t): { rgba: Buffer; cover: Float32Array | null } {
   const { width, height, base } = prepared;

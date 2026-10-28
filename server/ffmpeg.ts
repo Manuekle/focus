@@ -64,9 +64,10 @@ export const ProbeSchema = z.object({
 export type Probe = z.infer<typeof ProbeSchema>;
 export type ProbeStream = z.infer<typeof ProbeStreamSchema>;
 
-export async function probe(path: string): Promise<Probe> {
+export async function probe(path: string, localOnly = false): Promise<Probe> {
   const out = await run(FFPROBE, [
     "-v", "error",
+    ...(localOnly ? ["-protocol_whitelist", "file,pipe"] : []),
     "-print_format", "json",
     "-show_format",
     "-show_streams",

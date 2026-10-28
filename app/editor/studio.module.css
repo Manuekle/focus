@@ -103,6 +103,7 @@
   border-right: 1px solid var(--border);
 }
 .sideLabel { padding-inline: 8px; color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
+.sidebarNav { display: grid; gap: 4px; }
 .projects { display: flex; flex-direction: column; gap: 8px; }
 .project { position: relative; border-radius: 10px; }
 .project:hover, .projectActive { background: var(--muted); }

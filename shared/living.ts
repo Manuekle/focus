@@ -1,5 +1,4 @@
 import { z } from "zod";
-import { DurationSchema } from "./flipbook";
 
 // "Animate as is": what Focus found in an upload that can move, and how the
 // person chose to move it. Shared by the server and the browser.
@@ -139,7 +138,7 @@ export const ASPECT_LABELS: Readonly<Record<LivingAspect, string>> = { original:
 export const LIVING_STRENGTH = [0, 2] as const;
 
 export const LivingRequestSchema = z.object({
-  durationSeconds: DurationSchema,
+  durationSeconds: z.union([z.literal(2), z.literal(4), z.literal(6)]),
   wind: LivingWindSchema,
   layers: z.array(z.object({
     id: LivingLayerIdSchema,

@@ -11,6 +11,7 @@ import { FeatherSparkleColored24 } from "../../components/icons/FeatherSparkleCo
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { FileUpload } from "../../components/motion/file-upload";
 import { Button } from "../../components/ui/button";
+import { Badge } from "../../components/ui/badge";
 import { Spinner } from "../../components/ui/spinner";
 import { formatBytes } from "../../shared/media";
 import type { CharacterSource } from "../../shared/characters";
@@ -31,6 +32,8 @@ import { livingUrls } from "../../shared/living";
 import { FlipbookApiError, flipbookApi, uploadCharacter, type UploadHandle } from "./flipbook-client";
 import { Select } from "../../components/ui/select";
 import { CharacterPicker } from "./character-picker";
+import { SequenceFields } from "./sequence-controls";
+import { DEFAULT_SEQUENCE, type SequenceSettings } from "../../shared/sequence";
 import { LivingPanel, type LivingPreview } from "./living-panel";
 import shell from "../editor/studio.module.css";
 import composer from "../_editor/composer.module.css";
@@ -41,9 +44,10 @@ import styles from "./flipbook.module.css";
 type Direction = "left" | "in_place" | "right";
 
 /** Redraw the character in new poses, or keep the picture exactly as it is and move its own pixels. */
-type Mode = "cycle" | "living";
+type Mode = "sequence" | "cycle" | "living";
 
 const MODES: readonly { id: Mode; label: string; note: string }[] = [
+  { id: "sequence", label: "Continuous sequence", note: "Draw the whole action across your chosen duration, with a drawing for every moment." },
   { id: "cycle", label: "Redraw a cycle", note: "Focus redraws your character in eight new poses: a walk, a run, a jump. Best for a full-body drawing." },
   { id: "living", label: "Animate as is", note: "Nothing is redrawn: hair sways, leaves fly and the sky drifts, made only of your picture’s own pixels." },
 ];
@@ -55,6 +59,7 @@ const ACTIONS: readonly { action: CycleAction; label: string; note: string }[] =
   { action: "fight", label: "Fight", note: "Shadowboxing in place: guard, a jab, a cross, back to guard." },
   { action: "wave", label: "Wave", note: "Raises a hand and waves hello, then lowers it again." },
   { action: "idle", label: "Idle", note: "Breathes, blinks and gently sways. Describe a posture, or keep the one in your drawing." },
+  { action: "dance", label: "Dance", note: "A two-second dance cycle with side steps, arm swings and a rhythmic bounce. Add in-betweens for smoother movement; exports can repeat it for 20 seconds." },
 ];
 
 /** Walks and runs can travel; the other motions stay on the spot. */
@@ -68,11 +73,11 @@ const DIRECTIONS: readonly { id: Direction; label: string }[] = [
 
 const DETAIL_MAX = 400;
 
-export type CreateOptions = { readonly action?: CycleAction; readonly keepScene?: boolean; readonly characterSource?: CharacterSource; readonly view?: ViewPreference };
+export type CreateOptions = { readonly motionFile?: File; readonly sequence?: SequenceSettings; readonly action?: CycleAction; readonly keepScene?: boolean; readonly characterSource?: CharacterSource; readonly view?: ViewPreference };
 
 const VIEW_LABEL: Record<ImageLook["analysis"]["view"], string> = { side: "Side view", three_quarter: "Three-quarter view", front: "Front view", back: "Back view", high: "View from above", low: "View from below", unclear: "View unclear" };
 
-const VERB: Record<CycleAction, string> = { walk: "Walk", run: "Run", jump: "Jump", fight: "Shadowbox", wave: "Wave", idle: "Idle" };
+const VERB: Record<CycleAction, string> = { walk: "Walk", run: "Run", jump: "Jump", fight: "Shadowbox", wave: "Wave", idle: "Idle", dance: "Dance" };
 
 /** "Run right · hair and tail flowing", "Wave facing left · shy" */
 function ideaLabel(idea: ImageIdea): string {
@@ -87,6 +92,7 @@ const PLACEHOLDER: Record<CycleAction, string> = {
   fight: "How does it fight? e.g. “quick and light on its feet”",
   wave: "How does it wave? e.g. “shy, a small wave”",
   idle: "How does it rest? e.g. “sitting calmly, slow breathing”",
+  dance: "How does it dance? e.g. “side steps, arm swings and a gentle bounce, 20 seconds”",
 };
 
 const IDEAS: Record<CycleAction, readonly string[]> = {
@@ -96,6 +102,7 @@ const IDEAS: Record<CycleAction, readonly string[]> = {
   fight: ["quick and light on its feet", "heavy, powerful punches", "a confident boxer"],
   wave: ["an excited, big wave", "shy, a small wave", "waving goodbye"],
   idle: ["sitting calmly, slow breathing", "crouching, looking around", "proud, chest out"],
+  dance: ["side steps and flowing arm swings, 20 seconds", "playful hip sways and a gentle bounce", "a relaxed two-second dance cycle"],
 };
 
 /** The instruction the pickers stand for; the analysis reads it like typed text. */
@@ -107,6 +114,7 @@ function instruction(action: CycleAction, direction: Direction, detail: string, 
     : action === "jump" ? `Jump in place, ${camera}`
     : action === "wave" ? `Wave hello, ${camera}`
     : action === "idle" ? `Rest in place, breathing and blinking, ${camera}`
+    : action === "dance" ? `Dance in place, ${camera}`
     : direction === "in_place" ? `${action === "run" ? "Run" : "Walk"} in place, ${camera}`
     : `${action === "run" ? "Run" : "Walk"} across the screen to the ${direction}, ${camera}`;
   const extra = detail.trim().replace(/^[,.\s]+/, "");
@@ -142,7 +150,9 @@ export function FlipbookCreate({
   const [lookFailed, setLookFailed] = useState(false);
   const [keepScene, setKeepScene] = useState(true);
   const [layer, setLayer] = useState<"original" | "character" | "scene">("original");
-  const [mode, setMode] = useState<Mode>("cycle");
+  const [mode, setMode] = useState<Mode>("sequence");
+  const [sequence, setSequence] = useState<SequenceSettings>(DEFAULT_SEQUENCE);
+  const [motionFile, setMotionFile] = useState<File | undefined>();
   const [living, setLiving] = useState<LivingPreview>({ video: null, busy: false, highlight: null });
   const touched = useRef(false);
   const handle = useRef<UploadHandle | null>(null);
@@ -218,7 +228,7 @@ export function FlipbookCreate({
   const submit = () => {
     if (!image || !canSubmit || mode === "living") return;
     // With a reading, the picked motion says which action it is, and its character facts are reused.
-    onCreate(image, prompt, { action, view: cameraView, keepScene: Boolean(look?.layers.scene && keepScene), ...(fromCharacter ? { characterSource: initialCharacter!.source } : {}) });
+    onCreate(image, prompt, { action, view: cameraView, ...(mode === "sequence" ? { sequence, motionFile } : {}), keepScene: Boolean(look?.layers.scene && keepScene), ...(fromCharacter ? { characterSource: initialCharacter!.source } : {}) });
   };
   const layerSrc = image && layer !== "original" && mode === "cycle" ? imageUrls.layer(image.id, layer) : image?.url;
   const shown = mode === "cycle" ? layer : "original";
@@ -289,10 +299,10 @@ export function FlipbookCreate({
               <>
                 {look.summary ? <p className={styles.readingSummary}>{look.summary}</p> : null}
                 <div className={composer.chips}>
-                  <span className={styles.fact}>{look.analysis.subject}</span>
-                  {look.analysis.characterCount > 1 ? <span className={styles.fact}>{look.analysis.characterCount} characters · animates one</span> : null}
-                  <span className={styles.fact}>{VIEW_LABEL[look.analysis.view]}</span>
-                  {look.setting ? <span className={styles.fact}>{look.setting}</span> : <span className={styles.fact}>No background</span>}
+                  <Badge size="sm">{look.analysis.subject}</Badge>
+                  {look.analysis.characterCount > 1 ? <Badge size="sm">{look.analysis.characterCount} characters · animates one</Badge> : null}
+                  <Badge size="sm">{VIEW_LABEL[look.analysis.view]}</Badge>
+                  <Badge size="sm">{look.setting || "No background"}</Badge>
                 </div>
                 {/* The caveats are about redrawing; animating as is redraws nothing. */}
                 {look.warnings.length && mode !== "living" ? (
@@ -314,13 +324,15 @@ export function FlipbookCreate({
             )}
           </section>
 
-          {!fromCharacter && <fieldset className={composer.effects}>
+          {<fieldset className={composer.effects}>
             <legend className="sr-only">How it moves</legend>
-            <SlidingTabs className={composer.tabs} tabs={MODES.map((entry) => ({ id: entry.id, label: entry.label }))} value={mode} onValueChange={(id) => { touched.current = true; setMode(id as Mode); }} />
+            <SlidingTabs className={composer.tabs} tabs={MODES.filter((entry) => !fromCharacter || entry.id !== "living").map((entry) => ({ id: entry.id, label: entry.label }))} value={mode} onValueChange={(id) => { touched.current = true; setMode(id as Mode); }} />
             <p className={composer.summary} aria-live="polite">{MODES.find((entry) => entry.id === mode)!.note}</p>
           </fieldset>}
 
           {mode === "living" ? <LivingPanel image={image} onPreview={setLiving} /> : <>
+          {mode === "sequence" ? <SequenceFields value={sequence} onChange={setSequence} disabled={creating} /> : null}
+          {mode === "sequence" ? <label className={styles.field}>Movement reference video (optional)<input type="file" accept="video/mp4,video/quicktime,.mp4,.mov" disabled={creating} onChange={(event) => setMotionFile(event.target.files?.[0])} /><span className={styles.hint}>{motionFile ? motionFile.name : "You can trim and apply the video in the animation editor. The first motion plan uses your written instruction."}</span></label> : null}
           <div className={composer.group}>
             <label htmlFor="flipbook-camera-view" className={composer.label}>Camera view</label>
             <Select id="flipbook-camera-view" value={cameraView} options={VIEW_OPTIONS} onValueChange={(value) => { touched.current = true; const next = value as ViewPreference; setCameraView(next); if (["front", "back", "high", "low"].includes(next) && travels(action)) setDirection("in_place"); }} />
@@ -406,7 +418,7 @@ export function FlipbookCreate({
           <div className={composer.submit}>
             <Button className={composer.generate} type="submit" variant="ai" size="lg" disabled={!canSubmit} aria-busy={creating || undefined}>
               {creating ? <Spinner /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={16} strokeWidth={1.75} />}
-              Create animation
+              {mode === "sequence" ? "Prepare continuous animation" : "Create animation"}
             </Button>
             {blockedReason ? <p className={composer.blocked}>{blockedReason}</p> : null}
           </div>

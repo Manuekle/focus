@@ -65,13 +65,13 @@ describe("the engine", () => {
     }
   });
 
-  it("holds the character's pose on twos while the floating pieces move every frame", () => {
-    const frames = 48;
-    expect([0, 1, 2, 3, 46, 47].map((frame) => bodyTime(frame, frames) * frames)).toEqual([0, 0, 2, 2, 46, 46]);
+  it("moves the character's pose on every frame, smoothly", () => {
+    const frames = 120;
+    expect([0, 1, 2, 3, 118, 119].map((frame) => bodyTime(frame, frames) * frames)).toEqual([0, 1, 2, 3, 118, 119]);
     const prepared = prepareLiving(scene);
-    // Frames 2 and 3 share the pose: only what follows t (the sprites) can differ between them.
+    // Neighboring frames differ even with nothing floating, because the warp itself advances.
     const still = prepareLiving({ ...scene, particles: [], sky: null });
-    expect(livingFrame(still, 3 / frames, bodyTime(3, frames)).equals(livingFrame(still, 2 / frames, bodyTime(2, frames)))).toBe(true);
+    expect(livingFrame(still, 3 / frames, bodyTime(3, frames)).equals(livingFrame(still, 2 / frames, bodyTime(2, frames)))).toBe(false);
     expect(livingFrame(prepared, 3 / frames, bodyTime(3, frames)).equals(livingFrame(prepared, 2 / frames, bodyTime(2, frames)))).toBe(false);
   });
 
@@ -316,7 +316,7 @@ describe("the service", () => {
   it("renders a verified, seamless MP4 and GIF, and reuses them for the same choices", async () => {
     const request = { ...defaultLivingRequest(inventory), durationSeconds: 2 as const };
     const render = await renderLiving(imageId, request);
-    expect(render.frames).toBe(48);
+    expect(render.frames).toBe(120);
     expect(render.files.map((file) => file.name)).toEqual(["focus-animation.mp4", "focus-animation.gif"]);
     const mp4 = path.join(livingFiles(imageId).renderDir(render.key), "focus-animation.mp4");
     expect((await stat(mp4)).size).toBeGreaterThan(0);
@@ -330,7 +330,7 @@ describe("the service", () => {
     const render = await renderLiving(imageId, request);
     expect(render.hasAudio).toBe(true);
     expect(render.durationSeconds).toBe(10);
-    expect(render.frames).toBe(240);
+    expect(render.frames).toBe(600);
     const facts = await probe(path.join(livingFiles(imageId).renderDir(render.key), "focus-animation.mp4"));
     const audio = facts.streams.find((stream) => stream.codec_type === "audio");
     expect(audio?.codec_name).toBe("aac");
@@ -393,7 +393,7 @@ describe("the service", () => {
     const part = added.layers.at(-1)!;
     expect(part).toMatchObject({ kind: "flowing", custom: true });
     const render = await renderLiving(imageId, { ...defaultLivingRequest(added), durationSeconds: 2 });
-    expect(render.frames).toBe(48);
+    expect(render.frames).toBe(120);
     const removed = await removePart(imageId, part.id);
     expect(removed.layers.some((layer) => layer.id === part.id)).toBe(false);
     await expect(removePart(imageId, "walker")).rejects.toMatchObject({ code: "living_layer_unknown" });
@@ -422,7 +422,7 @@ describe("the service", () => {
     expect(inventory.scene).toBe(true);
     expect(drawn).toBe(0);
     const render = await renderLiving(imageId, { ...defaultLivingRequest(inventory), durationSeconds: 2, camera: "depth" });
-    expect(render.frames).toBe(48);
+    expect(render.frames).toBe(120);
   }, 60_000);
 
   it("blinks with the eyes of a closed-eyes drawing, nothing else from it", async () => {
@@ -443,7 +443,7 @@ describe("the service", () => {
     expect(eye).toBeGreaterThan(0);
     expect(changedOutside).toBe(0);
     const render = await renderLiving(imageId, { ...defaultLivingRequest(inventory), durationSeconds: 2, blink: true });
-    expect(render.frames).toBe(48);
+    expect(render.frames).toBe(120);
   }, 60_000);
 
   it("refuses a motion a layer can't take and a layer that isn't there", async () => {

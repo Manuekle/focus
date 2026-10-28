@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { inflateRawSync } from "node:zlib";
 import sharp from "sharp";
 import { beforeAll, describe, expect, it } from "vitest";
-import { WALK_POSES, cellLeftAt, cellTopAt, stageSize, type ExportRequest, type FlipbookAlignment, type FrameId, type PlaybackSettings } from "../../shared/flipbook";
+import { WALK_POSES, cellLeftAt, cellTopAt, drawingAtOutputFrame, exposureSheet, exposures, outputFrameAtTick, stageSize, type ExportRequest, type FlipbookAlignment, type FrameId, type PlaybackSettings } from "../../shared/flipbook";
 import { probe } from "../ffmpeg";
 import { readFrames } from "../video/frames";
 import { DRIFT, walkerPng } from "./__fixtures__/walker";
@@ -82,32 +82,35 @@ beforeAll(async () => {
 });
 
 describe("MP4", () => {
-  it("is H.264 yuv420p at 24 fps with the exact duration, each drawing held on threes", async () => {
+  const walkHolds = exposures(WALK_POSES.map((pose) => pose.phase), 8);
+
+  it("is H.264 yuv420p at 60 fps with the exact duration, each drawing held on threes", async () => {
     const result = await exportTo("mp4", request("mp4"));
     const file = result.files[0].path;
     const facts = await probe(file);
     const video = facts.streams.find((stream) => stream.codec_type === "video")!;
     expect(video.codec_name).toBe("h264");
     expect((video as { pix_fmt?: string }).pix_fmt).toBe("yuv420p");
-    expect(video.avg_frame_rate).toBe("24/1");
-    expect(Number(video.nb_frames)).toBe(48);
+    expect(video.avg_frame_rate).toBe("60/1");
+    expect(Number(video.nb_frames)).toBe(120);
     expect(Math.abs(Number(facts.format.duration) - 2)).toBeLessThan(0.05);
     expect(facts.streams.some((stream) => stream.codec_type === "audio")).toBe(false);
     const stage = stageSize(settings(), cellOf());
-    expect(result.facts).toMatchObject({ width: stage.width, height: stage.height, frames: 48 });
+    expect(result.facts).toMatchObject({ width: stage.width, height: stage.height, frames: 120, fps: 60 });
 
-    // Decoded frame k is drawing floor(k/3) mod 8: the real sequence, looping after 24 frames.
+    // Decoded frame k shows the drawing the 24 fps exposure sheet puts on
+    // screen at that moment: the picture changes in steps, the clock is 60 fps.
     const decoded: Buffer[] = [];
     for await (const frame of readFrames(file, stage.width, stage.height)) decoded.push(frame);
-    expect(decoded.length).toBe(48);
+    expect(decoded.length).toBe(120);
     const pixels = stage.width * stage.height;
-    for (const k of [0, 2, 3, 10, 23, 24, 47]) {
-      const expected = await expectedFrame(Math.floor(k / 3), settings(), [255, 255, 255]);
+    for (const k of [0, 7, 8, 14, 15, 59, 60, 119]) {
+      const expected = await expectedFrame(drawingAtOutputFrame(k, walkHolds).tick, settings(), [255, 255, 255]);
       expect(meanDiff(decoded[k], 4, expected, 3, pixels)).toBeLessThan(4);
     }
-    expect(meanDiff(decoded[0], 4, decoded[2], 4, pixels)).toBeLessThan(1);
-    expect(meanDiff(decoded[2], 4, decoded[3], 4, pixels)).toBeGreaterThan(1);
-    expect(meanDiff(decoded[0], 4, decoded[24], 4, pixels)).toBeLessThan(1);
+    expect(meanDiff(decoded[0], 4, decoded[7], 4, pixels)).toBeLessThan(1);
+    expect(meanDiff(decoded[7], 4, decoded[8], 4, pixels)).toBeGreaterThan(1);
+    expect(meanDiff(decoded[0], 4, decoded[60], 4, pixels)).toBeLessThan(1);
   });
 
   it("carries the walk across the stage when walking right", async () => {
@@ -118,9 +121,22 @@ describe("MP4", () => {
     expect(result.facts.width).toBe(stage.width);
     const decoded: Buffer[] = [];
     for await (const frame of readFrames(result.files[0].path, stage.width, stage.height)) decoded.push(frame);
-    for (const k of [0, 3, 12, 30]) {
-      expect(meanDiff(decoded[k], 4, await expectedFrame(Math.floor(k / 3), value.settings, [255, 255, 255]), 3, stage.width * stage.height)).toBeLessThan(4);
-    }
+    // The first eight video frames share one pose; its visible center must
+    // nevertheless advance on every frame, even with a fixed background.
+    const center = (frame: Buffer) => {
+      let mass = 0, weighted = 0;
+      for (let y = 0; y < stage.height; y++) for (let x = 0; x < stage.width; x++) {
+        const at = (y * stage.width + x) * 4;
+        const darkness = 255 - (frame[at] + frame[at + 1] + frame[at + 2]) / 3;
+        if (darkness < 35) continue;
+        mass += darkness;
+        weighted += darkness * x;
+      }
+      return weighted / mass;
+    };
+    const centers = decoded.slice(0, 8).map(center);
+    for (let index = 1; index < centers.length; index++) expect(centers[index]).toBeGreaterThan(centers[index - 1] + 0.05);
+    expect(centers[7] - centers[0]).toBeCloseTo((cell.strideX * 7) / 60, 0);
     expect(cellLeftAt(4, value.settings, cell, 8)).toBeGreaterThan(cellLeftAt(0, value.settings, cell, 8));
   });
 
@@ -132,8 +148,8 @@ describe("MP4", () => {
     expect(result.facts).toMatchObject({ width: stage.width, height: stage.height });
     const decoded: Buffer[] = [];
     for await (const frame of readFrames(result.files[0].path, stage.width, stage.height)) decoded.push(frame);
-    for (const k of [0, 10, 30]) {
-      expect(meanDiff(decoded[k], 4, await expectedFrame(Math.floor(k / 3), value.settings, [255, 255, 255]), 3, stage.width * stage.height)).toBeLessThan(4);
+    for (const k of [0, 25, 75]) {
+      expect(meanDiff(decoded[k], 4, await expectedFrame(drawingAtOutputFrame(k, walkHolds).tick, value.settings, [255, 255, 255]), 3, stage.width * stage.height)).toBeLessThan(4);
     }
   });
 
@@ -143,23 +159,97 @@ describe("MP4", () => {
 });
 
 describe("in-betweens", () => {
+  it("exports 24 distinct poses each second inside a 60 fps video without shortening the cycle", async () => {
+    const cycle: ExportFrame[] = frames.flatMap((frame, index) => [frame, ...[1, 2].map((step) => ({
+      ...frames[(index + step * 2) % frames.length], frameId: `i${index}-${step}of3`, label: "in-between", phase: frame.phase, inbetween: true, position: step / 3,
+    }))]);
+    const result = await renderExport({ request: request("mp4"), frames: cycle, alignment, plate: null, outputDir: path.join(work, "dense-mp4"), baseName: "dense" });
+    expect(result.facts).toMatchObject({ fps: 60, frames: 120, durationSeconds: 2 });
+    const decoded: Buffer[] = [];
+    for await (const frame of readFrames(result.files[0].path, result.facts.width, result.facts.height)) decoded.push(frame);
+    const pixels = result.facts.width * result.facts.height;
+    const changes = decoded.slice(1, 60).filter((frame, index) => meanDiff(frame, 4, decoded[index], 4, pixels) > 0.3);
+    expect(changes).toHaveLength(23);
+    expect(meanDiff(decoded[0], 4, decoded[60], 4, pixels)).toBeLessThan(1);
+  });
+
   it("plays each one for a frame taken from the key before it, and exports it with its duration", async () => {
     // Keys and in-betweens alternate; an in-between borrows a sprite unlike both of its keys, so every change shows.
     const cycle: ExportFrame[] = frames.flatMap((frame, index) => [frame, { ...frames[(index + 2) % frames.length], frameId: `i${index}`, label: "in-between", phase: frame.phase, inbetween: true }]);
     const value = request("mp4", { background: { kind: "color", color: "#ffffff" } });
     const result = await renderExport({ request: value, frames: cycle, alignment, plate: null, outputDir: path.join(work, "inbetween-mp4"), baseName: "walk" });
-    expect(result.facts.frames).toBe(48);
+    expect(result.facts.frames).toBe(120);
     const stage = stageSize(value.settings, cellOf());
     const decoded: Buffer[] = [];
     for await (const frame of readFrames(result.files[0].path, stage.width, stage.height)) decoded.push(frame);
     // H.264 adds a little noise to a held picture; a new drawing moves far more.
     const moved = (a: Buffer, b: Buffer) => a.reduce((sum, value, i) => sum + Math.abs(value - b[i]), 0) / a.length > 0.3;
-    const changes = decoded.slice(1, 24).map((frame, index) => (moved(frame, decoded[index]) ? 1 : 0));
-    // Key on twos, in-between on ones: changes after frames 2, 3, 5, 6, … of the 24-frame cycle.
-    expect(changes.join("")).toBe("01101101101101101101101");
+    // The 60 fps clock changes the drawing only at the first frame of each
+    // exposure-sheet tick: keys on twos, in-betweens on ones.
+    const { holds } = exposureSheet(cycle, 8);
+    const starts = new Set(holds.map((_hold, tick) => outputFrameAtTick(tick, holds)));
+    const changes = decoded.slice(1, 60).map((frame, index) => (moved(frame, decoded[index]) ? 1 : 0));
+    expect(changes.join("")).toBe(Array.from({ length: 59 }, (_value, index) => (starts.has(index + 1) ? 1 : 0)).join(""));
     const zip = await renderExport({ request: request("frames", { background: { kind: "transparent" } }), frames: cycle, alignment, plate: null, outputDir: path.join(work, "inbetween-zip"), baseName: "walk" });
     expect(zip.facts.frames).toBe(16);
   });
+});
+
+it("exports the 48-pose, 4-second cycle five times with a brief 12% blend and exact 20-second duration", async () => {
+  const color = (index: number) => [index * 5, 60, 255 - index * 5];
+  const cycle: ExportFrame[] = [];
+  for (let index = 0; index < 48; index++) {
+    const [r, g, b] = color(index);
+    const spritePath = path.join(work, `tempo-${index}.png`);
+    await sharp({ create: { width: 64, height: 96, channels: 4, background: { r, g, b, alpha: 1 } } }).png().toFile(spritePath);
+    cycle.push({ frameId: `tempo-${index}`, label: "pose", phase: WALK_POSES[Math.floor(index / 6)].phase, spritePath, ...(index % 6 ? { inbetween: true, position: (index % 6) / 6 } : {}) });
+  }
+  const result = await renderExport({ request: request("mp4", { settings: settings({ drawingFps: 12, cycleSeconds: 4, smoothing: 0.12, durationSeconds: 20, aspect: "9:16" }) }), frames: cycle, alignment: { ...alignment, cellWidth: 64, cellHeight: 96, strideX: 0 }, plate: null, outputDir: path.join(work, "retimed-light"), baseName: "tempo" });
+  expect(result.facts).toMatchObject({ fps: 60, frames: 1200, durationSeconds: 20 });
+  const sampled = new Set([0, 1, 2, 4, 5, 6, 7, 239, 240, 241, 242, 1199]);
+  let count = 0;
+  for await (const decoded of readFrames(result.files[0].path, result.facts.width, result.facts.height)) {
+    if (sampled.has(count)) {
+      // Independent expected timing: 48/12 = 4 s; 60/12 = 5 output
+      // frames per drawing. Only the first two soften the pose change.
+      const index = Math.floor(count / 5) % 48;
+      const previous = color((index + 47) % 48);
+      const current = color(index);
+      const weight = count % 5 === 0 ? 0.12 : count % 5 === 1 ? 0.06 : 0;
+      const at = (Math.floor(result.facts.height / 2) * result.facts.width + Math.floor(result.facts.width / 2)) * 4;
+      for (let channel = 0; channel < 3; channel++) expect(Math.abs(decoded[at + channel] - (current[channel] * (1 - weight) + previous[channel] * weight))).toBeLessThan(5);
+    }
+    count++;
+  }
+  expect(count).toBe(1200);
+});
+
+it("keeps every border of a landscape background in a portrait MP4, still and zooming", async () => {
+  const plate = path.join(work, "full-background.png");
+  await sharp({ create: { width: 140, height: 70, channels: 4, background: "#00b400" } }).extend({ top: 10, bottom: 10, left: 10, right: 10, background: "#ff00ff" }).png().toFile(plate);
+  const empty = path.join(work, "empty-pose.png");
+  await sharp({ create: { width: 64, height: 96, channels: 4, background: { r: 0, g: 0, b: 0, alpha: 0 } } }).png().toFile(empty);
+  for (const motion of ["static", "zoom"] as const) {
+    const result = await renderExport({ request: request("mp4", { settings: settings({ aspect: "9:16" }), background: { kind: "generated", motion } }), frames: frames.map((frame) => ({ ...frame, spritePath: empty })), alignment: { ...alignment, cellWidth: 64, cellHeight: 96, strideX: 0 }, plate, outputDir: path.join(work, `full-${motion}`), baseName: "whole" });
+    let count = 0;
+    for await (const decoded of readFrames(result.files[0].path, result.facts.width, result.facts.height)) {
+      if (count === 0 || count === 60) {
+        // H.264's even stage is 66×114: the complete 160×90 image
+        // fits as 66×37 at y=38. At the
+        // start of a zoom it is slightly smaller, never larger than fit.
+        const small = motion === "zoom" && count === 0;
+        const points = small ? [[33, 41], [33, 71], [4, 57], [61, 57]] : [[33, 40], [33, 72], [2, 57], [63, 57]];
+        for (const [x, y] of points) {
+          const at = (y * result.facts.width + x) * 4;
+          expect(decoded[at]).toBeGreaterThan(150);
+          expect(decoded[at + 1]).toBeLessThan(80);
+          expect(decoded[at + 2]).toBeGreaterThan(150);
+        }
+      }
+      count++;
+    }
+    expect(count).toBe(120);
+  }
 });
 
 describe("GIF", () => {
@@ -295,14 +385,14 @@ describe("moving scenes", () => {
   const corner = (frame: Buffer, width: number) => [...frame.subarray((10 * width + 10) * 4, (10 * width + 10) * 4 + 3)];
 
   it("zooms the scene in over the clip and back out, under the drawings", async () => {
-    const value = request("mp4", { background: { kind: "scene", motion: "zoom" } });
+    const value = request("mp4", { background: { kind: "scene", motion: "zoom", fit: "cover" } });
     const result = await renderExport({ request: value, frames, alignment, plate: await plateWithMarks("zoom.png"), outputDir: path.join(work, "zoom"), baseName: "walk" });
     const decoded: Buffer[] = [];
     const stageWidth = stageSize(value.settings, cellOf()).width;
     for await (const frame of readFrames(result.files[0].path, stageWidth, stageSize(value.settings, cellOf()).height)) decoded.push(frame);
-    expect(decoded).toHaveLength(48);
+    expect(decoded).toHaveLength(120);
     // The corner pixel moves toward the center as the picture zooms in, and comes back at the end.
-    const start = corner(decoded[0], stageWidth), middle = corner(decoded[24], stageWidth), end = corner(decoded[47], stageWidth);
+    const start = corner(decoded[0], stageWidth), middle = corner(decoded[60], stageWidth), end = corner(decoded[119], stageWidth);
     expect(Math.abs(middle[0] - start[0]) + Math.abs(middle[1] - start[1])).toBeGreaterThan(4);
     expect(Math.abs(end[0] - start[0]) + Math.abs(end[1] - start[1])).toBeLessThan(Math.abs(middle[0] - start[0]) + Math.abs(middle[1] - start[1]));
   });

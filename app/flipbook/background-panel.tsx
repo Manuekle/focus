@@ -86,7 +86,7 @@ export function BackgroundPanel({
   ];
   const pickMotion = (next: BackgroundMotion) => {
     setMotion(next);
-    if (background.kind === "generated" || background.kind === "scene") onBackgroundChange({ kind: background.kind, motion: next });
+    if (background.kind === "generated" || background.kind === "scene") onBackgroundChange({ ...background, motion: next });
   };
 
   return (
@@ -139,6 +139,16 @@ export function BackgroundPanel({
         </div>
       ) : null}
       <MediaLightbox items={plates} index={zoom} onIndexChange={setZoom} onClose={() => setZoom(null)} />
+      {(background.kind === "scene" || background.kind === "generated" || background.kind === "custom") && (currentMotion === "static" || currentMotion === "zoom" || background.kind === "custom") ? (
+        <div className={styles.controlRow}>
+          <span className={styles.controlLabel}>Image fit</span>
+          <div className={styles.chips} role="group" aria-label="Background image fit">
+            <ToggleChip size="xs" selected={background.fit !== "cover"} onClick={() => onBackgroundChange({ ...background, fit: "contain" })}>Whole image</ToggleChip>
+            <ToggleChip size="xs" selected={background.fit === "cover"} onClick={() => onBackgroundChange({ ...background, fit: "cover" })}>Fill frame</ToggleChip>
+          </div>
+          <p className={styles.hint}>Whole image keeps every edge visible. Fill frame crops the edges to fill the format.</p>
+        </div>
+      ) : null}
 
       {moves ? (
         <div className={styles.controlRow}>

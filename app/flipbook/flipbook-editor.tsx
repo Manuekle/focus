@@ -7,6 +7,7 @@ import { AiPaintbrushIcon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
+import { Badge } from "../../components/ui/badge";
 import { MediaLightbox } from "../../components/ui/media-lightbox";
 import { Spinner } from "../../components/ui/spinner";
 import { useToast } from "../../components/toast-provider";
@@ -33,6 +34,10 @@ import { FlipbookApiError, flipbookApi, isActive, messageFor } from "./flipbook-
 import { FramePanel } from "./frame-panel";
 import { FrameStrip, frameThumb } from "./frame-strip";
 import { InbetweenPanel } from "./inbetween-panel";
+import { SequenceControls } from "./sequence-controls";
+import { AudioPanel } from "./audio-panel";
+import { DuplicatePanel } from "./duplicate-panel";
+import { MotionReferencePanel } from "./motion-reference-panel";
 import { ProgressSteps, ReferencePanel } from "./reference-panel";
 import { SequencePlayer, type PlayerBackground } from "./sequence-player";
 import styles from "./flipbook.module.css";
@@ -56,6 +61,18 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   // The plan arrives after the editor opens: its timing becomes the starting settings, once.
   const planApplied = useRef(Boolean(flipbook.plan || flipbook.look));
   const plan = flipbook.plan;
+  const planSignature = JSON.stringify([plan?.mode, plan?.motionId, plan?.drawingFps, plan?.durationSeconds, plan?.motion]);
+  const appliedSignature = useRef(planSignature);
+  useEffect(() => {
+    if (!plan || appliedSignature.current === planSignature) return;
+    appliedSignature.current = planSignature;
+    setSettings(flipbook.look?.settings ?? { drawingFps: plan.drawingFps, durationSeconds: plan.durationSeconds, motion: plan.motion, aspect: "16:9", speed: 1 });
+  }, [plan, planSignature, flipbook.look]);
+  const sequenceFps = flipbook.sequence?.drawingFps;
+  const sequenceSeconds = flipbook.sequence?.durationSeconds;
+  useEffect(() => {
+    if (sequenceFps && sequenceSeconds) setSettings((current) => ({ ...current, drawingFps: sequenceFps, durationSeconds: sequenceSeconds, motion: "in_place", cycleSeconds: undefined, smoothing: 0 }));
+  }, [sequenceFps, sequenceSeconds]);
   useEffect(() => {
     if (!plan || planApplied.current) return;
     planApplied.current = true;
@@ -85,6 +102,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   const spec = actionSpec(flipbook.plan?.action);
   // Several characters drawn together: a fixed-length scene, not a cycle of eight.
   const scene = flipbook.cast.length > 0;
+  const finite = Boolean(flipbook.sequence);
   const total = flipbook.frames.length;
   const locked = busy || active;
 
@@ -127,9 +145,9 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
     const transform = flipbook.alignment?.transforms[drawing.id];
     return transform ? flipbookUrls.sprite(flipbook.id, drawing.id, transform.key) : null;
   };
-  const frameKey = cycle.map((drawing) => `${drawing.id}:${drawingSrc(drawing) ?? ""}:${drawing.label}`).join("|");
+  const frameKey = cycle.map((drawing) => `${drawing.id}:${drawingSrc(drawing) ?? ""}:${drawing.label}:${drawing.position ?? ""}`).join("|");
   const playerFrames = useMemo(
-    () => cycle.map((drawing) => ({ id: drawing.id, label: drawing.label, phase: drawing.phase, inbetween: drawing.inbetween, src: drawingSrc(drawing) })),
+    () => cycle.map((drawing) => ({ id: drawing.id, label: drawing.label, phase: drawing.phase, inbetween: drawing.inbetween, position: drawing.position, src: drawingSrc(drawing) })),
     // frameKey captures every value the list depends on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [frameKey],
@@ -139,18 +157,19 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   const generatedAt = flipbook.backgrounds.generated?.createdAt ?? null;
   const backgroundColor = background.kind === "color" ? background.color : null;
   const motion = backgroundMotion(background);
+  const backgroundFit = "fit" in background ? background.fit : undefined;
   const playerBackground = useMemo<PlayerBackground>(() => {
     if (backgroundColor !== null) return { kind: "color", color: backgroundColor };
-    if (background.kind === "custom" && hasCustom) return { kind: "image", src: flipbookUrls.background(flipbook.id, "custom", backgroundStamp) };
+    if (background.kind === "custom" && hasCustom) return { kind: "image", src: flipbookUrls.background(flipbook.id, "custom", backgroundStamp), fit: backgroundFit };
     const which = background.kind === "scene" && hasScene ? "scene" : background.kind === "generated" && generatedAt ? "generated" : null;
     if (!which) return { kind: "transparent" };
     const stamp = which === "scene" ? backgroundStamp : generatedAt!;
     const url = (media: BackgroundMedia) => flipbookUrls.background(flipbook.id, media, stamp);
     if (motion === "parallax") return { kind: "parallax", far: url(`${which}-far`), near: url(`${which}-near`) };
     if (motion === "scroll") return { kind: "scroll", src: url(`${which}-loop`) };
-    if (motion === "zoom") return { kind: "zoom", src: url(which) };
-    return { kind: "image", src: url(which) };
-  }, [backgroundColor, background.kind, motion, hasScene, hasCustom, generatedAt, flipbook.id, backgroundStamp]);
+    if (motion === "zoom") return { kind: "zoom", src: url(which), fit: backgroundFit };
+    return { kind: "image", src: url(which), fit: backgroundFit };
+  }, [backgroundColor, background.kind, backgroundFit, motion, hasScene, hasCustom, generatedAt, flipbook.id, backgroundStamp]);
 
   // Keep what was picked with the animation, so it reopens the same way. Quietly: a missed save costs nothing.
   const lookKey = JSON.stringify({ settings, background });
@@ -276,12 +295,12 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
           {scene ? <p className="mt-2 text-xs text-muted-foreground">{flipbook.cast.map((member, position) => <span key={`${member.characterId}:${member.versionId}`}>{position ? " · " : ""}<Link href={`/characters?c=${member.characterId}`} className="text-primary hover:underline">{member.name}</Link></span>)}<span className="ml-2">{flipbook.plan?.durationSeconds ?? "—"} s · {total} drawings</span></p> : flipbook.characterSource ? <p className="mt-2 text-xs text-muted-foreground"><Link href={`/characters?c=${flipbook.characterSource.characterId}`} className="text-primary hover:underline">{flipbook.characterSource.name}</Link> · {flipbook.characterSource.versionName}<span className="ml-2">Saved character version</span></p> : null}
         </div>
         <div className={styles.headActions}>
-          <span className={styles.pill} title="Muse Image drawings used by this animation">Drawings {flipbook.budget.used}/{flipbook.budget.limit}</span>
+          <Badge title="Muse Image drawings used by this animation">Drawings {flipbook.budget.used}/{flipbook.budget.limit}</Badge>
           {readyCount >= 1 ? (
             <Button size="sm" variant="ghost" onClick={() => setSheetOpen(true)}>Contact sheet</Button>
           ) : null}
           {readyCount >= 2 ? (
-            <Button size="sm" variant="outline" disabled={locked || reviewing} onClick={() => void review()} title="Muse Spark compares the contact sheet with the reference (1 AI call).">
+            <Button size="sm" variant="outline" disabled={locked || reviewing} onClick={() => void review()} title={finite ? `Muse Spark reviews ${Math.ceil(readyCount / 16)} contact-sheet pages (${Math.ceil(readyCount / 16)} AI calls).` : "Muse Spark compares the contact sheet with the reference (1 AI call)."}>
               {reviewing ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={14} strokeWidth={1.75} />}AI review
             </Button>
           ) : null}
@@ -363,6 +382,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
 
         <div className={styles.columnMain}>
           <SequencePlayer
+            key={`${flipbook.id}:${finite}:${sequenceFps}:${sequenceSeconds}`}
             frames={playerFrames}
             cell={cell}
             settings={settings}
@@ -371,19 +391,22 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             selectedIndex={Math.min(selected, Math.max(0, frames.length - 1))}
             seekNonce={seekNonce}
             strideMeasured={flipbook.alignment?.strideMeasured ?? false}
-            travel={spec.travels ? { verb: spec.action === "run" ? "Run" : "Walk" } : null}
+            travel={!finite && spec.travels ? { verb: spec.action === "run" ? "Run" : "Walk" } : null}
             facing={flipbook.plan?.direction ?? "right"}
             onSelect={setSelected}
             inbetweenCount={inbetweenCount}
-            fixedPace={scene}
-            strip={<FrameStrip flipbook={flipbook} frames={frames} selected={selected} onSelect={select} onMove={move} disabled={locked} scene={scene} />}
+            fixedPace={scene || finite}
+            finite={finite}
+            audio={flipbook.audio ?? undefined}
+            audioUrl={flipbook.audio ? `/api/flipbooks/${flipbook.id}/audio?v=${flipbook.audio.version}` : undefined}
+            strip={<FrameStrip flipbook={flipbook} frames={frames} selected={selected} onSelect={select} onMove={move} disabled={locked} scene={scene || finite} />}
           />
           {scene ? null : <ChatPanel
             flipbook={flipbook}
             settings={settings}
             busy={locked}
             onPlayback={applyPlayback}
-            onApplyPoses={(changes, confirmExtra) => run((extra) => flipbookApi.applyChat(flipbook.id, { changes: changes.map((change) => ({ frame: change.frame as FrameId, description: change.description })), confirmExtra: extra }), confirmExtra)}
+            onApplyPoses={(changes, confirmExtra, proposalId) => run((extra) => flipbookApi.applyChat(flipbook.id, { ...(proposalId ? { proposalId } : { changes: changes.map((change) => ({ frame: change.frame as FrameId, description: change.description })) }), confirmExtra: extra }), confirmExtra)}
           />}
         </div>
 
@@ -399,16 +422,21 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
               onAction={onFrameAction}
               onReplace={(file) => void run(() => flipbookApi.replaceFrame(flipbook.id, frame.id, file))}
               onMove={(delta) => move(selected, selected + delta)}
-              canMove={!scene}
+              canMove={!scene && !finite}
             />
           ) : null}
-          {scene ? null : <InbetweenPanel
+          {scene || finite ? null : <InbetweenPanel
             flipbook={flipbook}
-            drawingFps={settings.drawingFps}
+            drawingFps={flipbook.plan?.drawingFps ?? settings.drawingFps}
+            cycleSeconds={settings.cycleSeconds}
             keysReady={notReady.length === 0}
             disabled={locked}
-            onDraw={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "inbetweens", confirmExtra }))}
+            onDraw={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "inbetweens", drawingFps: flipbook.plan?.drawingFps ?? settings.drawingFps, confirmExtra }))}
           />}
+          {!scene ? <SequenceControls key={JSON.stringify(flipbook.sequence)} flipbook={flipbook} disabled={locked || !flipbook.reference || !flipbook.plan} onPlan={(settings) => void run(() => flipbookApi.action(flipbook.id, { action: "sequence", settings }))} onRestore={(id) => void run(() => flipbookApi.action(flipbook.id, { action: "revision", id }))} /> : null}
+          <AudioPanel key={flipbook.audio?.version ?? "no-audio"} flipbook={flipbook} disabled={locked} onUpload={(file) => void run(() => flipbookApi.uploadAudio(flipbook.id, file))} onSave={(settings) => void run(() => flipbookApi.audioSettings(flipbook.id, settings))} onRemove={() => void run(() => flipbookApi.removeAudio(flipbook.id))} />
+          {!scene ? <DuplicatePanel flipbook={flipbook} disabled={locked || !flipbook.plan} onCreated={(copy) => router.push(`/flipbook?f=${copy.id}`)} /> : null}
+          {!scene ? <MotionReferencePanel key={flipbook.motionDraft?.version ?? flipbook.motionReference?.version ?? "no-motion"} flipbook={flipbook} disabled={locked || !flipbook.reference} onUpload={(file) => void run(() => flipbookApi.uploadMotion(flipbook.id, file))} onAttach={(input) => void run(() => flipbookApi.attachMotion(flipbook.id, input))} /> : null}
           <ExportPanel
             flipbook={flipbook}
             settings={settings}
@@ -426,8 +454,9 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
       </div>
 
       <MediaLightbox
-        items={[{ kind: "image", src: flipbookUrls.contactSheet(flipbook.id, flipbook.updatedAt), alt: "Contact sheet: every drawing in playback order", caption: "Contact sheet · every drawing in playback order", transparent: true }]}
-        index={sheetOpen ? 0 : null}
+        items={Array.from({ length: finite ? Math.ceil(total / 16) : 1 }, (_, page) => ({ kind: "image" as const, src: `${flipbookUrls.contactSheet(flipbook.id, flipbook.updatedAt)}&page=${page}`, alt: finite ? `Drawings ${page * 16 + 1} to ${Math.min(total, page * 16 + 16)}` : "Contact sheet: every drawing in playback order", caption: finite ? `Contact sheet · ${page + 1} of ${Math.ceil(total / 16)}` : "Contact sheet · every drawing in playback order", transparent: true }))}
+        index={sheetOpen ? finite ? Math.floor(Math.min(selected, total - 1) / 16) : 0 : null}
+        onIndexChange={(page) => select(page * 16)}
         onClose={() => setSheetOpen(false)}
       />
     </div>

@@ -14,6 +14,8 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { SuggestionChip } from "../../components/ui/suggestion-chip";
+import { ToggleChip } from "../../components/ui/toggle-chip";
 import { Select } from "../../components/ui/select";
 import { Spinner } from "../../components/ui/spinner";
 import {
@@ -253,15 +255,14 @@ export function CharacterEditor({
         <div className={styles.canvasColumn}>
           <div className={styles.canvasToolbar}>
             <span>{selected ? selected.name : "Original reference"}</span>
-            <button
-              type="button"
-              className={styles.compareButton}
-              aria-pressed={compare}
+            <ToggleChip
+              size="xs"
+              selected={compare}
               disabled={!selected}
               onClick={() => setCompare(!compare)}
             >
               {compare ? "Close comparison" : "Compare"}
-            </button>
+            </ToggleChip>
           </div>
           <div
             className={styles.artStage}
@@ -421,8 +422,8 @@ export function CharacterEditor({
                 aria-label="Suggested changes"
               >
                 {CHANGES.map((change, i) => (
-                  <button
-                    type="button"
+                  <SuggestionChip
+                    size="xs"
                     key={change}
                     disabled={locked}
                     onClick={() => {
@@ -431,7 +432,7 @@ export function CharacterEditor({
                     }}
                   >
                     {["Try a new coat", "Add a satchel", "Winter outfit"][i]}
-                  </button>
+                  </SuggestionChip>
                 ))}
               </div>
             ) : (

@@ -13,6 +13,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { Badge } from "../../components/ui/badge";
 import { Skeleton } from "../../components/ui/skeleton";
 import {
   IMAGE_ACCEPT_ATTRIBUTE,
@@ -199,17 +200,21 @@ export function CharactersStudio({
             <HugeiconsIcon icon={Add01Icon} size={14} />
             New character
           </Button>
-          <nav className={styles.sideNav} aria-label="Library">
-            <Link
-              href="/characters"
-              aria-current={!initialId ? "page" : undefined}
-            >
-              My characters <span>{list?.length ?? ""}</span>
-            </Link>
-            <Link href="/flipbook">
-              <HugeiconsIcon icon={ArrowLeft01Icon} size={14} />
-              Back to Flipbook
-            </Link>
+          <nav className={shell.sidebarNav} aria-label="Library">
+            <Button asChild variant="ghost" size="sm" className="w-full justify-between font-normal text-muted-foreground hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:text-accent-foreground">
+              <Link
+                href="/characters"
+                aria-current={!initialId ? "page" : undefined}
+              >
+                My characters <span>{list?.length ?? ""}</span>
+              </Link>
+            </Button>
+            <Button asChild variant="ghost" size="sm" className="w-full justify-start font-normal text-muted-foreground hover:text-foreground">
+              <Link href="/flipbook">
+                <HugeiconsIcon icon={ArrowLeft01Icon} size={14} />
+                Back to Flipbook
+              </Link>
+            </Button>
           </nav>
           {user ? (
             <div className={styles.sideList}>
@@ -348,7 +353,7 @@ export function CharactersStudio({
                 aria-labelledby="elf-starter-title"
               >
                 <div className={styles.starterCopy}>
-                  <span className={styles.tag}>Start with a reference</span>
+                  <Badge size="sm">Start with a reference</Badge>
                   <h2 id="elf-starter-title">Meet Elf-chan.</h2>
                   <p>
                     A familiar face for your first character. Keep her original

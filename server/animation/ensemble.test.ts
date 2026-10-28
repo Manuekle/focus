@@ -159,9 +159,10 @@ describe("a scene of several characters", () => {
   });
 
   it("plays exactly as long as asked, whatever the settings say", async () => {
-    const result = await exportFlipbook(scene.id, { format: "mp4", settings: { drawingFps: 12, durationSeconds: 6, motion: "left", aspect: "16:9", speed: 1 }, background: { kind: "color", color: "#ffffff" } });
+    const result = await exportFlipbook(scene.id, { format: "mp4", settings: { drawingFps: 12, cycleSeconds: 4, durationSeconds: 6, motion: "left", aspect: "16:9", speed: 1 }, background: { kind: "color", color: "#ffffff" } });
     expect(result.record.settings).toMatchObject({ drawingFps: 8, durationSeconds: 2, motion: "in_place" });
-    expect(result.record.facts.frames).toBe(48);
+    expect(result.record.settings.cycleSeconds).toBeUndefined();
+    expect(result.record.facts.frames).toBe(120);
     expect(result.record.facts.durationSeconds).toBeGreaterThan(1.9);
     expect(result.record.facts.durationSeconds).toBeLessThan(2.1);
   });

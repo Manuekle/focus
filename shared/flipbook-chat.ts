@@ -5,9 +5,9 @@ import {
   MotionSchema,
   PlaybackSecondsSchema,
   SPEED_BOUNDS,
-  WALK_FRAME_COUNT,
   type PlaybackSettings,
 } from "./flipbook";
+import { MAX_SEQUENCE_FRAMES } from "./sequence";
 import { CHAT_MESSAGE_MAX_LENGTH } from "./schemas";
 
 // The Flipbook chat: a sentence about the movement ("wave with the other
@@ -67,7 +67,7 @@ export function describePlaybackPatch(patch: PlaybackPatch): string[] {
 export const PoseChangeSchema = z.object({
   frame: FrameIdSchema,
   /** Place in playback order, from 1: what the person sees on the strip. */
-  position: z.number().int().min(1).max(WALK_FRAME_COUNT),
+  position: z.number().int().min(1).max(MAX_SEQUENCE_FRAMES),
   label: z.string().max(40),
   /** One short sentence: what is different in this drawing. */
   summary: z.string().max(160),
@@ -77,12 +77,12 @@ export const PoseChangeSchema = z.object({
 });
 export type PoseChange = z.infer<typeof PoseChangeSchema>;
 
-export const SkippedFrameSchema = z.object({ frame: FrameIdSchema, position: z.number().int().min(1).max(WALK_FRAME_COUNT), label: z.string().max(40), reason: z.string().max(160) });
+export const SkippedFrameSchema = z.object({ frame: FrameIdSchema, position: z.number().int().min(1).max(MAX_SEQUENCE_FRAMES), label: z.string().max(40), reason: z.string().max(160) });
 export type SkippedFrame = z.infer<typeof SkippedFrameSchema>;
 
 export const ChatCostSchema = z.object({
   /** Muse Image drawings the pose changes would use. */
-  drawings: z.number().int().min(0).max(WALK_FRAME_COUNT),
+  drawings: z.number().int().min(0).max(MAX_SEQUENCE_FRAMES),
   used: z.number().int().nonnegative(),
   limit: z.number().int().nonnegative(),
   /** Drawings past the budget: applying them takes an explicit confirmation. */
@@ -91,22 +91,24 @@ export const ChatCostSchema = z.object({
 export type ChatCost = z.infer<typeof ChatCostSchema>;
 
 export const FlipbookProposalSchema = z.object({
+  proposalId: z.uuid().optional(),
   reply: z.string().min(1).max(400),
-  changes: z.array(PoseChangeSchema).max(WALK_FRAME_COUNT),
+  changes: z.array(PoseChangeSchema).max(MAX_SEQUENCE_FRAMES),
   playback: PlaybackPatchSchema.nullable(),
-  skipped: z.array(SkippedFrameSchema).max(WALK_FRAME_COUNT),
+  skipped: z.array(SkippedFrameSchema).max(MAX_SEQUENCE_FRAMES),
   cost: ChatCostSchema,
 });
 export type FlipbookProposal = z.infer<typeof FlipbookProposalSchema>;
 
 /** Applies the poses of a proposal: the new instructions, then one redraw each. */
 export const ApplyPoseChangesRequestSchema = z.object({
+  proposalId: z.uuid().optional(),
   changes: z
     .array(z.object({ frame: FrameIdSchema, description: z.string().trim().min(1).max(POSE_DESCRIPTION_MAX) }))
     .min(1)
-    .max(WALK_FRAME_COUNT),
+    .max(MAX_SEQUENCE_FRAMES).optional(),
   confirmExtra: z.boolean().optional(),
-});
+}).refine((input) => Boolean(input.proposalId) !== Boolean(input.changes), "Choose a stored proposal or explicit changes.");
 export type ApplyPoseChangesRequest = z.infer<typeof ApplyPoseChangesRequestSchema>;
 
 export const FLIPBOOK_CHAT_STARTERS = ["Make the movement smaller", "Slower, more relaxed", "Make it happier", "Bigger, more energetic"] as const;

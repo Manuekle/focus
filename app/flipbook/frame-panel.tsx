@@ -68,10 +68,10 @@ export function FramePanel({
   return (
     <section className={styles.panel} aria-labelledby="frame-title">
       <div className={styles.panelHead}>
-        <h2 id="frame-title" className={styles.panelTitle}>Frame {index + 1} · {frame.label}</h2>
+        <h2 id="frame-title" className={styles.panelTitle}>Correct this drawing · {index + 1}{flipbook.sequence ? ` · ${(Number(frame.id.slice(1)) / 24).toFixed(2)} s` : ` · ${frame.label}`}</h2>
         <label className={styles.inline}>
           <span className="text-xs text-muted-foreground">Approved</span>
-          <Switch checked={frame.approved} disabled={frame.status !== "ready" && !frame.approved} onCheckedChange={(approved) => onAction({ action: "approve", approved })} label="Approve this frame" />
+          <Switch checked={frame.approved} disabled={busy || (frame.status !== "ready" && !frame.approved)} onCheckedChange={(approved) => onAction({ action: "approve", approved })} label="Approve this frame" />
         </label>
       </div>
 
@@ -118,11 +118,13 @@ export function FramePanel({
       ) : null}
 
       {metrics ? (
+        <Disclosure title="Technical details">
         <dl className={styles.metrics}>
           <div><dt>Cut out by</dt><dd>{metrics.extraction === "sam" ? "SAM 3.1" : metrics.extraction === "alpha" ? "Your transparency" : "Background color"}</dd></div>
           <div><dt>Resized to match</dt><dd className="tabular-nums">{metrics.relativeScale >= 1 ? "+" : "−"}{Math.abs(Math.round((metrics.relativeScale - 1) * 100))}%</dd></div>
           <div><dt>Color drift</dt><dd className="tabular-nums">{metrics.colorDistance === null ? "—" : `${Math.round(metrics.colorDistance * 100)}%`}</dd></div>
         </dl>
+        </Disclosure>
       ) : null}
 
       {pose ? (

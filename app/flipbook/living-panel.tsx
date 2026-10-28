@@ -6,6 +6,7 @@ import { AiSearch02Icon, AiPaintbrushIcon, Cancel01Icon, Download01Icon, PlusSig
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { Badge } from "../../components/ui/badge";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Spinner } from "../../components/ui/spinner";
 import { formatBytes } from "../../shared/media";
@@ -433,7 +434,7 @@ export function LivingPanel({ image, onPreview }: { readonly image: FlipbookImag
             ) : null}
             {request.audio.kind === "upload" || uploading ? (
               <div className={styles.buttonRow}>
-                {track ? <span className={styles.pill}>{track.name} · {Math.round(track.durationSeconds)} s</span> : null}
+                {track ? <Badge>{track.name} · {Math.round(track.durationSeconds)} s</Badge> : null}
                 <Button type="button" variant="ghost" size="sm" onClick={() => trackInput.current?.click()} disabled={uploading}>
                   {uploading ? <Spinner /> : <HugeiconsIcon icon={Upload01Icon} size={14} strokeWidth={1.5} />}
                   {track ? "Replace track" : "Upload a track"}
@@ -484,10 +485,12 @@ export function LivingPanel({ image, onPreview }: { readonly image: FlipbookImag
                   Open in video editor
                 </Button>
                 {result.files.map((file) => (
-                  <a key={file.name} href={livingUrls.file(image.id, result.key, file.name, true)} download={file.name} className={styles.livingDownload}>
-                    <HugeiconsIcon icon={Download01Icon} size={14} strokeWidth={1.5} />
-                    {file.type === "image/gif" ? "GIF" : "MP4"} · {formatBytes(file.bytes)}
-                  </a>
+                  <Button key={file.name} asChild variant="outline" size="sm">
+                    <a href={livingUrls.file(image.id, result.key, file.name, true)} download={file.name}>
+                      <HugeiconsIcon icon={Download01Icon} size={14} strokeWidth={1.5} />
+                      {file.type === "image/gif" ? "GIF" : "MP4"} · {formatBytes(file.bytes)}
+                    </a>
+                  </Button>
                 ))}
               </div>
             ) : null}

@@ -99,8 +99,13 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
     if (outOfFreeEdits) return setLogin("quota");
     setCreating(true);
     try {
-      const next: Flipbook = await flipbookApi.create(image.id, prompt, options);
+      const { motionFile, ...requestOptions } = options;
+      const next: Flipbook = await flipbookApi.create(image.id, prompt, requestOptions);
       setFlipbook(next);
+      if (motionFile) {
+        try { setFlipbook(await flipbookApi.uploadMotion(next.id, motionFile)); }
+        catch (error) { toast({ title: "Animation prepared; video upload failed", description: error instanceof Error ? error.message : "Upload the reference again in the editor.", status: "error" }); }
+      }
       void refreshSession();
     } catch (error) {
       if (error instanceof FlipbookApiError && error.code === "login_required") setLogin("quota");
@@ -176,14 +181,20 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
             New animation
           </Button>
 
-          <Link href="/characters" className={styles.sideLink}>
-            <HugeiconsIcon icon={UserGroupIcon} size={14} strokeWidth={1.75} />
-            My characters
-          </Link>
-          <Link href="/flipbook?together=1" className={styles.sideLink}>
-            <HugeiconsIcon icon={UserMultiple02Icon} size={14} strokeWidth={1.75} />
-            Animate together
-          </Link>
+          <nav className={shell.sidebarNav} aria-label="Library">
+            <Button asChild variant="ghost" size="sm" className="w-full justify-start font-normal text-muted-foreground hover:text-foreground">
+              <Link href="/characters">
+                <HugeiconsIcon icon={UserGroupIcon} size={14} strokeWidth={1.75} />
+                My characters
+              </Link>
+            </Button>
+            <Button asChild variant="ghost" size="sm" className="w-full justify-start font-normal text-muted-foreground hover:text-foreground">
+              <Link href="/flipbook?together=1" aria-current={together && !flipbook ? "page" : undefined} className="aria-[current=page]:bg-accent aria-[current=page]:text-accent-foreground">
+                <HugeiconsIcon icon={UserMultiple02Icon} size={14} strokeWidth={1.75} />
+                Animate together
+              </Link>
+            </Button>
+          </nav>
 
           {user ? (
             <nav className={shell.projects} aria-label="Animations">
@@ -234,7 +245,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
             <FlipbookSkeleton />
           ) : flipbook ? (
             <>
-              <FlipbookEditor flipbook={flipbook} onChange={setFlipbook} onStartOver={startOver} />
+              <FlipbookEditor key={flipbook.id} flipbook={flipbook} onChange={setFlipbook} onStartOver={startOver} />
               {!user ? (
                 <section className={shell.history}>
                   <p className="text-xs leading-5 text-muted-foreground">

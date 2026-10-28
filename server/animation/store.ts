@@ -180,13 +180,15 @@ export function updateFlipbook(id: string, change: (current: Flipbook) => Flipbo
 export async function getFlipbook(id: string): Promise<Flipbook> {
   const flipbook = await readState(parseFlipbookId(id));
   // Active with no live worker: the server restarted mid-run.
-  if (ACTIVE_FLIPBOOK_STATUSES.includes(flipbook.status) && !runtime.running.has(flipbook.id)) {
+  if ((ACTIVE_FLIPBOOK_STATUSES.includes(flipbook.status) || flipbook.queuedDrawings?.length) && !runtime.running.has(flipbook.id)) {
     return withLock(flipbook.id, async () => {
       const current = await readState(flipbook.id);
-      if (!ACTIVE_FLIPBOOK_STATUSES.includes(current.status) || runtime.running.has(current.id)) return current;
+      if ((!ACTIVE_FLIPBOOK_STATUSES.includes(current.status) && !current.queuedDrawings?.length) || runtime.running.has(current.id)) return current;
       const usable = Boolean(current.plan && current.reference);
       return writeState({
         ...current,
+        budget: { ...current.budget, used: Math.max(0, current.budget.used - (current.queuedDrawings?.length ?? 0)) },
+        queuedDrawings: [],
         status: usable ? (current.frames.some((frame) => frame.version && frame.status === "ready") ? "ready" : "reference_ready") : "failed",
         frames: current.frames.map((frame) =>
           frame.status === "generating" || frame.status === "processing"
@@ -240,7 +242,7 @@ export function startWorker(id: string, work: (signal: AbortSignal) => Promise<v
 
 export function abortWorker(id: string): void {
   runtime.running.get(id)?.abort();
-  runtime.running.delete(id);
+  // Its finally block releases the slot after reservations and in-flight work settle.
 }
 
 // ── Cleanup ────────────────────────────────────────────────────────────────

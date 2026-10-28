@@ -454,7 +454,7 @@ export async function removePart(imageId: string, layerId: string): Promise<Livi
 // ── Rendering ──────────────────────────────────────────────────────────────
 
 /** Bumped when the engine's output changes, so old renders aren't reused. */
-export const LIVING_RENDER_VERSION = 9;
+export const LIVING_RENDER_VERSION = 10;
 const GIF_FPS = 12;
 const GIF_LONG_SIDE = 640;
 
@@ -567,7 +567,7 @@ function renderOnce(imageId: string, inventory: LivingInventory, request: Living
         if (signal?.aborted) throw new AppError("canceled", 499, "Render canceled.");
         const t = frame / frames;
         onProgress?.((frame / frames) * DRAWING_SHARE);
-        // The character holds each pose for two frames (anime "on twos"); the camera moves on every frame.
+        // The character, the camera and the sky all move on every one of the 60 frames.
         const { rgba, cover } = livingLayers(prepared, t, bodyTime(frame, frames));
         await writer.write(plate && cover
           ? depthFrame(rgba, cover, plate, info.width, info.height, depthViews(t, info, { width, height }, focus), width, height, prepared.wideCover ?? cover)

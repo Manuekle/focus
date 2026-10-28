@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { ACTION_SPECS, inbetweenTargets, playbackCycle, type CharacterAnalysis, type Flipbook, type FlipbookStatus } from "../../shared/flipbook";
+import { ACTION_SPECS, denseInbetweenTargets, exposureSheet, inbetweenTargets, playbackCycle, type CharacterAnalysis, type Flipbook, type FlipbookStatus } from "../../shared/flipbook";
 import { AppError } from "../errors";
 import { activeWorkCount } from "../jobs";
 import { DRIFT, walkerPng } from "./__fixtures__/walker";
@@ -179,7 +179,7 @@ describe("the eight-pose pipeline", () => {
   it("exports a verified MP4 and reuses it for identical settings", async () => {
     const value = { format: "mp4" as const, settings: { drawingFps: 8 as const, durationSeconds: 2 as const, motion: "in_place" as const, aspect: "16:9" as const, speed: 1 }, background: { kind: "color" as const, color: "#ffffff" } };
     const first = await exportFlipbook(flipbook.id, value);
-    expect(first.record.facts.frames).toBe(48);
+    expect(first.record.facts.frames).toBe(120);
     expect(first.record.files[0].url).toContain(`/api/flipbooks/${flipbook.id}/media?kind=export`);
     const again = await exportFlipbook(flipbook.id, value);
     expect(again.record.key).toBe(first.record.key);
@@ -289,7 +289,7 @@ describe("the eight-pose pipeline", () => {
 
     const settings = { drawingFps: 8 as const, durationSeconds: 2 as const, motion: "in_place" as const, aspect: "16:9" as const, speed: 1 };
     const mp4 = await exportFlipbook(flipbook.id, { format: "mp4", settings, background: { kind: "generated", motion: "scroll" } });
-    expect(mp4.record.facts.frames).toBe(48);
+    expect(mp4.record.facts.frames).toBe(120);
     const gif = await exportFlipbook(flipbook.id, { format: "gif", settings, background: { kind: "generated", motion: "scroll" } });
     // A scrolling background needs the whole trip at 24 fps, not one looping cycle.
     expect(gif.record.facts.frames).toBe(48);
@@ -406,6 +406,81 @@ describe("animated gallery poses", () => {
 
 describe("in-betweens", () => {
   const sheet = (inbetweens?: boolean) => ({ format: "spritesheet" as const, settings: { drawingFps: 8 as const, durationSeconds: 2 as const, motion: "in_place" as const, aspect: "16:9" as const, speed: 1, ...(inbetweens === undefined ? {} : { inbetweens }) }, background: { kind: "transparent" as const } });
+
+  it("generates a dense dance at its own pace and exports all 20 seconds", async () => {
+    const originalPlan = services.plan;
+    const originalMiddle = services.inbetween;
+    let drawn = 0;
+    services.plan = async (input) => ({ ...await originalPlan(input), durationSeconds: 20 });
+    services.inbetween = async ({ fromIndex }) => {
+      drawn++;
+      return { png: await walkerPng(DRIFT[fromIndex].phase, DRIFT[fromIndex]), width: 1024, height: 1536 };
+    };
+    try {
+      let flipbook = await waitFor((await createFlipbook({ imageId, action: "dance", prompt: "Dance for 20 seconds" })).id, ["ready", "failed"]);
+      expect(flipbook.plan).toMatchObject({ action: "dance", drawingFps: 4, durationSeconds: 20 });
+      expect(denseInbetweenTargets(flipbook, 4)).toHaveLength(40);
+      await drawInbetweens(flipbook.id, true, async ({ estimatedFrames }) => { expect(estimatedFrames).toBe(40); }, 4);
+      flipbook = await waitFor(flipbook.id, ["ready"]);
+      expect(drawn).toBe(40);
+      expect(flipbook.budget).toEqual({ used: 48, limit: 48 });
+      const cycle = exposureSheet(playbackCycle(flipbook, true), 4);
+      expect(cycle.drawings).toHaveLength(48);
+      expect(cycle.holds).toEqual(Array(48).fill(1));
+      const exported = await exportFlipbook(flipbook.id, { format: "mp4", settings: { drawingFps: 4, durationSeconds: 20, motion: "in_place", aspect: "9:16", speed: 1 }, background: { kind: "color", color: "#ffffff" } });
+      expect(exported.record.facts).toMatchObject({ frames: 1200, durationSeconds: 20, fps: 60 });
+    } finally {
+      services.plan = originalPlan;
+      services.inbetween = originalMiddle;
+    }
+  });
+
+  it("fills 24 drawings/s, checks the full cost first, and reuses densities when the pace changes", async () => {
+    let flipbook = await waitFor((await createFlipbook({ imageId, prompt: "walk in place" })).id, ["ready"]);
+    const original = services.inbetween;
+    const seen: { from: number; position: number }[] = [];
+    services.inbetween = async ({ fromIndex, position }) => {
+      seen.push({ from: fromIndex, position: position! });
+      return { png: await walkerPng(DRIFT[fromIndex].phase, DRIFT[fromIndex]), width: 1024, height: 1536 };
+    };
+    try {
+      expect(denseInbetweenTargets(flipbook, 8)).toHaveLength(16);
+      await expect(drawInbetweens(flipbook.id, false, undefined, 8)).rejects.toMatchObject({ code: "budget_reached", status: 402 });
+      expect(seen).toHaveLength(0);
+      expect((await getFlipbook(flipbook.id)).budget.used).toBe(8);
+      await drawInbetweens(flipbook.id, true, async ({ estimatedFrames }) => { expect(estimatedFrames).toBe(16); }, 8);
+      flipbook = await waitFor(flipbook.id, ["ready"]);
+      expect(flipbook.budget).toEqual({ used: 24, limit: 24 });
+      expect(seen).toHaveLength(16);
+      expect(seen.filter((entry) => entry.from === 0).map((entry) => entry.position).sort()).toEqual([1 / 3, 2 / 3]);
+      expect(denseInbetweenTargets(flipbook, 8)).toEqual([]);
+      const dense = exposureSheet(playbackCycle(flipbook, true), 8);
+      expect(dense.holds).toEqual(Array(24).fill(1));
+      const exported = await exportFlipbook(flipbook.id, sheet());
+      expect(exported.record.facts).toMatchObject({ frames: 24, durationSeconds: 1 });
+      const atlasFile = exported.record.files.find((file) => file.name.endsWith(".json"))!;
+      const atlas = JSON.parse(await readFile(path.join(flipbookFiles.exportDir(flipbook.id, exported.record.key), atlasFile.name), "utf8"));
+      const timing = atlas.meta ?? atlas;
+      expect(timing.frameRate).toBe(24);
+      expect(timing.frameDurationsMs.reduce((sum: number, ms: number) => sum + ms, 0)).toBe(1000);
+
+      // Faster cycles need half poses instead of thirds. Keep the thirds so
+      // returning to the previous pace is free and doesn't redraw them.
+      expect(denseInbetweenTargets(flipbook, 12)).toHaveLength(8);
+      await drawInbetweens(flipbook.id, true, undefined, 12);
+      flipbook = await waitFor(flipbook.id, ["ready"]);
+      expect(flipbook.inbetweens).toHaveLength(24);
+      expect(denseInbetweenTargets(flipbook, 8)).toEqual([]);
+      expect(denseInbetweenTargets(flipbook, 12)).toEqual([]);
+      expect(exposureSheet(playbackCycle(flipbook, true), 12).holds).toEqual(Array(16).fill(1));
+
+      await applyFrameAction(flipbook.id, "f3", { action: "regenerate", confirmExtra: true });
+      flipbook = await waitFor(flipbook.id, ["ready"]);
+      expect(denseInbetweenTargets(flipbook, 8).map((entry) => entry.from)).toEqual(["f2", "f2", "f3", "f3"]);
+    } finally {
+      services.inbetween = original;
+    }
+  });
 
   it("draws one per gap from both keys, plays them between the keys, and redraws only the stale ones", async () => {
     let flipbook = await waitFor((await createFlipbook({ imageId, prompt: "walk in place" })).id, ["ready"]);
@@ -616,7 +691,7 @@ describe("reading the upload, and the scene behind the character", () => {
     expect(flipbook.budget.used).toBe(9);
     expect(await stat(flipbookFiles.background(flipbook.id, "scene-loop"))).toBeTruthy();
     const mp4 = await exportFlipbook(flipbook.id, { format: "mp4", settings: { drawingFps: 8, durationSeconds: 2, motion: "in_place", aspect: "16:9" as const, speed: 1 }, background: { kind: "scene", motion: "scroll" } });
-    expect(mp4.record.facts.frames).toBe(48);
+    expect(mp4.record.facts.frames).toBe(120);
   });
 });
 
@@ -657,9 +732,9 @@ describe("input handling", () => {
   });
 
   it("refuses actions it can't animate, before any drawing is paid for", async () => {
-    analysis = { ...baseAnalysis, requestedAction: "dance" };
+    analysis = { ...baseAnalysis, requestedAction: "other" };
     const draws = calls.draw;
-    const created = await createFlipbook({ imageId, prompt: "make it dance" });
+    const created = await createFlipbook({ imageId, prompt: "turn into a flying dragon" });
     const result = await waitFor(created.id, ["unsupported", "failed", "ready"]);
     expect(result.status).toBe("unsupported");
     expect(result.error?.code).toBe("unsupported_animation");
