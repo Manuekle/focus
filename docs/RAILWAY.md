@@ -31,7 +31,7 @@ Railway monta el volumen como root. `RAILWAY_RUN_UID=0` permite que `deploy/dock
 
 El healthcheck de Docker usa `PORT`, incluido cuando Railway lo asigna dinámicamente. No sobrescribir el Start Command: usar el `ENTRYPOINT` y `CMD` de la imagen.
 
-`FOCUS_PROVIDER_CONNECTIVITY_CHECK=1` ejecuta al arrancar, como usuario `node`, dos GET sin credenciales hacia Meta Model API y Graph API. Registra únicamente el proveedor, estado HTTP o código de error; nunca envía prompts ni ejecuta modelos. Respuestas 401/400 son esperables sin autenticación y permiten comprobar la salida HTTPS del Limited Trial. La prueba no bloquea el arranque si la red está restringida. Puede desactivarse después de verificarla.
+`FOCUS_PROVIDER_CONNECTIVITY_CHECK=1` consulta al arrancar, como usuario `node`, el catálogo de Meta Model API con la clave configurada y Graph API sin credenciales. Registra el estado HTTP, los modelos disponibles, un identificador hash de la clave y los errores de acceso; nunca registra la clave, envía prompts ni ejecuta modelos. El catálogo debe responder 200 con una clave válida; Graph puede responder 400 por no llevar un token. La prueba no bloquea el arranque si la red está restringida. Puede desactivarse después de verificarla.
 
 ## Configurar la cuenta y el servicio
 
