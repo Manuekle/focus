@@ -34,6 +34,7 @@ export function FrameStrip({
   onSelect,
   onMove,
   disabled,
+  scene = false,
 }: {
   readonly flipbook: Flipbook;
   readonly frames: readonly FlipbookFrame[];
@@ -41,6 +42,8 @@ export function FrameStrip({
   readonly onSelect: (index: number) => void;
   readonly onMove: (from: number, to: number) => void;
   readonly disabled: boolean;
+  /** A scene's drawings are beats of one choreography: small thumbnails, and no reordering. */
+  readonly scene?: boolean;
 }) {
   const onKeyDown = (event: KeyboardEvent<HTMLOListElement>) => {
     const delta = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
@@ -48,7 +51,7 @@ export function FrameStrip({
     event.preventDefault();
     const target = Math.max(0, Math.min(frames.length - 1, selected + delta));
     if (event.altKey) {
-      if (!disabled && target !== selected) onMove(selected, target);
+      if (!scene && !disabled && target !== selected) onMove(selected, target);
       return;
     }
     onSelect(target);
@@ -56,7 +59,7 @@ export function FrameStrip({
   };
 
   return (
-    <ol className={styles.strip} aria-label="Frames in playback order. Alt plus arrow keys reorder." onKeyDown={onKeyDown}>
+    <ol className={styles.strip} data-dense={scene || undefined} aria-label={scene ? "Drawings in order" : "Frames in playback order. Alt plus arrow keys reorder."} onKeyDown={onKeyDown}>
       {frames.map((frame, index) => {
         const thumb = frameThumb(flipbook, frame);
         const flagged = frame.warnings.length > 0 || (frame.review && !frame.review.ok);

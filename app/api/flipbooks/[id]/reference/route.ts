@@ -4,6 +4,7 @@ import { declaredLength, paidGate } from "../../../../../server/animation/http";
 import { addExtraReference, changeReference, removeExtraReference } from "../../../../../server/animation/flipbooks";
 import { readUpload } from "../../../../../server/animation/image-input";
 import { assertFlipbookEnabled } from "../../../../../server/animation/store";
+import { requireFlipbookAccess } from "../../../../../server/animation/access";
 
 type Context = { params: Promise<{ id: string }> };
 
@@ -15,6 +16,7 @@ export async function PUT(request: Request, { params }: Context) {
     assertFlipbookEnabled();
     guardUpload(request);
     const { id } = await params;
+    await requireFlipbookAccess(request, id);
     const upload = await readUpload(request.body, declaredLength(request));
     const flipbook = await changeReference(id, "uploaded", { upload }, paidGate(request));
     return Response.json(flipbook, noStore);
@@ -29,6 +31,7 @@ export async function POST(request: Request, { params }: Context) {
     assertFlipbookEnabled();
     guardUpload(request);
     const { id } = await params;
+    await requireFlipbookAccess(request, id);
     let name = "";
     try {
       name = decodeURIComponent(request.headers.get("x-focus-filename") ?? "").trim();
@@ -47,6 +50,7 @@ export async function DELETE(request: Request, { params }: Context) {
   try {
     assertFlipbookEnabled();
     const { id } = await params;
+    await requireFlipbookAccess(request, id);
     const flipbook = await removeExtraReference(id, new URL(request.url).searchParams.get("v") ?? "");
     return Response.json(flipbook, noStore);
   } catch (error) {

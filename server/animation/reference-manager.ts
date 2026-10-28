@@ -7,38 +7,42 @@ import { extractSubject, MeasureSchema, segmentation, type Measure } from "./fra
 import { generateImage, type GeneratedImage } from "./muse-image";
 import { backdropPrompt, referencePrompt, scenePrompt } from "./pose-planning";
 import { flipbookFiles, readJsonFile, writeAtomic } from "./store";
+import { cameraDescription, resolveCameraView, type CameraView } from "../../shared/animation-view";
 
 // The character anchor. Every drawing is made from one immutable reference
-// image: the upload itself when it already is a usable side view, otherwise
-// one clean side-view redraw made once and reused. A redraw never becomes the
+// image: the upload itself when it already shows the full character in the
+// selected view, otherwise one prepared reference made once and reused. A redraw never becomes the
 // reference for the next one, so the cycle cannot drift away from it.
 
 export const REFERENCE_SIZE = "1024x1536";
 
-/** Whether the upload can anchor a side-view walk as it is. */
-export function decideReference(analysis: CharacterAnalysis): { kind: "original" | "clean"; reason: string } {
-  if (analysis.view === "side" && analysis.fullBodyVisible && analysis.feetVisible && analysis.background !== "detailed") {
-    return { kind: "original", reason: "Your illustration is already a full-body side view, so it is the reference." };
+/** Whether the upload can anchor the selected camera view as it is. */
+export function decideReference(analysis: CharacterAnalysis, view: CameraView = resolveCameraView(undefined, analysis)): { kind: "original" | "clean"; reason: string } {
+  if (analysis.view === view && analysis.fullBodyVisible && analysis.feetVisible && analysis.background !== "detailed") {
+    return { kind: "original", reason: "Your illustration already shows the full character in the selected view, so it is the reference." };
   }
-  const why = analysis.view !== "side" ? "isn’t in side view" : !analysis.fullBodyVisible || !analysis.feetVisible ? "doesn’t show the full body" : "has a detailed background";
-  return { kind: "clean", reason: `Your illustration ${why}, so a clean full-body side view was drawn from it first.` };
+  const why = analysis.view !== view ? "uses another camera view" : !analysis.fullBodyVisible || !analysis.feetVisible ? "doesn’t show the full body clearly" : "has a detailed background";
+  return { kind: "clean", reason: `Your illustration ${why}. A full-body reference was prepared in ${cameraDescription(view, analysis.facing === "left" ? "left" : "right")}.`.slice(0, 240) };
 }
 
 export async function drawCleanReference(input: {
   readonly sourceFlat: Buffer;
   readonly analysis: CharacterAnalysis | null;
   readonly direction: FlipbookDirection;
+  readonly view?: CameraView;
   /** Extra images of the same character: other angles, details the illustration hides. */
   readonly extras?: readonly Buffer[];
+  readonly identityReference?: Buffer;
   readonly flipbookId: string;
   readonly signal?: AbortSignal;
 }): Promise<GeneratedImage> {
   const extras = input.extras ?? [];
   return generateImage({
-    prompt: referencePrompt(input.analysis, input.direction, extras.length),
+    prompt: referencePrompt(input.analysis, input.direction, extras.length, input.view),
     references: [
       { png: input.sourceFlat, role: "the original character illustration (identity reference)." },
       ...extras.map((png) => ({ png, role: "an extra reference of the same character (design details only, never the pose)." })),
+      ...(input.identityReference ? [{ png: input.identityReference, role: "the immutable ORIGINAL identity portrait. Keep its face, eyes, ears, hair and style when visible in the selected camera view. Never rotate a rear view to reveal the face. Ignore its clothing: Image 1 defines the selected outfit." }] : []),
     ],
     size: REFERENCE_SIZE,
     flipbookId: input.flipbookId,
@@ -181,10 +185,13 @@ export async function restoreScene(input: { readonly sourceFlat: Buffer; readonl
 }
 
 /** A setting drawn for a character that came without one, in the character's style. */
-export async function drawBackdrop(input: { readonly sourceFlat: Buffer; readonly analysis: CharacterAnalysis | null; readonly prompt?: string; readonly flipbookId: string; readonly signal?: AbortSignal }): Promise<GeneratedImage> {
+export async function drawBackdrop(input: { readonly sourceFlat: Buffer; readonly analysis: CharacterAnalysis | null; readonly view?: CameraView; readonly prompt?: string; /** A picture of a place to draw one like. */ readonly place?: Buffer; readonly flipbookId: string; readonly signal?: AbortSignal }): Promise<GeneratedImage> {
   return generateImage({
-    prompt: backdropPrompt(input.analysis, input.prompt),
-    references: [{ png: input.sourceFlat, role: "the character, for its illustration style only." }],
+    prompt: backdropPrompt(input.analysis, input.prompt, input.view, Boolean(input.place)),
+    references: [
+      { png: input.sourceFlat, role: "the character, for its illustration style, line work and palette only." },
+      ...(input.place ? [{ png: input.place, role: "a reference for the place: its location, layout, light and mood." }] : []),
+    ],
     size: "1536x1024",
     flipbookId: input.flipbookId,
     signal: input.signal,
@@ -193,24 +200,25 @@ export async function drawBackdrop(input: { readonly sourceFlat: Buffer; readonl
 
 /** Share of the width the seam is searched in. */
 const LOOP_OVERLAP = 0.12;
-/** Pixels blended on each side of the cut, so it never reads as a hard line. */
-const SEAM_FEATHER = 3;
 
 /**
  * Makes a plate tile horizontally. The last strip is laid over the first
  * along the path where the two differ least (a minimum-error cut, as in image
  * quilting), then dropped, so the right edge leads straight into the left
- * one without the double exposure of a plain cross-fade. The model is asked
- * for a repeating scene; this guarantees the seam.
+ * one. Across the cut the two are blended band by band (a Laplacian pyramid,
+ * as for panorama seams): broad color and soft clouds fade over a wide band,
+ * fine detail switches sharply, so neither a hard line nor a double exposure
+ * shows. The model is asked for a repeating scene; this guarantees the seam.
  */
 export async function seamlessPlate(png: Buffer): Promise<Buffer> {
   const { data, info } = await sharp(png).removeAlpha().raw().toBuffer({ resolveWithObject: true });
   const { width, height, channels } = info;
-  const overlap = Math.max(4 * SEAM_FEATHER, Math.round(width * LOOP_OVERLAP));
+  const overlap = Math.max(16, Math.round(width * LOOP_OVERLAP));
   const outWidth = width - overlap;
-  // The cut stays clear of the strip's edges, so column 0 always comes from the tail and the wrap is continuous.
-  const low = SEAM_FEATHER + 1;
-  const high = overlap - SEAM_FEATHER - 2;
+  // The cut stays in the middle half, and the blend reaches less than a quarter of the overlap,
+  // so column 0 is the tail's own (the wrap continues from the last column) and the far edge the head's.
+  const low = Math.floor(overlap / 4);
+  const high = Math.ceil((overlap * 3) / 4);
   const span = high - low + 1;
   const cost = new Float64Array(height * span);
   for (let y = 0; y < height; y++) {
@@ -233,19 +241,114 @@ export async function seamlessPlate(png: Buffer): Promise<Buffer> {
     for (const i of [best - 1, best + 1]) if (i >= 0 && i < span && cost[(y - 1) * span + i] < cost[(y - 1) * span + next]) next = i;
     best = next;
   }
+
+  // The overlap from both ends, and which one wins where (1 = the head, right of the cut).
+  const tail = new Float32Array(overlap * height * channels);
+  const head = new Float32Array(overlap * height * channels);
+  const mask = new Float32Array(overlap * height);
+  for (let y = 0; y < height; y++) for (let x = 0; x < overlap; x++) {
+    mask[y * overlap + x] = x >= cut[y] ? 1 : 0;
+    for (let c = 0; c < channels; c++) {
+      head[(y * overlap + x) * channels + c] = data[(y * width + x) * channels + c];
+      tail[(y * overlap + x) * channels + c] = data[(y * width + outWidth + x) * channels + c];
+    }
+  }
+  const levels = Math.max(1, Math.min(5, Math.floor(Math.log2(overlap / 8))));
+  const blended = pyramidBlend(tail, head, mask, overlap, height, channels, levels);
+
   const out = Buffer.alloc(outWidth * height * channels);
+  const edge = Math.max(2, Math.floor(overlap / 8));
   for (let y = 0; y < height; y++) {
     data.copy(out, y * outWidth * channels, y * width * channels, (y * width + outWidth) * channels);
     for (let x = 0; x < overlap; x++) {
-      // Tail left of the cut, head right of it, a short blend across it.
-      const t = Math.min(1, Math.max(0, (x - cut[y] + SEAM_FEATHER) / (2 * SEAM_FEATHER)));
-      const head = (y * width + x) * channels;
-      const tail = (y * width + outWidth + x) * channels;
-      const target = (y * outWidth + x) * channels;
-      for (let c = 0; c < channels; c++) out[target + c] = Math.round(data[head + c] * t + data[tail + c] * (1 - t));
+      // Exactly the tail at the strip's start and exactly the head at the overlap's end, eased in.
+      const toTail = x < edge ? 1 - x / edge : 0;
+      const toHead = x >= overlap - edge ? (x - (overlap - edge) + 1) / edge : 0;
+      for (let c = 0; c < channels; c++) {
+        const at = (y * overlap + x) * channels + c;
+        let value = blended[at];
+        value = value * (1 - toTail) + tail[at] * toTail;
+        value = value * (1 - toHead) + head[at] * toHead;
+        out[(y * outWidth + x) * channels + c] = Math.max(0, Math.min(255, Math.round(value)));
+      }
     }
   }
   return sharp(out, { raw: { width: outWidth, height, channels } }).png().toBuffer();
+}
+
+type Plane = { data: Float32Array; width: number; height: number };
+
+/** Half size: each pixel the mean of the 2×2 block it covers. */
+function halve(plane: Plane, channels: number): Plane {
+  const width = Math.ceil(plane.width / 2), height = Math.ceil(plane.height / 2);
+  const data = new Float32Array(width * height * channels);
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    for (let c = 0; c < channels; c++) {
+      let sum = 0, count = 0;
+      for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) {
+        const sx = 2 * x + dx, sy = 2 * y + dy;
+        if (sx >= plane.width || sy >= plane.height) continue;
+        sum += plane.data[(sy * plane.width + sx) * channels + c];
+        count++;
+      }
+      data[(y * width + x) * channels + c] = sum / count;
+    }
+  }
+  return { data, width, height };
+}
+
+/** Back up to a given size, bilinear. */
+function expand(plane: Plane, width: number, height: number, channels: number): Float32Array {
+  const data = new Float32Array(width * height * channels);
+  for (let y = 0; y < height; y++) {
+    const fy = Math.min(plane.height - 1, Math.max(0, (y + 0.5) / 2 - 0.5));
+    const y0 = Math.floor(fy), y1 = Math.min(plane.height - 1, y0 + 1), wy = fy - y0;
+    for (let x = 0; x < width; x++) {
+      const fx = Math.min(plane.width - 1, Math.max(0, (x + 0.5) / 2 - 0.5));
+      const x0 = Math.floor(fx), x1 = Math.min(plane.width - 1, x0 + 1), wx = fx - x0;
+      for (let c = 0; c < channels; c++) {
+        const top = plane.data[(y0 * plane.width + x0) * channels + c] * (1 - wx) + plane.data[(y0 * plane.width + x1) * channels + c] * wx;
+        const bottom = plane.data[(y1 * plane.width + x0) * channels + c] * (1 - wx) + plane.data[(y1 * plane.width + x1) * channels + c] * wx;
+        data[(y * width + x) * channels + c] = top * (1 - wy) + bottom * wy;
+      }
+    }
+  }
+  return data;
+}
+
+/**
+ * Multi-band blend of `a` (where mask is 0) and `b` (where it is 1): each
+ * band of detail is mixed with the mask blurred to that band's scale. Pure.
+ */
+export function pyramidBlend(a: Float32Array, b: Float32Array, mask: Float32Array, width: number, height: number, channels: number, levels: number): Float32Array {
+  const gaussians = (plane: Plane, depth: number, planeChannels: number) => {
+    const list = [plane];
+    for (let i = 0; i < depth; i++) list.push(halve(list[i], planeChannels));
+    return list;
+  };
+  const ga = gaussians({ data: a, width, height }, levels, channels);
+  const gb = gaussians({ data: b, width, height }, levels, channels);
+  const gm = gaussians({ data: mask, width, height }, levels, 1);
+  // The coarsest level, blended; then every finer level's detail added back, blended at its own scale.
+  let result = new Float32Array(ga[levels].data.length);
+  for (let i = 0; i < result.length; i++) {
+    const m = gm[levels].data[Math.floor(i / channels)];
+    result[i] = ga[levels].data[i] * (1 - m) + gb[levels].data[i] * m;
+  }
+  for (let level = levels - 1; level >= 0; level--) {
+    const { width: w, height: h } = ga[level];
+    const up = expand({ data: result, width: ga[level + 1].width, height: ga[level + 1].height }, w, h, channels);
+    const upA = expand(ga[level + 1], w, h, channels);
+    const upB = expand(gb[level + 1], w, h, channels);
+    const next = new Float32Array(w * h * channels);
+    for (let i = 0; i < next.length; i++) {
+      const m = gm[level].data[Math.floor(i / channels)];
+      const detail = (ga[level].data[i] - upA[i]) * (1 - m) + (gb[level].data[i] - upB[i]) * m;
+      next[i] = up[i] + detail;
+    }
+    result = next;
+  }
+  return result;
 }
 
 // ── Depth ──────────────────────────────────────────────────────────────────
@@ -349,4 +452,25 @@ export function growMask(mask: Uint8Array, width: number, height: number, radius
     }
   }
   return out;
+}
+
+/**
+ * The characters of a scene lined up side by side on white: one image that
+ * shows the whole cast. It is the scene's reference and its poster; the
+ * drawings themselves are made from each character's own image.
+ */
+export async function castSheet(images: readonly Buffer[]): Promise<{ png: Buffer; width: number; height: number }> {
+  const HEIGHT = 768;
+  const GAP = 32;
+  const tiles = await Promise.all(images.map((png) => sharp(png).flatten({ background: "#ffffff" }).resize({ height: HEIGHT, fit: "inside" }).png().toBuffer({ resolveWithObject: true })));
+  const width = tiles.reduce((sum, tile) => sum + tile.info.width, GAP * (tiles.length + 1));
+  const height = HEIGHT + GAP * 2;
+  let left = GAP;
+  const composite = tiles.map((tile) => {
+    const placed = { input: tile.data, left, top: GAP + Math.round((HEIGHT - tile.info.height) / 2) };
+    left += tile.info.width + GAP;
+    return placed;
+  });
+  const png = await sharp({ create: { width, height, channels: 3, background: "#ffffff" } }).composite(composite).png().toBuffer();
+  return { png, width, height };
 }

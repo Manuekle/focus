@@ -11,10 +11,12 @@ import {
   backgroundZoomAt,
   cellLeftAt,
   cellTopAt,
+  drawingAtFrame,
+  exposureSheet,
+  frameAtTick,
   outputFrameCount,
+  stageClock,
   stageSize,
-  tickAtOutputFrame,
-  tickCount,
   type AnimationAction,
   type Cell,
   type ExportRequest,
@@ -27,15 +29,17 @@ import { verifyOutput } from "../video/compositor";
 import { runFfmpeg, writeFrames } from "../video/frames";
 import { listZip, writeZip } from "./zip";
 
-// Exports reproduce the approved sequence exactly: the same drawings, in the
-// same order, held for the same number of frames, at the same place on the
-// stage as the browser player (both use shared/flipbook.ts). Every file is
-// verified after it is written; nothing is offered before that.
+// The approved drawings, held by the exposure sheet (anime timing) on a
+// 24 fps clock: the character changes in steps, never blended or morphed,
+// while a moving background pans on every frame. The player does the same
+// with the same functions. Every file is verified before the player or
+// download can use it.
 
-export type ExportFrame = { readonly frameId: string; readonly label: string; readonly phase: string; readonly spritePath: string };
+/** One drawing of the cycle, in playback order: a key pose, or an in-between after the key before it. */
+export type ExportFrame = { readonly frameId: string; readonly label: string; readonly phase: string; readonly spritePath: string; readonly inbetween?: boolean };
 
 export type ExportFile = { readonly name: string; readonly path: string; readonly type: string; readonly bytes: number };
-export type ExportResult = { readonly files: ExportFile[]; readonly facts: { width: number; height: number; frames: number; durationSeconds: number | null } };
+export type ExportResult = { readonly files: ExportFile[]; readonly facts: { width: number; height: number; frames: number; durationSeconds: number | null; fps?: number } };
 
 const GIF_LONG_SIDE = 640;
 
@@ -110,12 +114,13 @@ function scrolled(strip: Rgba, stageWidth: number, shift: number): Buffer {
   return out;
 }
 
-async function backdropAt(backdrop: Backdrop, stage: { width: number; height: number }, tick: number, settings: PlaybackSettings, cell: Cell, count: number, facing: FlipbookDirection): Promise<Buffer> {
+/** The background at a stage clock (stageClock): it moves on every output frame. */
+async function backdropAt(backdrop: Backdrop, stage: { width: number; height: number }, clock: number, settings: PlaybackSettings, cell: Cell, count: number, facing: FlipbookDirection): Promise<Buffer> {
   if (backdrop.kind === "still") return Buffer.from(backdrop.layer);
   if (backdrop.kind === "zoom") {
     // The picture is the cover fit at the deepest zoom: at zoom z the stage shows 1/z of it, centered.
     const { picture } = backdrop;
-    const zoom = backgroundZoomAt(tick, settings);
+    const zoom = backgroundZoomAt(clock, settings);
     const cropWidth = Math.min(picture.width, Math.max(1, Math.round(picture.width / zoom)));
     const cropHeight = Math.min(picture.height, Math.max(1, Math.round(picture.height / zoom)));
     const left = Math.round((picture.width - cropWidth) / 2);
@@ -126,7 +131,7 @@ async function backdropAt(backdrop: Backdrop, stage: { width: number; height: nu
       .raw()
       .toBuffer();
   }
-  const shift = backgroundShiftAt(tick, settings, cell, count, facing);
+  const shift = backgroundShiftAt(clock, settings, cell, count, facing);
   if (backdrop.kind === "scroll") return scrolled(backdrop.strip, stage.width, shift);
   const frame = scrolled(backdrop.far, stage.width, Math.round(shift * PARALLAX_FAR));
   blend(frame, stage.width, { data: scrolled(backdrop.near, stage.width, shift), width: stage.width, height: stage.height }, 0);
@@ -177,14 +182,28 @@ export async function renderExport(input: {
   readonly action?: AnimationAction;
   readonly signal?: AbortSignal;
 }): Promise<ExportResult> {
-  const { request, frames, alignment, outputDir, signal } = input;
+  const { request, alignment, outputDir, signal } = input;
   const facing = input.facing ?? "right";
   const { settings } = request;
   const cell = cellOf(alignment);
-  const count = frames.length;
+  // Keys hold by the exposure sheet; an in-between takes a frame from the key before it.
+  const { drawings: frames, holds } = exposureSheet(input.frames, settings.drawingFps);
+  // Strides and pans are measured per cycle of keys, whatever plays between them.
+  const count = frames.filter((frame) => !frame.inbetween).length;
   if (!count) throw new AppError("export_not_ready", 409, "There are no frames to export yet.");
   await mkdir(outputDir, { recursive: true });
   const sprites = await Promise.all(frames.map((frame) => loadSprite(frame.spritePath, cell)));
+  const cycleFrames = holds.reduce((sum, hold) => sum + hold, 0);
+  const moving = backgroundMoves(request.background);
+
+  // One output frame: the background at the camera clock, then the drawing
+  // the exposure sheet puts on screen, at the root position of its first frame.
+  const composeAt = async (background: Backdrop, stage: { width: number; height: number }, outputFrame: number, cameraFrame = outputFrame): Promise<Buffer> => {
+    const { tick, index } = drawingAtFrame(outputFrame, holds);
+    const frame = await backdropAt(background, stage, stageClock(cameraFrame, settings.drawingFps), settings, cell, count, facing);
+    blend(frame, stage.width, sprites[index], cellLeftAt(stageClock(frameAtTick(tick, holds), settings.drawingFps), settings, cell, count), cellTopAt(settings, cell));
+    return frame;
+  };
 
   if (request.format === "mp4") {
     if (request.background.kind === "transparent") throw new AppError("mp4_needs_background", 400, "MP4 can’t be transparent. Choose a color, the scene or your own background.");
@@ -194,15 +213,15 @@ export async function renderExport(input: {
     const file = path.join(outputDir, `${input.baseName}.mp4`);
     const writer = writeFrames({ output: file, width: stage.width, height: stage.height, fps: OUTPUT_FPS, frameCount: total, signal });
     try {
-      let lastTick = -1;
+      let lastKey = -1;
       let frame: Buffer = Buffer.alloc(0);
       for (let index = 0; index < total; index++) {
         if (signal?.aborted) throw new AppError("canceled", 499, "Export canceled.");
-        const tick = tickAtOutputFrame(index, settings.drawingFps);
-        if (tick !== lastTick) {
-          frame = await backdropAt(background, stage, tick, settings, cell, count, facing);
-          blend(frame, stage.width, sprites[tick % count], cellLeftAt(tick, settings, cell, count), cellTopAt(settings, cell));
-          lastTick = tick;
+        // A still stage only changes with the drawing; a moving one changes every frame.
+        const key = moving ? index : drawingAtFrame(index, holds).tick;
+        if (key !== lastKey) {
+          frame = await composeAt(background, stage, index);
+          lastKey = key;
         }
         await writer.write(frame);
       }
@@ -222,14 +241,24 @@ export async function renderExport(input: {
     const stage = stageSize(settings, cell);
     const background = await loadBackground(request, stage, { plate: input.plate, far: input.far ?? null });
     // In place is one cycle looping forever; moving across (or a moving background) needs the whole length.
-    const ticks = settings.motion === "in_place" && !backgroundMoves(request.background) ? count : tickCount(settings.durationSeconds, settings.drawingFps);
+    const total = settings.motion === "in_place" && !moving ? cycleFrames : outputFrameCount(settings.durationSeconds);
     const sourceDir = path.join(outputDir, "gif-source");
     await mkdir(sourceDir, { recursive: true });
-    for (let tick = 0; tick < ticks; tick++) {
+    // Every output frame at 24 fps, so the GIF keeps the exposure sheet
+    // exactly; a held drawing repeats and costs almost nothing. A moving
+    // background pans on twos here, which halves the distinct pictures.
+    let lastKey = "";
+    let png: Buffer = Buffer.alloc(0);
+    for (let index = 0; index < total; index++) {
       if (signal?.aborted) throw new AppError("canceled", 499, "Export canceled.");
-      const frame = await backdropAt(background, stage, tick, settings, cell, count, facing);
-      blend(frame, stage.width, sprites[tick % count], cellLeftAt(tick, settings, cell, count), cellTopAt(settings, cell));
-      await writeFile(path.join(sourceDir, `frame_${String(tick).padStart(4, "0")}.png`), await sharp(frame, { raw: { width: stage.width, height: stage.height, channels: 4 } }).png().toBuffer());
+      const camera = moving ? index - (index % 2) : 0;
+      const key = `${drawingAtFrame(index, holds).tick}:${camera}`;
+      if (key !== lastKey) {
+        const frame = await composeAt(background, stage, index, camera);
+        png = await sharp(frame, { raw: { width: stage.width, height: stage.height, channels: 4 } }).png().toBuffer();
+        lastKey = key;
+      }
+      await writeFile(path.join(sourceDir, `frame_${String(index).padStart(4, "0")}.png`), png);
     }
     const scale = Math.min(1, GIF_LONG_SIDE / Math.max(stage.width, stage.height));
     const width = Math.max(2, Math.round(stage.width * scale));
@@ -238,18 +267,19 @@ export async function renderExport(input: {
     const file = path.join(outputDir, `${input.baseName}.gif`);
     // Every number in the graph is computed here; nothing user-typed reaches it.
     const graph = `scale=${width}:${height}:flags=lanczos,split[a][b];[a]palettegen=max_colors=255:reserve_transparent=${transparent ? 1 : 0}:stats_mode=full[p];[b][p]paletteuse=dither=sierra2_4a${transparent ? ":alpha_threshold=128" : ""}`;
-    await runFfmpeg(["-framerate", String(settings.drawingFps), "-i", path.join(sourceDir, "frame_%04d.png"), "-filter_complex", graph, "-loop", "0", file], signal);
+    await runFfmpeg(["-framerate", String(OUTPUT_FPS), "-i", path.join(sourceDir, "frame_%04d.png"), "-filter_complex", graph, "-loop", "0", file], signal);
     const facts = parseGif(await readFile(file));
-    const expectedCs = (ticks * 100) / settings.drawingFps;
+    const expectedCs = (total * 100) / OUTPUT_FPS;
     const problems: string[] = [];
     if (facts.width !== width || facts.height !== height) problems.push(`size ${facts.width}×${facts.height}`);
-    if (facts.frames !== ticks) problems.push(`${facts.frames} frames, expected ${ticks}`);
+    if (facts.frames !== total) problems.push(`${facts.frames} frames, expected ${total}`);
     if (!facts.loopsForever) problems.push("no infinite loop");
-    if (Math.abs(facts.totalDelayCs - expectedCs) > ticks) problems.push(`duration ${facts.totalDelayCs} cs, expected ${expectedCs}`);
+    // Delays are whole centiseconds; FFmpeg spreads the rounding, so the total stays within a couple.
+    if (Math.abs(facts.totalDelayCs - expectedCs) > 2) problems.push(`duration ${facts.totalDelayCs} cs, expected ${expectedCs}`);
     if (problems.length) throw new AppError("export_invalid", 500, "The GIF didn’t pass verification.", problems.join(", "));
     return {
       files: [{ name: `${input.baseName}.gif`, path: file, type: "image/gif", bytes: await sizeOf(file) }],
-      facts: { width, height, frames: ticks, durationSeconds: facts.totalDelayCs / 100 },
+      facts: { width, height, frames: total, durationSeconds: facts.totalDelayCs / 100 },
     };
   }
 
@@ -262,6 +292,8 @@ export async function renderExport(input: {
     return (flatten ? image.flatten({ background: flatten }) : image.ensureAlpha()).png().toBuffer();
   }));
   const frameMs = Math.round(1000 / settings.drawingFps);
+  // Per-drawing durations from the exposure sheet: engines that read atlas durations keep the anime timing.
+  const durationsMs = holds.map((hold) => Math.round((hold * 1000) / OUTPUT_FPS));
   const names = frames.map((_frame, index) => `frame_${String(index).padStart(3, "0")}`);
   const meta = {
     app: "Focus Flipbook",
@@ -269,15 +301,16 @@ export async function renderExport(input: {
     loop: true,
     frameRate: settings.drawingFps,
     frameDurationMs: frameMs,
+    frameDurationsMs: durationsMs,
     cell: { w: cell.width, h: cell.height },
     baselineY: alignment.baselineY,
     strideX: alignment.strideX,
-    order: frames.map((frame, index) => ({ name: `${names[index]}.png`, phase: frame.phase, pose: frame.label })),
+    order: frames.map((frame, index) => ({ name: `${names[index]}.png`, phase: frame.phase, pose: frame.label, ...(frame.inbetween ? { inbetween: true } : {}) })),
   };
 
   if (request.format === "spritesheet") {
-    const columns = Math.min(4, count);
-    const rows = Math.ceil(count / columns);
+    const columns = Math.min(4, frames.length);
+    const rows = Math.ceil(frames.length / columns);
     const width = columns * cell.width;
     const height = rows * cell.height;
     const sheetName = `${input.baseName}-spritesheet.png`;
@@ -292,7 +325,7 @@ export async function renderExport(input: {
         trimmed: false,
         spriteSourceSize: { x: 0, y: 0, w: cell.width, h: cell.height },
         sourceSize: { w: cell.width, h: cell.height },
-        duration: frameMs,
+        duration: durationsMs[index],
         phase: frames[index].phase,
       }])),
       animations: { [input.action ?? "walk"]: names.map((name) => `${name}.png`) },
@@ -311,7 +344,7 @@ export async function renderExport(input: {
         { name: sheetName, path: sheetFile, type: "image/png", bytes: await sizeOf(sheetFile) },
         { name: atlasName, path: atlasFile, type: "application/json", bytes: await sizeOf(atlasFile) },
       ],
-      facts: { width, height, frames: count, durationSeconds: count / settings.drawingFps },
+      facts: { width, height, frames: frames.length, durationSeconds: cycleFrames / OUTPUT_FPS },
     };
   }
 
@@ -328,7 +361,7 @@ export async function renderExport(input: {
   }
   return {
     files: [{ name: zipName, path: zipFile, type: "application/zip", bytes: await sizeOf(zipFile) }],
-    facts: { width: cell.width, height: cell.height, frames: count, durationSeconds: count / settings.drawingFps },
+    facts: { width: cell.width, height: cell.height, frames: frames.length, durationSeconds: cycleFrames / OUTPUT_FPS },
   };
 }
 

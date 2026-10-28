@@ -1,4 +1,4 @@
-import { ANIMATION_ACTIONS, CharacterAnalysisSchema, actionSpec, type AnimationAction, type CharacterAnalysis } from "../../shared/flipbook";
+import { ANIMATION_ACTIONS, CharacterAnalysisSchema, actionSpec, type CycleAction, type CharacterAnalysis } from "../../shared/flipbook";
 import { ConceptSchema } from "../../shared/schemas";
 import { AppError } from "../errors";
 import { metaClient, metaError, plannerLimiter, requireMetaConfig, withRetry } from "../ai/meta";
@@ -21,7 +21,7 @@ export const ANALYSIS_JSON_SCHEMA = {
     characterCount: { type: "integer" },
     subject: { type: "string" },
     facing: { type: "string", enum: ["left", "right", "front", "back", "unclear"] },
-    view: { type: "string", enum: ["side", "three_quarter", "front", "back", "unclear"] },
+    view: { type: "string", enum: CharacterAnalysisSchema.shape.view.options },
     fullBodyVisible: { type: "boolean" },
     feetVisible: { type: "boolean" },
     background: { type: "string", enum: ["plain", "simple", "detailed"] },
@@ -42,7 +42,7 @@ Fields:
 - characterCount: how many distinct characters are drawn.
 - subject: ONE short English noun phrase naming the main character for an image segmentation model (1–4 words, e.g. "girl", "cartoon fox", "robot", "boy in red hoodie"). No sentence, no punctuation.
 - facing: which way the character faces from the viewer's point of view ("right" = looking toward the right edge of the image).
-- view: side (profile), three_quarter, front, back, or unclear.
+- view: side (profile), three_quarter, front, back, high (camera above the character), low (camera below the character), or unclear. Describe the source image's actual camera, independently of the camera the user requests for the animation.
 - fullBodyVisible: true only when the whole body from the top of the head to both feet is inside the image.
 - feetVisible: true only when both feet are visible.
 - background: plain (flat color or transparent), simple (soft gradient or a few shapes), detailed (a scene).
@@ -150,7 +150,7 @@ export async function analyzeCharacter(input: { readonly imagePng: Buffer; reado
  */
 export function assessInput(analysis: CharacterAnalysis): { supported: boolean; reason: string | null; warnings: string[] } {
   if (analysis.characterCount === 0) return { supported: false, reason: "We couldn’t find a character in this image. Upload an illustration of one character.", warnings: [] };
-  if (![...ANIMATION_ACTIONS, "none"].includes(analysis.requestedAction as AnimationAction)) {
+  if (![...ANIMATION_ACTIONS, "none"].includes(analysis.requestedAction as CycleAction)) {
     return { supported: false, reason: "Flipbook animates walks, runs, jumps, waves, idle loops and fighting combos for now. Ask your character for one of those.", warnings: [] };
   }
   const warnings: string[] = [];
@@ -160,7 +160,6 @@ export function assessInput(analysis: CharacterAnalysis): { supported: boolean; 
       : `This image shows ${analysis.characterCount} characters. Only “${analysis.subject}” will be animated.`);
   }
   if (!analysis.fullBodyVisible || !analysis.feetVisible) warnings.push("The full body isn’t visible. Unseen parts (like legs or feet) will be invented, so they may not match your design.");
-  if (analysis.view !== "side") warnings.push("The character isn’t in side view. A clean side-view reference will be drawn first; check that it still looks like your character.");
   if (analysis.background === "detailed") warnings.push("The background is detailed. The character will be cut out; edges may need checking.");
   if (analysis.notes) warnings.push(analysis.notes);
   return { supported: true, reason: null, warnings: warnings.map((warning) => warning.slice(0, 240)).slice(0, 6) };
@@ -215,7 +214,7 @@ export type ImageReading = {
   readonly analysis: CharacterAnalysis;
   readonly summary: string;
   readonly setting: string | null;
-  readonly ideas: readonly { action: AnimationAction; direction: "left" | "right" | "in_place"; detail: string }[];
+  readonly ideas: readonly { action: CycleAction; direction: "left" | "right" | "in_place"; detail: string }[];
 };
 
 /** Pure: raw model text into the character facts (no action asked yet) and the suggestions. */
@@ -232,9 +231,9 @@ export function parseLookOutput(text: string): ImageReading {
     .filter((idea): idea is { action: string; direction: string; detail: unknown } => Boolean(idea) && typeof idea === "object")
     .filter((idea) => (ANIMATION_ACTIONS as readonly string[]).includes(idea.action) && ["left", "right", "in_place"].includes(idea.direction))
     .map((idea) => ({
-      action: idea.action as AnimationAction,
+      action: idea.action as CycleAction,
       // Only walks and runs travel; the others face a side.
-      direction: (!actionSpec(idea.action as AnimationAction).travels && idea.direction === "in_place" ? (analysis.facing === "left" ? "left" : "right") : idea.direction) as "left" | "right" | "in_place",
+      direction: (!actionSpec(idea.action as CycleAction).travels && idea.direction === "in_place" ? (analysis.facing === "left" ? "left" : "right") : idea.direction) as "left" | "right" | "in_place",
       detail: typeof idea.detail === "string" ? idea.detail.trim().replace(/[.\s]+$/, "").slice(0, 80) : "",
     }))
     .slice(0, 3);

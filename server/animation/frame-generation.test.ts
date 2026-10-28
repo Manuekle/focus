@@ -17,6 +17,14 @@ const mannequin = Buffer.from("pose");
 beforeEach(() => vi.mocked(generateImage).mockClear());
 
 describe("pose reference roles", () => {
+  it("keeps the original identity portrait beside the selected outfit when animating a saved character", async () => {
+    const original = Buffer.from("elf-chan original");
+    await drawPose({ reference: anchor, identityReference: original, neighbor: null, analysis, plan, index: 0, flipbookId: "test" });
+    const request = vi.mocked(generateImage).mock.lastCall![0];
+    expect(request.references[0].png).toBe(anchor);
+    expect(request.references[1].png).toBe(original);
+    expect(request.references[1].role).toContain("Ignore its clothing and pose");
+  });
   it("keeps the character first and mannequin last for generation and repair", async () => {
     for (const repair of [null, { png: Buffer.from("repair"), problems: ["fix the hand"] }]) {
       await drawPose({ reference: anchor, neighbor: Buffer.from("neighbor"), extras: [Buffer.from("extra")], repair, poseReference: mannequin, analysis, plan, index: 3, flipbookId: "test" });

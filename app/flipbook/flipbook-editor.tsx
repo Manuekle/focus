@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import Link from "next/link";
 import { AiPaintbrushIcon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Alert } from "../../components/ui/alert";
@@ -11,23 +12,27 @@ import { Spinner } from "../../components/ui/spinner";
 import { useToast } from "../../components/toast-provider";
 import {
   MAX_EXTRA_REFERENCES,
-  WALK_FRAME_COUNT,
   actionSpec,
   backgroundMotion,
   type BackgroundMedia,
   flipbookUrls,
   orderedFrames,
+  playbackCycle,
   type ExportFormat,
   type Flipbook,
   type FlipbookBackground,
   type FrameAction,
+  type FrameId,
   type PlaybackSettings,
 } from "../../shared/flipbook";
+import { applyPlaybackPatch, type PlaybackPatch } from "../../shared/flipbook-chat";
 import { BackgroundPanel } from "./background-panel";
+import { ChatPanel } from "./chat-panel";
 import { ExportPanel, backgroundAllowed } from "./export-panel";
 import { FlipbookApiError, flipbookApi, isActive, messageFor } from "./flipbook-client";
 import { FramePanel } from "./frame-panel";
 import { FrameStrip, frameThumb } from "./frame-strip";
+import { InbetweenPanel } from "./inbetween-panel";
 import { ProgressSteps, ReferencePanel } from "./reference-panel";
 import { SequencePlayer, type PlayerBackground } from "./sequence-player";
 import styles from "./flipbook.module.css";
@@ -78,20 +83,25 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
 
   const active = isActive(flipbook);
   const spec = actionSpec(flipbook.plan?.action);
+  // Several characters drawn together: a fixed-length scene, not a cycle of eight.
+  const scene = flipbook.cast.length > 0;
+  const total = flipbook.frames.length;
   const locked = busy || active;
 
   /** Runs one request; a budget refusal turns into an explicit confirmation. */
-  const run = useCallback(async (request: (confirmExtra: boolean) => Promise<Flipbook>, confirmExtra = false) => {
+  const run = useCallback(async (request: (confirmExtra: boolean) => Promise<Flipbook>, confirmExtra = false): Promise<boolean> => {
     setBusy(true);
     try {
       onChange(await request(confirmExtra));
       setConfirm(null);
+      return true;
     } catch (error) {
       if (error instanceof FlipbookApiError && error.code === "budget_reached" && !confirmExtra) {
         setConfirm({ message: error.message, run: () => request(true) });
       } else {
         toast({ title: "That didn’t work", description: error instanceof Error ? error.message : "Try again.", status: "error" });
       }
+      return false;
     } finally {
       setBusy(false);
     }
@@ -109,9 +119,17 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   const cellHeight = alignment?.cellHeight ?? 768;
   const strideX = alignment?.strideX ?? 0;
   const cell = useMemo(() => ({ width: cellWidth, height: cellHeight, strideX }), [cellWidth, cellHeight, strideX]);
-  const frameKey = frames.map((entry) => `${entry.id}:${frameThumb(flipbook, entry) ?? ""}:${entry.label}`).join("|");
+  // The played cycle: the key drawings, with their current in-betweens unless they're switched off.
+  const cycle = playbackCycle(flipbook, settings.inbetweens !== false);
+  const inbetweenCount = playbackCycle(flipbook, true).filter((drawing) => drawing.inbetween).length;
+  const drawingSrc = (drawing: (typeof cycle)[number]) => {
+    if (!drawing.inbetween) return frameThumb(flipbook, frames.find((entry) => entry.id === drawing.id)!);
+    const transform = flipbook.alignment?.transforms[drawing.id];
+    return transform ? flipbookUrls.sprite(flipbook.id, drawing.id, transform.key) : null;
+  };
+  const frameKey = cycle.map((drawing) => `${drawing.id}:${drawingSrc(drawing) ?? ""}:${drawing.label}`).join("|");
   const playerFrames = useMemo(
-    () => frames.map((entry) => ({ id: entry.id, label: entry.label, src: frameThumb(flipbook, entry) })),
+    () => cycle.map((drawing) => ({ id: drawing.id, label: drawing.label, phase: drawing.phase, inbetween: drawing.inbetween, src: drawingSrc(drawing) })),
     // frameKey captures every value the list depends on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [frameKey],
@@ -150,7 +168,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
 
   const notReady = frames.filter((entry) => !frameThumb(flipbook, entry));
   const exportable = notReady.length
-    ? { ok: false as const, reason: `Finish every frame first. Not ready: ${notReady.map((entry) => entry.label).join(", ")}.` }
+    ? { ok: false as const, reason: `Finish every frame first. Not ready: ${notReady.slice(0, 6).map((entry) => entry.label).join(", ")}${notReady.length > 6 ? ` and ${notReady.length - 6} more` : ""}.` }
     : active ? { ok: false as const, reason: "Wait for the current step to finish." } : { ok: true as const };
 
   const move = (from: number, to: number) => {
@@ -161,6 +179,8 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
     setSelected(to);
     setSeekNonce((value) => value + 1);
   };
+
+  const applyPlayback = (patch: PlaybackPatch) => setSettings((current) => applyPlaybackPatch(current, patch));
 
   const onFrameAction = (action: FrameAction) => {
     if (!frame) return;
@@ -216,8 +236,8 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
     setGeneratingBackground(true);
     void run(async (confirmExtra) => {
       const next = await flipbookApi.action(flipbook.id, { action: "background", prompt: prompt || undefined, confirmExtra });
-      // Moving suits a cycle in place; still suits one that already travels.
-      setBackground({ kind: "generated", motion: background.kind === "generated" ? background.motion : settings.motion === "in_place" ? "scroll" : "static" });
+      // Sliding suits a walk or run in place, a slow zoom a pose that never travels (a wave), still one that already travels.
+      setBackground({ kind: "generated", motion: background.kind === "generated" ? background.motion : !spec.travels ? "zoom" : settings.motion === "in_place" ? (next.backgrounds.depth.generated ? "parallax" : "scroll") : "static" });
       return next;
     }).finally(() => setGeneratingBackground(false));
   };
@@ -253,6 +273,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
         <div className="min-w-0">
           <p className={styles.sectionLabel}>Flipbook · {spec.label}</p>
           <h1 className={styles.editorTitle} title={flipbook.prompt}>“{flipbook.prompt}”</h1>
+          {scene ? <p className="mt-2 text-xs text-muted-foreground">{flipbook.cast.map((member, position) => <span key={`${member.characterId}:${member.versionId}`}>{position ? " · " : ""}<Link href={`/characters?c=${member.characterId}`} className="text-primary hover:underline">{member.name}</Link></span>)}<span className="ml-2">{flipbook.plan?.durationSeconds ?? "—"} s · {total} drawings</span></p> : flipbook.characterSource ? <p className="mt-2 text-xs text-muted-foreground"><Link href={`/characters?c=${flipbook.characterSource.characterId}`} className="text-primary hover:underline">{flipbook.characterSource.name}</Link> · {flipbook.characterSource.versionName}<span className="ml-2">Saved character version</span></p> : null}
         </div>
         <div className={styles.headActions}>
           <span className={styles.pill} title="Muse Image drawings used by this animation">Drawings {flipbook.budget.used}/{flipbook.budget.limit}</span>
@@ -313,9 +334,9 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
           />
           {flipbook.plan && flipbook.reference && missing > 0 && !active ? (
             <div className={styles.cta}>
-              <p className="text-xs text-muted-foreground">{missing === WALK_FRAME_COUNT ? "The reference is ready. Next: eight drawings, one per pose." : `${missing} of ${WALK_FRAME_COUNT} frames have no drawing.`}</p>
+              <p className="text-xs text-muted-foreground">{missing === total ? `The reference is ready. Next: ${total} drawings, one per ${scene ? "beat" : "pose"}.` : `${missing} of ${total} frames have no drawing.`}</p>
               <Button className="w-full" variant="ai" disabled={locked} onClick={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "generate", confirmExtra }))}>
-                {missing === WALK_FRAME_COUNT ? `Generate ${WALK_FRAME_COUNT} frames` : `Draw ${missing} missing ${missing === 1 ? "frame" : "frames"}`}
+                {missing === total ? `Generate ${total} frames` : `Draw ${missing} missing ${missing === 1 ? "frame" : "frames"}`}
               </Button>
             </div>
           ) : null}
@@ -329,6 +350,8 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             creatingScene={creatingScene}
             onCreateScene={createScene}
             stamp={backgroundStamp}
+            onUploadReference={(file) => void run(() => flipbookApi.uploadBackgroundReference(flipbook.id, file))}
+            onRemoveReference={() => void run(() => flipbookApi.removeBackgroundReference(flipbook.id))}
             onUploadBackground={(file) => void run(async () => {
               const next = await flipbookApi.uploadBackground(flipbook.id, file);
               setBackground({ kind: "custom" });
@@ -351,8 +374,17 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             travel={spec.travels ? { verb: spec.action === "run" ? "Run" : "Walk" } : null}
             facing={flipbook.plan?.direction ?? "right"}
             onSelect={setSelected}
-            strip={<FrameStrip flipbook={flipbook} frames={frames} selected={selected} onSelect={select} onMove={move} disabled={locked} />}
+            inbetweenCount={inbetweenCount}
+            fixedPace={scene}
+            strip={<FrameStrip flipbook={flipbook} frames={frames} selected={selected} onSelect={select} onMove={move} disabled={locked} scene={scene} />}
           />
+          {scene ? null : <ChatPanel
+            flipbook={flipbook}
+            settings={settings}
+            busy={locked}
+            onPlayback={applyPlayback}
+            onApplyPoses={(changes, confirmExtra) => run((extra) => flipbookApi.applyChat(flipbook.id, { changes: changes.map((change) => ({ frame: change.frame as FrameId, description: change.description })), confirmExtra: extra }), confirmExtra)}
+          />}
         </div>
 
         <div className={styles.columnSide}>
@@ -367,8 +399,16 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
               onAction={onFrameAction}
               onReplace={(file) => void run(() => flipbookApi.replaceFrame(flipbook.id, frame.id, file))}
               onMove={(delta) => move(selected, selected + delta)}
+              canMove={!scene}
             />
           ) : null}
+          {scene ? null : <InbetweenPanel
+            flipbook={flipbook}
+            drawingFps={settings.drawingFps}
+            keysReady={notReady.length === 0}
+            disabled={locked}
+            onDraw={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "inbetweens", confirmExtra }))}
+          />}
           <ExportPanel
             flipbook={flipbook}
             settings={settings}

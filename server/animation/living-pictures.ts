@@ -1,7 +1,7 @@
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { Readable } from "node:stream";
 import sharp from "sharp";
 import {
@@ -17,6 +17,7 @@ import {
   type LivingInventory,
   type LivingKind,
   type LivingLayer,
+  type LivingPartRequest,
   type LivingRender,
   type LivingRequest,
   type LivingTrack,
@@ -36,8 +37,9 @@ import { parseGif } from "./export";
 import { readUploadedImage } from "./flipbooks";
 import { extractSubject, segmentation } from "./frame-alignment";
 import { getCharacterImage, imageFiles } from "./image-input";
-import { LIVING_FPS, livingFrame, prepareLiving, type LivingScene } from "./living";
-import { growMask, subjectMask } from "./reference-manager";
+import { generateImage } from "./muse-image";
+import { LIVING_FPS, blurField, bodyTime, cameraView, depthFrame, depthViews, focusOf, framedSize, inpaint, livingLayers, pickPart, prepareLiving, viewFrame, type LivingScene } from "./living";
+import { drawScenePlate, growMask, keepAroundSubject, subjectMask } from "./reference-manager";
 import { readJsonFile, writeAtomic } from "./store";
 
 // "Animate as is", the service around the engine in living.ts. Finding what
@@ -140,8 +142,22 @@ export async function nameLayers(input: { readonly imagePng: Buffer; readonly im
   }
 }
 
-/** Replaceable in tests: no Muse Spark call ever runs. */
-export const livingServices = { name: nameLayers };
+/** Replaceable in tests: no Muse Spark or Muse Image call ever runs. */
+/** The same picture with the eyes shut: one Muse Image edit, at the picture's own aspect. */
+export async function drawClosedEyes(input: { readonly sourceFlat: Buffer; readonly flipbookId: string; readonly signal?: AbortSignal }) {
+  return generateImage({
+    prompt: [
+      "Redraw Image 1 with the character's eyes closed, as in the middle of a natural blink: both eyelids fully shut, lashes drawn in the illustration's own style.",
+      "Change nothing else: same face, expression, mouth, hair, colors, line art, lighting, framing and background, everything else identical.",
+    ].join("\n"),
+    references: [{ png: input.sourceFlat, role: "the illustration to edit." }],
+    action: "edit",
+    flipbookId: input.flipbookId,
+    signal: input.signal,
+  });
+}
+
+export const livingServices = { name: nameLayers, scene: drawScenePlate, closedEyes: drawClosedEyes };
 
 // ── Files ──────────────────────────────────────────────────────────────────
 
@@ -157,6 +173,11 @@ export function livingFiles(imageId: string) {
     /** The uploaded track, normalized; one per upload, replaced by the next. */
     track: path.join(dir, "track.json"),
     trackAudio: (version: string) => path.join(dir, "audio", `${version}.m4a`),
+    /** The picture with the character taken out, for the "depth" camera. */
+    scene: path.join(dir, "scene.png"),
+    /** The picture with the eyes shut where `blinkMask` says, for blinking. */
+    blink: path.join(dir, "blink.png"),
+    blinkMask: path.join(dir, "blink-mask.png"),
   };
 }
 
@@ -217,7 +238,7 @@ export async function findLayers(imageId: string, gate?: PaidWorkGate): Promise<
     for (const value of union) if (value >= 128) covered++;
     await writeMask(files.mask(id), union, width, height);
     if (kind === "floating") await Promise.all(masks.map((mask, piece) => writeMask(files.mask(id, piece), mask, width, height)));
-    layers.push({ id, name, kind, pieces: masks.length, share: covered / total });
+    layers.push({ id, name, kind, pieces: masks.length, share: covered / total, custom: false });
   };
 
   // The character: the same cut-out the flipbook uses, with its fallbacks.
@@ -270,15 +291,170 @@ export async function findLayers(imageId: string, gate?: PaidWorkGate): Promise<
     }
   }
 
-  const inventory: LivingInventory = { imageId: image.id, wind: reading.wind, layers, stills: stills.slice(0, 12), createdAt: new Date().toISOString() };
+  const inventory: LivingInventory = { imageId: image.id, wind: reading.wind, layers, stills: stills.slice(0, 12), scene: false, blink: false, createdAt: new Date().toISOString() };
   await writeAtomic(files.inventory, JSON.stringify(inventory));
   return inventory;
+}
+
+// ── The scene behind the character ─────────────────────────────────────────
+
+/**
+ * The picture with the character taken out, so the "depth" camera can slide
+ * the character over it. A transparent or plain background is filled from
+ * its surroundings, free; a detailed one is redrawn once by Muse Image and
+ * kept only where the character was (keepAroundSubject), every other pixel
+ * being the upload's own.
+ */
+export async function separateLivingScene(imageId: string, gate?: PaidWorkGate): Promise<LivingInventory> {
+  const inventory = await readInventory(imageId);
+  if (!inventory) throw new AppError("living_layers_missing", 409, "Find what can move in your picture first.");
+  const character = inventory.layers.find((layer) => layer.kind === "character");
+  if (!character) throw new AppError("living_no_character", 409, "Focus didn’t find a character to separate from the background.");
+  const files = livingFiles(imageId);
+  if (inventory.scene && (await stat(files.scene).catch(() => null))) return inventory;
+  const look = await readUploadedImage(imageId, gate);
+  const { image, flat } = await getCharacterImage(imageId);
+  const sourceFlat = await readFile(flat);
+  const { data: rgb, info } = await sharp(sourceFlat).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const body = await readMask(files.mask(character.id));
+  let plate: Buffer | null = null;
+  if (!image.hasAlpha && look.analysis.background !== "plain") {
+    await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 });
+    const drawn = await livingServices.scene({ sourceFlat, analysis: look.analysis, flipbookId: image.id });
+    plate = await keepAroundSubject(sourceFlat, drawn.png, body);
+  }
+  if (!plate) {
+    // A plain or transparent background, or a redraw that came back in another shape: filled from around the character.
+    const hole = growMask(body, info.width, info.height, Math.max(3, Math.round(Math.max(info.width, info.height) * 0.006)));
+    plate = await sharp(inpaint(rgb, hole.map((value) => (value >= 128 ? 1 : 0)), info.width, info.height), { raw: { width: info.width, height: info.height, channels: 3 } }).png().toBuffer();
+  }
+  await writeAtomic(files.scene, plate);
+  const next: LivingInventory = { ...inventory, scene: true };
+  await writeAtomic(files.inventory, JSON.stringify(next));
+  return next;
+}
+
+// ── Blinking ───────────────────────────────────────────────────────────────
+
+/** Eyes are small: a SAM "eye" larger than this share of the picture is something else. */
+const EYE_MAX_SHARE = 0.02;
+
+/**
+ * Lets the character blink: SAM finds its eyes, Muse Image redraws the
+ * picture with them shut, and only the eyes (grown to take in the lids,
+ * feathered) are kept from that drawing. Every other pixel stays the
+ * upload's own. One SAM frame and one drawing.
+ */
+export async function prepareBlink(imageId: string, gate?: PaidWorkGate): Promise<LivingInventory> {
+  const inventory = await readInventory(imageId);
+  if (!inventory) throw new AppError("living_layers_missing", 409, "Find what can move in your picture first.");
+  const character = inventory.layers.find((layer) => layer.kind === "character");
+  if (!character) throw new AppError("living_no_character", 409, "Focus didn’t find a character to blink.");
+  const files = livingFiles(imageId);
+  if (inventory.blink && (await stat(files.blink).catch(() => null))) return inventory;
+  if (!segmentation.segment) throw new AppError("living_no_eyes", 422, "Focus can’t look for the eyes right now. Try again later.");
+  const { image, flat } = await getCharacterImage(imageId);
+  const sourceFlat = await readFile(flat);
+  const { data: rgb, info } = await sharp(sourceFlat).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  const { width, height } = info;
+  const total = width * height;
+  const body = await readMask(files.mask(character.id));
+  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 2 });
+  const near = growMask(body, width, height, 4);
+  const eyes = (await segmentation.segment({ png: sourceFlat, width, height, concept: "eye", flipbookId: image.id }))
+    .filter((mask) => mask.area > 4 && mask.area < total * EYE_MAX_SHARE && near[Math.floor((mask.box.top + mask.box.bottom) / 2) * width + Math.floor((mask.box.left + mask.box.right) / 2)] >= 128);
+  if (!eyes.length) throw new AppError("living_no_eyes", 422, "Focus couldn’t find the character’s eyes, so it can’t blink.");
+  // Each eye grown by half its height, to take in the lids that close over it.
+  const region = new Uint8Array(total);
+  for (const eye of eyes) {
+    const grown = growMask(eye.alpha, width, height, Math.max(3, Math.ceil((eye.box.bottom - eye.box.top) * 0.5)));
+    for (let i = 0; i < total; i++) if (grown[i] > region[i]) region[i] = grown[i];
+  }
+  const drawn = await livingServices.closedEyes({ sourceFlat, flipbookId: image.id });
+  const meta = await sharp(drawn.png).metadata();
+  if (!meta.width || !meta.height || Math.abs(meta.width / meta.height / (width / height) - 1) > 0.03) {
+    throw new AppError("living_blink_failed", 502, "The closed-eyes drawing came back in another shape. Try again.");
+  }
+  const closed = await sharp(drawn.png).removeAlpha().resize(width, height, { fit: "fill", kernel: "lanczos3" }).raw().toBuffer();
+  const soft = blurField(Float32Array.from(region, (value) => value / 255), width, height, 2);
+  const out = Buffer.from(rgb);
+  const alpha = Buffer.alloc(total);
+  for (let i = 0; i < total; i++) {
+    const a = Math.min(1, soft[i]);
+    alpha[i] = Math.round(a * 255);
+    if (a > 0) for (let c = 0; c < 3; c++) out[i * 3 + c] = Math.round(rgb[i * 3 + c] * (1 - a) + closed[i * 3 + c] * a);
+  }
+  await writeAtomic(files.blink, await sharp(out, { raw: { width, height, channels: 3 } }).png().toBuffer());
+  await writeMask(files.blinkMask, alpha, width, height);
+  const next: LivingInventory = { ...inventory, blink: true };
+  await writeAtomic(files.inventory, JSON.stringify(next));
+  return next;
+}
+
+/** How long a blink lasts. */
+const BLINK_SECONDS = 0.18;
+/** Where in the loop it happens. */
+const BLINK_AT = 0.6;
+
+// ── Parts picked by hand ───────────────────────────────────────────────────
+
+/** A picked part smaller than this share of the picture is a speck; larger than this share of the character is the character. */
+const PART_MIN_SHARE = 0.0005;
+const PART_MAX_OF_CHARACTER = 0.6;
+const MAX_CUSTOM_PARTS = 4;
+
+/**
+ * A part SAM didn't find (a tail, a ribbon), picked by a click: the region
+ * of the character around it (pickPart), added as a flowing layer that
+ * sways from where it meets the rest of the body. No AI, no cost.
+ */
+export async function addPart(imageId: string, input: LivingPartRequest): Promise<LivingInventory> {
+  const inventory = await readInventory(imageId);
+  if (!inventory) throw new AppError("living_layers_missing", 409, "Find what can move in your picture first.");
+  if (inventory.layers.filter((layer) => layer.custom).length >= MAX_CUSTOM_PARTS) throw new AppError("living_parts_full", 409, `You can add up to ${MAX_CUSTOM_PARTS} parts. Remove one first.`);
+  if (inventory.layers.length >= 8) throw new AppError("living_parts_full", 409, "This picture already has as many moving parts as Focus can handle.");
+  const { image, flat } = await getCharacterImage(imageId);
+  const { data: rgb, info } = await sharp(flat).removeAlpha().raw().toBuffer({ resolveWithObject: true });
+  if (input.x >= info.width || input.y >= info.height) throw new AppError("living_part_outside", 400, "That spot is outside the picture.");
+  const files = livingFiles(image.id);
+  const character = inventory.layers.find((layer) => layer.kind === "character");
+  const body = character ? await readMask(files.mask(character.id)) : null;
+  const part = pickPart(rgb, info.width, info.height, input.x, input.y, body);
+  if (!part) throw new AppError("living_part_outside", 400, "Click on the character: only its own parts can be added.");
+  const total = info.width * info.height;
+  let size = 0, bodySize = 0;
+  for (let i = 0; i < total; i++) {
+    if (part[i] >= 128) size++;
+    if (body && body[i] >= 128) bodySize++;
+  }
+  if (size < total * PART_MIN_SHARE) throw new AppError("living_part_small", 400, "That spot is too small to move on its own. Click in the middle of the part.");
+  if (body && size > bodySize * PART_MAX_OF_CHARACTER) throw new AppError("living_part_large", 400, "That picks up most of the character. Click on a smaller part, like a tail or a ribbon.");
+  // Never reused: renders are cached by layer id, and a new pick is a new mask.
+  const id = `${slug(input.name ?? "part").slice(0, 30)}-${randomBytes(3).toString("hex")}`;
+  await writeMask(files.mask(id), part, info.width, info.height);
+  const next: LivingInventory = {
+    ...inventory,
+    layers: [...inventory.layers, { id, name: input.name ?? "part", kind: "flowing", pieces: 1, share: size / total, custom: true }],
+  };
+  await writeAtomic(files.inventory, JSON.stringify(next));
+  return next;
+}
+
+/** Removes a part that was picked by hand; found layers stay. */
+export async function removePart(imageId: string, layerId: string): Promise<LivingInventory> {
+  const inventory = await readInventory(imageId);
+  const layer = inventory?.layers.find((entry) => entry.id === layerId);
+  if (!inventory || !layer?.custom) throw new AppError("living_layer_unknown", 404, "That part isn’t there.");
+  const next: LivingInventory = { ...inventory, layers: inventory.layers.filter((entry) => entry.id !== layerId) };
+  await writeAtomic(livingFiles(imageId).inventory, JSON.stringify(next));
+  await rm(livingFiles(imageId).mask(layerId), { force: true });
+  return next;
 }
 
 // ── Rendering ──────────────────────────────────────────────────────────────
 
 /** Bumped when the engine's output changes, so old renders aren't reused. */
-export const LIVING_RENDER_VERSION = 1;
+export const LIVING_RENDER_VERSION = 9;
 const GIF_FPS = 12;
 const GIF_LONG_SIDE = 640;
 
@@ -313,7 +489,15 @@ async function sceneFor(imageId: string, inventory: LivingInventory, request: Li
       particles.push({ masks, motion: motion === "flutter" ? "flutter" : "drift", strength });
     }
   }
-  return { width, height, rgb, body, flows, particles, sky, wind: request.wind === "left" ? -1 : 1 };
+  const blink = request.blink && inventory.blink
+    ? {
+      rgb: await sharp(files.blink).removeAlpha().resize(width, height, { fit: "fill" }).raw().toBuffer(),
+      alpha: Float32Array.from(await readMask(files.blinkMask), (value) => value / 255),
+      at: BLINK_AT,
+      length: Math.min(0.5, BLINK_SECONDS / request.durationSeconds),
+    }
+    : null;
+  return { width, height, rgb, body, flows, particles, sky, wind: request.wind === "left" ? -1 : 1, blink };
 }
 
 /** Checks a request against the layers it names; an unknown layer or a motion its kind can't take is refused. */
@@ -323,6 +507,8 @@ export function assertRequestFits(inventory: LivingInventory, request: LivingReq
     if (!layer) throw new AppError("living_layer_unknown", 400, "That part of the picture is no longer there. Find what can move again.");
     if (!MOTIONS_FOR[layer.kind].includes(entry.motion)) throw new AppError("living_motion_invalid", 400, `“${layer.name}” can’t ${entry.motion}.`);
   }
+  if (request.camera === "depth" && !inventory.scene) throw new AppError("living_scene_missing", 409, "Separate the character from the background first.");
+  if (request.blink && !inventory.blink) throw new AppError("living_blink_missing", 409, "Add blinking first.");
 }
 
 export async function readLivingRender(imageId: string, key: string): Promise<LivingRender | null> {
@@ -335,7 +521,7 @@ export async function readLivingRender(imageId: string, key: string): Promise<Li
  * the stored masks and the upload's pixels only. Both files are verified
  * before they're offered; the same request returns the same files.
  */
-export async function renderLiving(imageId: string, request: LivingRequest, signal?: AbortSignal, admit?: () => void): Promise<LivingRender> {
+export async function renderLiving(imageId: string, request: LivingRequest, signal?: AbortSignal, admit?: () => void, onProgress?: (fraction: number) => void): Promise<LivingRender> {
   const inventory = await readInventory(imageId);
   if (!inventory) throw new AppError("living_layers_missing", 409, "Find what can move in your picture first.");
   assertRequestFits(inventory, request);
@@ -347,21 +533,28 @@ export async function renderLiving(imageId: string, request: LivingRequest, sign
   if (renderQueue.size >= MAX_WAITING) throw new AppError("render_busy", 503, "Focus is busy rendering other animations. Try again in a moment.");
   renderQueue.size++;
   try {
-    return await renderOnce(imageId, inventory, request, key, signal);
+    return await renderOnce(imageId, inventory, request, key, signal, onProgress);
   } finally {
     renderQueue.size--;
   }
 }
 
-function renderOnce(imageId: string, inventory: LivingInventory, request: LivingRequest, key: string, signal?: AbortSignal): Promise<LivingRender> {
+/** Share of a render's time spent drawing the loop; the video and the GIF take the rest. */
+const DRAWING_SHARE = 0.85;
+
+function renderOnce(imageId: string, inventory: LivingInventory, request: LivingRequest, key: string, signal?: AbortSignal, onProgress?: (fraction: number) => void): Promise<LivingRender> {
   return renderLimiter.run(async () => {
     const again = await readLivingRender(imageId, key);
     if (again) return again;
     const { image, flat } = await getCharacterImage(imageId);
     const { data: rgb, info } = await sharp(flat).removeAlpha().raw().toBuffer({ resolveWithObject: true });
-    const prepared = prepareLiving(await sceneFor(image.id, inventory, request, rgb, info.width, info.height));
-    // H.264 in 4:2:0 needs even sides: the last row or column goes when odd.
-    const width = info.width & ~1, height = info.height & ~1;
+    const scene = await sceneFor(image.id, inventory, request, rgb, info.width, info.height);
+    const depth = request.camera === "depth";
+    const prepared = prepareLiving(scene, { cover: depth });
+    const plate = depth ? await sharp(livingFiles(image.id).scene).removeAlpha().resize(info.width, info.height, { fit: "fill" }).raw().toBuffer() : null;
+    // The video's shape and where the camera looks; framedSize keeps the sides even, as H.264 needs.
+    const { width, height } = framedSize(request.aspect, info.width, info.height);
+    const focus = focusOf(scene.body?.mask ?? null, info.width, info.height);
     const frames = request.durationSeconds * LIVING_FPS;
     const dir = livingFiles(image.id).renderDir(key);
     await rm(dir, { recursive: true, force: true });
@@ -372,8 +565,13 @@ function renderOnce(imageId: string, inventory: LivingInventory, request: Living
     try {
       for (let frame = 0; frame < frames; frame++) {
         if (signal?.aborted) throw new AppError("canceled", 499, "Render canceled.");
-        const rgba = livingFrame(prepared, frame / frames);
-        await writer.write(width === info.width && height === info.height ? rgba : cropRgba(rgba, info.width, width, height));
+        const t = frame / frames;
+        onProgress?.((frame / frames) * DRAWING_SHARE);
+        // The character holds each pose for two frames (anime "on twos"); the camera moves on every frame.
+        const { rgba, cover } = livingLayers(prepared, t, bodyTime(frame, frames));
+        await writer.write(plate && cover
+          ? depthFrame(rgba, cover, plate, info.width, info.height, depthViews(t, info, { width, height }, focus), width, height, prepared.wideCover ?? cover)
+          : viewFrame(rgba, info.width, info.height, cameraView(depth ? "pan" : request.camera as "still" | "zoom" | "pan", t, info, { width, height }, focus), width, height));
       }
       await writer.finish();
     } catch (error) {
@@ -398,6 +596,7 @@ function renderOnce(imageId: string, inventory: LivingInventory, request: Living
       "-c:v", "copy", "-t", seconds.toFixed(3), "-movflags", "+faststart", mp4,
     ], signal);
     await verifyOutput(mp4, { width, height, fps: LIVING_FPS, frameCount: seconds * LIVING_FPS, hasAudio });
+    onProgress?.(0.93);
 
     const scale = Math.min(1, GIF_LONG_SIDE / Math.max(width, height));
     const gifWidth = Math.max(2, Math.round(width * scale)), gifHeight = Math.max(2, Math.round(height * scale));
@@ -424,8 +623,26 @@ function renderOnce(imageId: string, inventory: LivingInventory, request: Living
       createdAt: new Date().toISOString(),
     };
     await writeAtomic(livingFiles(image.id).render(key), JSON.stringify(render));
+    await pruneRenders(image.id, key).catch(() => undefined);
     return render;
   });
+}
+
+/** Renders one picture keeps (a few MB each) before the oldest are dropped; the picture expires after a day anyway. */
+export const MAX_CACHED_RENDERS = 12;
+
+/** Removes the oldest renders past MAX_CACHED_RENDERS, never `keep`; one asked for again is simply drawn again. */
+export async function pruneRenders(imageId: string, keep: string, max = MAX_CACHED_RENDERS): Promise<void> {
+  const root = path.dirname(livingFiles(imageId).renderDir("x"));
+  const entries: { key: string; at: number }[] = [];
+  for (const key of await readdir(root).catch(() => [] as string[])) {
+    if (key === keep || !/^[a-f0-9]{16}$/.test(key)) continue;
+    const info = await stat(livingFiles(imageId).render(key)).catch(() => null);
+    // A directory without render.json is a render still being made or one that failed: left alone here.
+    if (info) entries.push({ key, at: info.mtimeMs });
+  }
+  entries.sort((a, b) => b.at - a.at);
+  for (const { key } of entries.slice(Math.max(0, max - 1))) await rm(livingFiles(imageId).renderDir(key), { recursive: true, force: true });
 }
 
 // ── Sound ──────────────────────────────────────────────────────────────────
@@ -548,10 +765,4 @@ export async function livingToEditor(imageId: string, key: string, ownerId: stri
   });
   if (ownerId) await projectForVideo(ownerId, video.id, { title });
   return { video, saved: Boolean(ownerId) };
-}
-
-function cropRgba(rgba: Buffer, sourceWidth: number, width: number, height: number): Buffer {
-  const out = Buffer.alloc(width * height * 4);
-  for (let y = 0; y < height; y++) rgba.copy(out, y * width * 4, y * sourceWidth * 4, (y * sourceWidth + width) * 4);
-  return out;
 }

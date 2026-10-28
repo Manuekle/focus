@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { AiSearch02Icon, AiPaintbrushIcon, Download01Icon, Refresh01Icon, Upload01Icon, Video01Icon } from "@hugeicons/core-free-icons";
+import { AiSearch02Icon, AiPaintbrushIcon, Cancel01Icon, Download01Icon, PlusSignIcon, Refresh01Icon, Upload01Icon, Video01Icon } from "@hugeicons/core-free-icons";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
@@ -12,6 +12,10 @@ import { formatBytes } from "../../shared/media";
 import {
   AMBIENCES,
   AMBIENCE_LABELS,
+  ASPECT_LABELS,
+  CAMERA_LABELS,
+  LIVING_ASPECTS,
+  LIVING_CAMERAS,
   AUDIO_ACCEPT_ATTRIBUTE,
   MOTIONS_FOR,
   MOTION_LABELS,
@@ -28,7 +32,7 @@ import {
   type LivingTrack,
 } from "../../shared/living";
 import type { FlipbookImage } from "../../shared/flipbook";
-import { flipbookApi } from "./flipbook-client";
+import { FlipbookApiError, flipbookApi, renderLivingWithProgress } from "./flipbook-client";
 import composer from "../_editor/composer.module.css";
 import styles from "./flipbook.module.css";
 
@@ -58,7 +62,14 @@ function starting(inventory: LivingInventory): LivingRequest {
   return { ...defaultLivingRequest(inventory), audio: ambience ? { kind: "ambience", ambience } : { kind: "none" } };
 }
 
-export type LivingPreview = { readonly video: string | null; readonly busy: boolean; readonly highlight: string | null; readonly hasAudio?: boolean };
+export type LivingPreview = {
+  readonly video: string | null;
+  readonly busy: boolean;
+  readonly highlight: string | null;
+  readonly hasAudio?: boolean;
+  /** While a part is being picked: called with the clicked spot, in the picture's pixels. */
+  readonly pick?: ((x: number, y: number) => void) | null;
+};
 
 /**
  * "Animate as is": the picture stays exactly as drawn and only its own
@@ -77,23 +88,37 @@ export function LivingPanel({ image, onPreview }: { readonly image: FlipbookImag
   const [track, setTrack] = useState<LivingTrack | null>(null);
   const [uploading, setUploading] = useState(false);
   const [opening, setOpening] = useState(false);
+  const [picking, setPicking] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const [separating, setSeparating] = useState(false);
+  const [blinking, setBlinking] = useState(false);
   const router = useRouter();
   const latest = useRef(0);
+  const [progress, setProgress] = useState(0);
+  const running = useRef<AbortController | null>(null);
   const trackInput = useRef<HTMLInputElement>(null);
 
   const draw = async (next: LivingRequest) => {
     const ticket = ++latest.current;
+    running.current?.abort();
+    const controller = new AbortController();
+    running.current = controller;
     setRendering(true);
+    setProgress(0);
     setError(null);
     try {
-      const result = await flipbookApi.renderLiving(image.id, next);
+      const result = await renderLivingWithProgress(image.id, next, (fraction) => { if (ticket === latest.current) setProgress(fraction); }, controller.signal);
       if (ticket === latest.current) setRender({ request: JSON.stringify(next), result });
     } catch (failure) {
-      if (ticket === latest.current) setError(failure instanceof Error ? failure.message : "We couldn’t render the animation.");
+      const canceled = failure instanceof FlipbookApiError && failure.code === "aborted";
+      if (ticket === latest.current && !canceled) setError(failure instanceof Error ? failure.message : "We couldn’t render the animation.");
     } finally {
       if (ticket === latest.current) setRendering(false);
     }
   };
+
+  // Leaving the picture (or the page) stops its render on the server.
+  useEffect(() => () => running.current?.abort(), [image.id]);
 
   // What was already found for this upload, if anything; then its first preview.
   useEffect(() => {
@@ -120,8 +145,70 @@ export function LivingPanel({ image, onPreview }: { readonly image: FlipbookImag
   }, [image.id]);
 
   useEffect(() => {
-    onPreview({ video: render ? livingUrls.file(image.id, render.result.key, render.result.files[0].name) : null, busy: rendering || finding, highlight, hasAudio: render?.result.hasAudio });
-  }, [image.id, render, rendering, finding, highlight, onPreview]);
+    onPreview({
+      video: render ? livingUrls.file(image.id, render.result.key, render.result.files[0].name) : null,
+      busy: rendering || finding || adding,
+      highlight,
+      hasAudio: render?.result.hasAudio,
+      pick: picking ? (x, y) => void addPart(x, y) : null,
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- addPart only reads the image id and state setters
+  }, [image.id, render, rendering, finding, adding, picking, highlight, onPreview]);
+
+  const addPart = async (x: number, y: number) => {
+    setPicking(false);
+    setAdding(true);
+    setError(null);
+    try {
+      const next = await flipbookApi.addLivingPart(image.id, x, y);
+      const added = next.layers.at(-1)!;
+      setInventory(next);
+      setRequest((current) => current && { ...current, layers: [...current.layers, { id: added.id, motion: "sway", strength: 1 }] });
+      setHighlight(added.id);
+      setTimeout(() => setHighlight((shown) => (shown === added.id ? null : shown)), 1600);
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "We couldn’t add that part.");
+    } finally {
+      setAdding(false);
+    }
+  };
+
+  const separate = async () => {
+    setSeparating(true);
+    setError(null);
+    try {
+      setInventory(await flipbookApi.separateLivingScene(image.id));
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "We couldn’t separate the character from the background.");
+    } finally {
+      setSeparating(false);
+    }
+  };
+
+  const addBlink = async () => {
+    setBlinking(true);
+    setError(null);
+    try {
+      const next = await flipbookApi.prepareLivingBlink(image.id);
+      setInventory(next);
+      setRequest((current) => current && { ...current, blink: true });
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "We couldn’t add blinking.");
+    } finally {
+      setBlinking(false);
+    }
+  };
+
+  const removePart = async (layerId: string) => {
+    setError(null);
+    try {
+      const next = await flipbookApi.removeLivingPart(image.id, layerId);
+      setInventory(next);
+      setRequest((current) => current && { ...current, layers: current.layers.filter((layer) => layer.id !== layerId) });
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : "We couldn’t remove that part.");
+    }
+  };
 
   const find = async () => {
     setFinding(true);
@@ -224,7 +311,14 @@ export function LivingPanel({ image, onPreview }: { readonly image: FlipbookImag
                 >
                   <div className={styles.livingLayerName}>
                     <span className="text-xs font-medium text-foreground">{layer.name.charAt(0).toUpperCase() + layer.name.slice(1)}</span>
-                    <span className="text-[11px] text-muted-foreground">{KIND_LABEL[layer.kind]}{layer.pieces > 1 ? ` · ${layer.pieces}` : ""}</span>
+                    <span className="inline-flex items-center gap-2 text-[11px] text-muted-foreground">
+                      {layer.custom ? "Added by you" : KIND_LABEL[layer.kind]}{layer.pieces > 1 ? ` · ${layer.pieces}` : ""}
+                      {layer.custom ? (
+                        <Button type="button" variant="ghost" size="icon-sm" aria-label={`Remove ${layer.name}`} onClick={() => void removePart(layer.id)}>
+                          <HugeiconsIcon icon={Cancel01Icon} size={12} strokeWidth={1.5} />
+                        </Button>
+                      ) : null}
+                    </span>
                   </div>
                   <SlidingTabs
                     className={composer.tabs}
@@ -232,6 +326,24 @@ export function LivingPanel({ image, onPreview }: { readonly image: FlipbookImag
                     value={choice.motion}
                     onValueChange={(motion) => change(layer.id, { motion: motion as typeof choice.motion })}
                   />
+                  {layer.kind === "character" ? (
+                    inventory.blink ? (
+                      <SlidingTabs
+                        className={composer.tabs}
+                        tabs={[{ id: "on", label: "Blinks" }, { id: "off", label: "Eyes open" }]}
+                        value={request.blink ? "on" : "off"}
+                        onValueChange={(value) => setRequest({ ...request, blink: value === "on" })}
+                      />
+                    ) : (
+                      <div className={styles.buttonRow}>
+                        <Button type="button" variant="ghost" size="sm" onClick={() => void addBlink()} disabled={blinking}>
+                          {blinking ? <Spinner /> : <HugeiconsIcon icon={PlusSignIcon} size={14} strokeWidth={1.5} />}
+                          Add blinking
+                        </Button>
+                        <span className={styles.hint}>One drawing shuts the eyes; only the eyes are used from it.</span>
+                      </div>
+                    )
+                  ) : null}
                   {choice.motion !== "still" ? (
                     <SlidingTabs
                       className={composer.tabs}
@@ -248,6 +360,15 @@ export function LivingPanel({ image, onPreview }: { readonly image: FlipbookImag
           <p className={styles.hint}>Focus didn’t find anything it can move in this picture without redrawing it. Try “Redraw a cycle”.</p>
         )}
         {inventory.stills.length ? <p className={styles.hint}>Stays as it is: {inventory.stills.join(", ")}.</p> : null}
+        {inventory.layers.some((layer) => layer.kind === "character") && inventory.layers.filter((layer) => layer.custom).length < 4 && inventory.layers.length < 8 ? (
+          <div className={styles.buttonRow}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setPicking((value) => !value)} disabled={adding} aria-pressed={picking}>
+              {adding ? <Spinner /> : <HugeiconsIcon icon={picking ? Cancel01Icon : PlusSignIcon} size={14} strokeWidth={1.5} />}
+              {picking ? "Cancel" : "Add a part"}
+            </Button>
+            <span className={styles.hint}>{picking ? "Click a part of the character on the picture: a tail, a ribbon, a sleeve." : "Something that should sway wasn’t found?"}</span>
+          </div>
+        ) : null}
       </section>
 
       {inventory.layers.length ? (
@@ -271,6 +392,34 @@ export function LivingPanel({ image, onPreview }: { readonly image: FlipbookImag
             />
           </fieldset>
 
+          <fieldset className={composer.effects}>
+            <legend className={composer.label}>Camera</legend>
+            <SlidingTabs
+              className={composer.tabs}
+              tabs={LIVING_CAMERAS.map((camera) => ({ id: camera, label: CAMERA_LABELS[camera] }))}
+              value={request.camera}
+              onValueChange={(camera) => setRequest({ ...request, camera: camera as LivingRequest["camera"] })}
+            />
+            {request.camera === "depth" && !inventory.scene ? (
+              <div className={styles.buttonRow}>
+                <Button type="button" variant="ghost" size="sm" onClick={() => void separate()} disabled={separating}>
+                  {separating ? <Spinner /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={14} strokeWidth={1.5} />}
+                  Separate the character
+                </Button>
+                <span className={styles.hint}>The character slides in front of the background. Free on a plain background; one drawing to fill in a detailed one.</span>
+              </div>
+            ) : request.camera === "depth" ? <p className={styles.hint}>The character slides in front of the background, which moves less.</p> : null}
+          </fieldset>
+          <fieldset className={composer.effects}>
+            <legend className={composer.label}>Format</legend>
+            <SlidingTabs
+              className={composer.tabs}
+              tabs={LIVING_ASPECTS.map((aspect) => ({ id: aspect, label: ASPECT_LABELS[aspect] }))}
+              value={request.aspect}
+              onValueChange={(aspect) => setRequest({ ...request, aspect: aspect as LivingRequest["aspect"] })}
+            />
+            {request.aspect !== "original" ? <p className={styles.hint}>Cropped around the character, at the picture’s own resolution.</p> : null}
+          </fieldset>
           <fieldset className={composer.effects}>
             <legend className={composer.label}>Sound</legend>
             <SlidingTabs className={composer.tabs} tabs={SOUNDS} value={request.audio.kind} onValueChange={setSound} />
@@ -316,10 +465,16 @@ export function LivingPanel({ image, onPreview }: { readonly image: FlipbookImag
           </fieldset>
 
           <div className={composer.submit}>
-            <Button className={composer.generate} type="button" variant="ai" size="lg" onClick={() => void draw(request)} disabled={rendering || !stale} aria-busy={rendering || undefined}>
+            <Button className={composer.generate} type="button" variant="ai" size="lg" onClick={() => void draw(request)} disabled={rendering || !stale || (request.camera === "depth" && !inventory.scene)} aria-busy={rendering || undefined}>
               {rendering ? <Spinner /> : <HugeiconsIcon icon={stale && render ? Refresh01Icon : AiPaintbrushIcon} size={16} strokeWidth={1.75} />}
-              {rendering ? "Rendering…" : stale ? (render ? "Update preview" : "Render") : "Up to date"}
+              {rendering ? `Rendering… ${Math.round(progress * 100)}%` : stale ? (render ? "Update preview" : "Render") : "Up to date"}
             </Button>
+            {rendering ? (
+              <Button type="button" variant="ghost" size="sm" onClick={() => { latest.current++; running.current?.abort(); setRendering(false); }}>
+                <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={1.5} />
+                Cancel render
+              </Button>
+            ) : null}
             {error ? <p className={styles.hint} data-invalid="" role="alert">{error}</p> : null}
             {result && !stale ? <p className={styles.hint}>Opening it in the video editor keeps it: signed in, it’s saved to your projects.</p> : null}
             {result && !stale ? (

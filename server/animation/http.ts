@@ -1,13 +1,14 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
-import { FrameIdSchema, orderedFrames } from "../../shared/flipbook";
+import { DrawingIdSchema, FrameIdSchema, orderedFrames } from "../../shared/flipbook";
 import { AppError } from "../errors";
 import { guardAiRequest } from "../guard";
 import type { PaidWorkGate } from "../jobs";
 import { serveFile } from "../serve-file";
 import { ensureSceneLoop } from "./flipbooks";
 import { contactSheet } from "./quality-control";
-import { flipbookFiles, getFlipbook } from "./store";
+import { flipbookFiles } from "./store";
+import { requireFlipbookAccess } from "./access";
 
 // Small pieces shared by the Flipbook route handlers: the paid-work gate,
 // upload sizes, and the media endpoint that serves only files the flipbook's
@@ -29,8 +30,15 @@ export function parseFrame(value: string) {
   return parsed.data;
 }
 
+/** A key drawing or an in-between, for media that both have. */
+function parseDrawing(value: string) {
+  const parsed = DrawingIdSchema.safeParse(value);
+  if (!parsed.success) throw new AppError("frame_not_found", 404, "That frame doesn’t exist.");
+  return parsed.data;
+}
+
 export async function flipbookMedia(request: Request, id: string): Promise<Response> {
-  const flipbook = await getFlipbook(id);
+  const flipbook = await requireFlipbookAccess(request, id);
   const search = new URL(request.url).searchParams;
   const kind = search.get("kind");
   const png = (file: string) => serveFile(request, file, "image/png");
@@ -54,10 +62,13 @@ export async function flipbookMedia(request: Request, id: string): Promise<Respo
       return png(path.join(flipbookFiles.versionDir(flipbook.id, frame.id, version), "raw.png"));
     }
     case "sprite":
-      return png(flipbookFiles.sprite(flipbook.id, parseFrame(search.get("frame") ?? ""), search.get("a") ?? ""));
+      return png(flipbookFiles.sprite(flipbook.id, parseDrawing(search.get("frame") ?? ""), search.get("a") ?? ""));
     case "scene":
     case "custom":
       if (!flipbook.backgrounds[kind]) throw new AppError("media_not_found", 404, "This file is no longer available.");
+      return png(flipbookFiles.background(flipbook.id, kind));
+    case "bg-reference":
+      if (!flipbook.backgrounds.reference) throw new AppError("media_not_found", 404, "This file is no longer available.");
       return png(flipbookFiles.background(flipbook.id, kind));
     case "scene-loop":
       if (!flipbook.backgrounds.scene) throw new AppError("media_not_found", 404, "This file is no longer available.");

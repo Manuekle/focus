@@ -4,6 +4,7 @@ import { guardUpload, readJsonBody } from "../../../../../../server/guard";
 import { declaredLength, paidGate, parseFrame } from "../../../../../../server/animation/http";
 import { applyFrameAction, replaceFrame } from "../../../../../../server/animation/flipbooks";
 import { assertFlipbookEnabled } from "../../../../../../server/animation/store";
+import { requireFlipbookAccess } from "../../../../../../server/animation/access";
 
 type Context = { params: Promise<{ id: string; frame: string }> };
 
@@ -12,6 +13,7 @@ export async function POST(request: Request, { params }: Context) {
   try {
     assertFlipbookEnabled();
     const { id, frame } = await params;
+    await requireFlipbookAccess(request, id);
     const parsed = FrameActionSchema.safeParse(await readJsonBody(request));
     if (!parsed.success) throw new AppError("invalid_action", 400, "That frame action isn’t valid. Correction notes are up to 240 characters.");
     const flipbook = await applyFrameAction(id, parseFrame(frame), parsed.data, paidGate(request));
@@ -27,6 +29,7 @@ export async function PUT(request: Request, { params }: Context) {
     assertFlipbookEnabled();
     guardUpload(request);
     const { id, frame } = await params;
+    await requireFlipbookAccess(request, id);
     const flipbook = await replaceFrame(id, parseFrame(frame), request.body, declaredLength(request), paidGate(request));
     return Response.json(flipbook, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

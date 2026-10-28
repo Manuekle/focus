@@ -9,7 +9,8 @@ import {
   FlipbookSummarySchema,
   ImageLookSchema,
   imageUrls,
-  type AnimationAction,
+  type CreateEnsembleRequest,
+  type CycleAction,
   type ExportRequest,
   type Flipbook,
   type FlipbookAction,
@@ -17,8 +18,11 @@ import {
   type FrameAction,
 } from "../../shared/flipbook";
 import { ApiErrorBodySchema, VideoAssetSchema } from "../../shared/schemas";
-import { LivingInventorySchema, LivingRenderSchema, LivingTrackSchema, livingUrls, type LivingRequest } from "../../shared/living";
+import { FlipbookProposalSchema, type ApplyPoseChangesRequest, type FlipbookChatRequest } from "../../shared/flipbook-chat";
+import { LivingInventorySchema, LivingRenderSchema, LivingTrackSchema, livingUrls, type LivingRender, type LivingRequest } from "../../shared/living";
 import { knownErrorMessage } from "../_editor/messages";
+import type { CharacterSource } from "../../shared/characters";
+import type { ViewPreference } from "../../shared/animation-view";
 
 // The browser side of Flipbook: typed calls to /api/flipbooks and a poller
 // that follows a flipbook while it works. Codes the editor already words
@@ -55,6 +59,47 @@ async function call<T>(url: string, init: RequestInit | undefined, parse: (value
   return parse(body);
 }
 
+/**
+ * "Animate as is" render with its progress: the server streams one JSON line
+ * per percent, then the render (or an error). Aborting the signal cancels the
+ * render on the server too.
+ */
+export async function renderLivingWithProgress(imageId: string, request: LivingRequest, onProgress: (fraction: number) => void, signal: AbortSignal): Promise<LivingRender> {
+  let response: Response;
+  try {
+    response = await fetch(livingUrls.render(imageId), { method: "POST", headers: { "Content-Type": "application/json", Accept: "application/x-ndjson" }, body: JSON.stringify(request), signal });
+  } catch {
+    if (signal.aborted) throw new FlipbookApiError("Canceled.", "aborted");
+    throw new FlipbookApiError("We couldn’t reach the server. Check your connection and try again.", "network");
+  }
+  const fail = (body: unknown, status: number) => {
+    const error = ApiErrorBodySchema.safeParse(body);
+    return new FlipbookApiError(error.success ? messageFor(error.data.error.code, error.data.error.message) : "The server couldn’t complete your request. Try again.", error.success ? error.data.error.code : `http_${status}`);
+  };
+  if (!response.ok || !response.body) throw fail(await response.json().catch(() => null), response.status);
+  const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+  let buffer = "";
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buffer += value;
+      let end: number;
+      while ((end = buffer.indexOf("\n")) >= 0) {
+        const line = JSON.parse(buffer.slice(0, end)) as { progress?: number; render?: unknown; error?: unknown };
+        buffer = buffer.slice(end + 1);
+        if (typeof line.progress === "number") onProgress(line.progress);
+        if (line.render) return LivingRenderSchema.parse(line.render);
+        if (line.error) throw fail(line, response.status);
+      }
+    }
+  } catch (error) {
+    if (signal.aborted) throw new FlipbookApiError("Canceled.", "aborted");
+    throw error;
+  }
+  throw new FlipbookApiError("The render stopped before it finished. Try again.", "render_incomplete");
+}
+
 const json = (body: unknown, method = "POST"): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const parseFlipbook = (value: unknown) => FlipbookSchema.parse(value);
 const upload = (file: File, method: "PUT" | "POST" = "PUT"): RequestInit => ({
@@ -64,8 +109,10 @@ const upload = (file: File, method: "PUT" | "POST" = "PUT"): RequestInit => ({
 });
 
 export const flipbookApi = {
-  create: (imageId: string, prompt: string, options: { action?: AnimationAction; keepScene?: boolean } = {}) =>
-    call("/api/flipbooks", json({ imageId, prompt, ...options }), parseFlipbook),
+  create: (imageId: string, prompt: string, options: { action?: CycleAction; keepScene?: boolean; characterSource?: CharacterSource; view?: ViewPreference } = {}) =>
+    call("/api/flipbooks", json({ ...(options.characterSource ? {} : { imageId }), prompt, ...options }), parseFlipbook),
+  /** Several saved characters in one scene, as long as `seconds`. */
+  createEnsemble: (request: CreateEnsembleRequest) => call("/api/flipbooks", json(request), parseFlipbook),
   /** What Focus sees in an upload; read once, then cached with it. */
   look: (imageId: string) => call(imageUrls.look(imageId), { method: "POST" }, (value) => ImageLookSchema.parse(value)),
   get: (id: string) => call(`/api/flipbooks/${id}`, { cache: "no-store" }, parseFlipbook),
@@ -82,12 +129,19 @@ export const flipbookApi = {
     }),
   action: (id: string, action: FlipbookAction) => call(`/api/flipbooks/${id}`, json(action), parseFlipbook),
   frame: (id: string, frameId: string, action: FrameAction) => call(`/api/flipbooks/${id}/frames/${frameId}`, json(action), parseFlipbook),
+  /** Asks the animation assistant (one Muse Spark call). Returns a proposal; nothing is drawn. */
+  chat: (id: string, request: FlipbookChatRequest) => call(`/api/flipbooks/${id}/chat`, json(request), (value) => FlipbookProposalSchema.parse(value)),
+  /** Redraws the frames of an approved proposal with their new instructions. */
+  applyChat: (id: string, request: ApplyPoseChangesRequest) => call(`/api/flipbooks/${id}/chat/apply`, json(request), parseFlipbook),
   replaceFrame: (id: string, frameId: string, file: File) => call(`/api/flipbooks/${id}/frames/${frameId}`, upload(file), parseFlipbook),
   uploadReference: (id: string, file: File) => call(`/api/flipbooks/${id}/reference`, upload(file), parseFlipbook),
   /** One more image of the same character, kept beside the reference. */
   addReference: (id: string, file: File) => call(`/api/flipbooks/${id}/reference`, upload(file, "POST"), parseFlipbook),
   removeReference: (id: string, version: string) => call(`/api/flipbooks/${id}/reference?v=${encodeURIComponent(version)}`, { method: "DELETE" }, parseFlipbook),
   uploadBackground: (id: string, file: File) => call(`/api/flipbooks/${id}/background`, upload(file), parseFlipbook),
+  /** A picture of a place that inspires the next generated background (never used as the background itself). */
+  uploadBackgroundReference: (id: string, file: File) => call(`/api/flipbooks/${id}/background/reference`, upload(file), parseFlipbook),
+  removeBackgroundReference: (id: string) => call(`/api/flipbooks/${id}/background/reference`, { method: "DELETE" }, parseFlipbook),
   /** "Animate as is": what was found in an upload that can move, or null before anyone looked. */
   living: (imageId: string) => call(livingUrls.layers(imageId), { cache: "no-store" }, (value) => LivingInventorySchema.nullable().parse((value as { inventory?: unknown }).inventory ?? null)),
   /** Finds what can move (paid, once per upload). */
@@ -101,9 +155,16 @@ export const flipbookApi = {
     const body = value as { video?: unknown; saved?: unknown };
     return { video: VideoAssetSchema.parse(body.video), saved: body.saved === true };
   }),
+  /** Takes the character out of the picture, for the "depth" camera (one drawing for a detailed background). */
+  separateLivingScene: (imageId: string) => call(livingUrls.scene(imageId), { method: "POST" }, (value) => LivingInventorySchema.parse((value as { inventory?: unknown }).inventory)),
+  /** Lets the character blink (one SAM frame and one drawing, once per upload). */
+  prepareLivingBlink: (imageId: string) => call(livingUrls.blink(imageId), { method: "POST" }, (value) => LivingInventorySchema.parse((value as { inventory?: unknown }).inventory)),
+  /** Adds a part picked with a click on the picture (its pixels). */
+  addLivingPart: (imageId: string, x: number, y: number) => call(livingUrls.parts(imageId), json({ x, y }), (value) => LivingInventorySchema.parse((value as { inventory?: unknown }).inventory)),
+  removeLivingPart: (imageId: string, layerId: string) => call(`${livingUrls.parts(imageId)}?layer=${encodeURIComponent(layerId)}`, { method: "DELETE" }, (value) => LivingInventorySchema.parse((value as { inventory?: unknown }).inventory)),
   renderLiving: (imageId: string, request: LivingRequest) => call(livingUrls.render(imageId), json(request), (value) => LivingRenderSchema.parse((value as { render?: unknown }).render)),
-  export: (id: string, request: ExportRequest) =>
-    call(`/api/flipbooks/${id}/export`, json(request), (value) => {
+  export: (id: string, request: ExportRequest, signal?: AbortSignal) =>
+    call(`/api/flipbooks/${id}/export`, { ...json(request), signal }, (value) => {
       const body = value as { flipbook?: unknown; record?: unknown };
       return { flipbook: FlipbookSchema.parse(body.flipbook), record: ExportRecordSchema.parse(body.record) };
     }),

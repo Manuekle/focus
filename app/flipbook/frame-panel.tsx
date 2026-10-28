@@ -37,6 +37,7 @@ export function FramePanel({
   onAction,
   onReplace,
   onMove,
+  canMove = true,
 }: {
   readonly flipbook: Flipbook;
   readonly frame: FlipbookFrame;
@@ -46,6 +47,8 @@ export function FramePanel({
   readonly onAction: (action: FrameAction) => void;
   readonly onReplace: (file: File) => void;
   readonly onMove: (delta: -1 | 1) => void;
+  /** Cycle drawings can change places; a scene's beats can't. */
+  readonly canMove?: boolean;
 }) {
   const [view, setView] = useState<"sprite" | "raw">("sprite");
   const [note, setNote] = useState("");
@@ -172,10 +175,10 @@ export function FramePanel({
           />
         </div>
         {!locked && frame.version ? <p className={styles.hint}>Improve keeps this pose and fixes its mistakes. Redraw starts the pose over from the reference. Each is one drawing; the old version stays in this frame’s history.</p> : null}
-        <div className={styles.buttonRow}>
+        {canMove ? <div className={styles.buttonRow}>
           <Button size="xs" variant="ghost" disabled={busy || index === 0} onClick={() => onMove(-1)}><HugeiconsIcon icon={ArrowLeft01Icon} size={12} strokeWidth={1.75} />Move earlier</Button>
           <Button size="xs" variant="ghost" disabled={busy || index === count - 1} onClick={() => onMove(1)}>Move later<HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.75} /></Button>
-        </div>
+        </div> : null}
       </div>
     </section>
   );

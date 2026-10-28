@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import sharp from "sharp";
 import { z } from "zod";
-import { actionSpec, type AnimationAction, type FlipbookAlignment, type FrameId } from "../../shared/flipbook";
+import { actionSpec, type AnimationAction, type DrawingId, type FlipbookAlignment } from "../../shared/flipbook";
 import { AppError } from "../errors";
 import { readMetaConfig } from "../ai/meta";
 import { segmentImage } from "../ai/sam";
@@ -65,6 +65,68 @@ function borderStats({ data, width, height }: Rgba): { rgb: [number, number, num
   return { rgb, uniformity: samples.length ? close / samples.length : 0 };
 }
 
+/** How far the key color's rim reaches into an opaque cut-out, in pixels. */
+const SPILL_BAND = 3;
+
+/**
+ * Antialiased lines drawn on the key color keep a rim of it even where the
+ * mask is opaque: a magenta fringe along blond hair. Within SPILL_BAND pixels
+ * of the outline, each pixel loses the part of its chroma that points toward
+ * the key's, beyond what the nearest pixel deeper inside has. Luminance stays;
+ * hues away from the key, and the key's hue where the drawing really has it
+ * inside, are untouched. Works in place on straight RGBA.
+ */
+export function despill(rgba: Buffer, width: number, height: number, key: readonly [number, number, number]): void {
+  const keyGray = (key[0] + key[1] + key[2]) / 3;
+  const kc = [key[0] - keyGray, key[1] - keyGray, key[2] - keyGray];
+  const kn = kc[0] * kc[0] + kc[1] * kc[1] + kc[2] * kc[2];
+  // A gray key has no hue to take out.
+  if (kn < 900) return;
+  const total = width * height;
+  const along = (i: number) => {
+    const r = rgba[i * 4], g = rgba[i * 4 + 1], b = rgba[i * 4 + 2];
+    const mean = (r + g + b) / 3;
+    return ((r - mean) * kc[0] + (g - mean) * kc[1] + (b - mean) * kc[2]) / kn;
+  };
+  const neighbors = (i: number, visit: (n: number) => void) => {
+    const x = i % width, y = (i - x) / width;
+    for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+      const nx = x + dx, ny = y + dy;
+      if ((dx || dy) && nx >= 0 && ny >= 0 && nx < width && ny < height) visit(ny * width + nx);
+    }
+  };
+  // Steps to the outside (alpha below half), breadth-first; 255 is deeper than the band.
+  const distance = new Uint8Array(total).fill(255);
+  const queue = new Int32Array(total);
+  let head = 0, tail = 0;
+  for (let i = 0; i < total; i++) if (rgba[i * 4 + 3] < 128) { distance[i] = 0; queue[tail++] = i; }
+  while (head < tail) {
+    const i = queue[head++];
+    if (distance[i] >= SPILL_BAND) continue;
+    neighbors(i, (n) => { if (distance[n] === 255) { distance[n] = distance[i] + 1; queue[tail++] = n; } });
+  }
+  // The band takes its reference hue from the nearest pixel inside it.
+  const reference = new Float32Array(total).fill(Number.NaN);
+  head = 0; tail = 0;
+  for (let i = 0; i < total; i++) if (distance[i] === 255) { reference[i] = along(i); queue[tail++] = i; }
+  while (head < tail) {
+    const i = queue[head++];
+    neighbors(i, (n) => { if (distance[n] !== 255 && Number.isNaN(reference[n])) { reference[n] = reference[i]; queue[tail++] = n; } });
+  }
+  for (let i = 0; i < total; i++) {
+    const a = rgba[i * 4 + 3];
+    if (distance[i] === 255 || a === 0) continue;
+    const ref = Number.isNaN(reference[i]) ? 0 : reference[i];
+    const value = along(i);
+    let excess = value - Math.max(0, ref);
+    // A soft edge un-blended with a mask alpha that was too low overshoots
+    // past the inside, away from the key (a green rim on a magenta key): pull it back.
+    if (excess <= 0) excess = a < 255 ? Math.min(0, value - Math.min(0, ref)) : 0;
+    if (excess === 0) continue;
+    for (let c = 0; c < 3; c++) rgba[i * 4 + c] = Math.max(0, Math.min(255, Math.round(rgba[i * 4 + c] - excess * kc[c])));
+  }
+}
+
 /** Background by flood fill from the border: only color connected to the edge counts as background. */
 function keyMask({ data, width, height }: Rgba, background: readonly [number, number, number]): Uint8Array {
   const total = width * height;
@@ -97,12 +159,14 @@ function keyMask({ data, width, height }: Rgba, background: readonly [number, nu
 
 /**
  * Background showing through gaps the border fill can't reach (between the
- * legs, inside a bent arm). A gap is a connected run of near-exact key color
- * inside the mask, large enough not to be a highlight or an eye.
+ * legs, inside a bent arm, between strands of hair). A gap is a connected run
+ * of near-exact key color inside the mask. The key is picked away from the
+ * character's palette, so a run of a few dozen pixels is already background
+ * (SAM keeps those slivers in its mask); only stray single pixels stay.
  */
 function removeEnclosedBackground(mask: Uint8Array, { data, width, height }: Rgba, background: readonly [number, number, number]): Uint8Array {
   const total = width * height;
-  const minArea = Math.max(24, Math.round(total * 0.0002));
+  const minArea = 24;
   const near = (index: number) => {
     const offset = index * 4;
     return Math.hypot(data[offset] - background[0], data[offset + 1] - background[1], data[offset + 2] - background[2]) < 30;
@@ -225,6 +289,12 @@ export async function extractSubject(input: {
   readonly concept: string;
   readonly flipbookId: string;
   readonly allowAlpha: boolean;
+  /**
+   * A drawing of several characters: every figure SAM finds is kept (the
+   * union of its masks), not just the largest. It stops looking once it has
+   * found as many figures as `expected`.
+   */
+  readonly group?: { readonly concepts: readonly string[]; readonly expected: number };
   readonly signal?: AbortSignal;
 }): Promise<Extraction> {
   const image = await decodeRgba(input.png);
@@ -248,8 +318,12 @@ export async function extractSubject(input: {
 
   if (!mask && segmentation.segment && readMetaConfig()) {
     try {
+      if (input.group) {
+        const found = await segmentGroup({ png: input.png, width, height, concepts: input.group.concepts, expected: input.group.expected, flipbookId: input.flipbookId, signal: input.signal });
+        if (found) { mask = found; method = "sam"; }
+      }
       // A detailed phrase ("girl with horse ears") can match nothing: fall back to its head noun, then to "character".
-      for (const concept of segmentationConcepts(input.concept)) {
+      if (!input.group) for (const concept of segmentationConcepts(input.concept)) {
         const masks = (await segmentation.segment({ png: input.png, width, height, concept, flipbookId: input.flipbookId, signal: input.signal }))
           .filter((candidate) => candidate.area > total * 0.005 && candidate.area < total * 0.92);
         if (!masks.length) continue;
@@ -276,6 +350,24 @@ export async function extractSubject(input: {
   const opened = method !== "alpha" && border.uniformity >= 0.85 ? removeEnclosedBackground(mask, image, border.rgb) : mask;
   const cleaned = method === "alpha" ? mask : refineEdges(keepMainComponents(opened, width, height), width, height);
   return measureAndCut(image, cleaned, { method, multiple, background: border });
+}
+
+/** The union of the figures SAM finds for each concept, until `expected` figures were found. Null when it finds none. */
+async function segmentGroup(input: { readonly png: Buffer; readonly width: number; readonly height: number; readonly concepts: readonly string[]; readonly expected: number; readonly flipbookId: string; readonly signal?: AbortSignal }): Promise<Uint8Array | null> {
+  const total = input.width * input.height;
+  let union: Uint8Array | null = null;
+  let figures = 0;
+  for (const concept of input.concepts) {
+    const masks = (await segmentation.segment!({ png: input.png, width: input.width, height: input.height, concept, flipbookId: input.flipbookId, signal: input.signal }))
+      .filter((candidate) => candidate.area > total * 0.005 && candidate.area < total * 0.92);
+    for (const candidate of masks) {
+      union ??= new Uint8Array(total);
+      for (let index = 0; index < total; index++) if (candidate.alpha[index] > union[index]) union[index] = candidate.alpha[index];
+      figures++;
+    }
+    if (figures >= input.expected) break;
+  }
+  return union;
 }
 
 async function measureAndCut(image: Rgba, alpha: Uint8Array, info: { method: Measure["method"]; multiple: boolean; background: { rgb: [number, number, number]; uniformity: number } }): Promise<Extraction> {
@@ -359,6 +451,7 @@ async function measureAndCut(image: Rgba, alpha: Uint8Array, info: { method: Mea
       cut[target + 3] = info.method === "alpha" ? Math.min(a, data[source * 4 + 3]) : a;
     }
   }
+  if (decontaminate) despill(cut, crop.width, crop.height, info.background.rgb);
   const cutout = await sharp(cut, { raw: { width: crop.width, height: crop.height, channels: 4 } }).png().toBuffer();
   const edge = 2;
   return {
@@ -385,7 +478,8 @@ async function measureAndCut(image: Rgba, alpha: Uint8Array, info: { method: Mea
 // ── Registration ───────────────────────────────────────────────────────────
 
 export type AlignInput = {
-  readonly frameId: FrameId;
+  /** A key drawing or an in-between: both are registered on the same cell. */
+  readonly frameId: DrawingId;
   readonly version: string;
   readonly phase: string;
   readonly relativeRootY: number;
@@ -408,7 +502,7 @@ export function poseScale(entry: Pick<AlignInput, "relativeRootY" | "measure">):
  * One cell for every drawing. The cell only grows (never shrinks) across
  * re-alignments, so redrawing one frame never shifts the approved ones.
  */
-export function computeAlignment(entries: readonly AlignInput[], previous: FlipbookAlignment | null, action: AnimationAction = "walk"): FlipbookAlignment {
+export function computeAlignment(entries: readonly AlignInput[], previous: FlipbookAlignment | null, action: AnimationAction = "walk", view: string = "side"): FlipbookAlignment {
   const spec = actionSpec(action);
   let needHalf = MIN_CELL_WIDTH / 2 - CELL_MARGIN;
   const placed = entries.map((entry) => {
@@ -438,7 +532,7 @@ export function computeAlignment(entries: readonly AlignInput[], previous: Flipb
   const contact = spec.stride?.contact.length ? span(spec.stride.contact) : null;
   const passing = spec.stride?.passing.length ? span(spec.stride.passing) : null;
   const step = contact !== null && passing !== null ? contact - passing : null;
-  const strideMeasured = step !== null && step >= TARGET_HEIGHT * 0.1 && step <= TARGET_HEIGHT * 0.8;
+  const strideMeasured = view === "side" && step !== null && step >= TARGET_HEIGHT * 0.1 && step <= TARGET_HEIGHT * 0.8;
   return {
     cellWidth,
     cellHeight: CELL_HEIGHT,
@@ -448,6 +542,27 @@ export function computeAlignment(entries: readonly AlignInput[], previous: Flipb
     strideMeasured,
     transforms,
   };
+}
+
+/**
+ * Registration of a scene: the camera is fixed, so no drawing is moved to
+ * match another. Each keeps the place it was drawn at, all at one scale (the
+ * cell is the drawing's own frame, CELL_HEIGHT tall), so the characters move
+ * inside it and only by what the drawings show.
+ */
+export function computeEnsembleAlignment(entries: readonly AlignInput[]): FlipbookAlignment {
+  const scaleOf = (entry: AlignInput) => CELL_HEIGHT / entry.measure.rawHeight;
+  const cellWidth = Math.max(1, ...entries.map((entry) => Math.round(entry.measure.rawWidth * scaleOf(entry))));
+  const transforms: FlipbookAlignment["transforms"] = {};
+  for (const entry of entries) {
+    const scale = scaleOf(entry);
+    const { crop, rawWidth } = entry.measure;
+    // A drawing a little narrower than the cell stays centered in it.
+    const left = Math.round(crop.left * scale + (cellWidth - rawWidth * scale) / 2);
+    const top = Math.round(crop.top * scale);
+    transforms[entry.frameId] = { version: entry.version, scale: Number(scale.toFixed(6)), left, top, key: transformKey([entry.version, scale.toFixed(6), left, top, cellWidth, CELL_HEIGHT]) };
+  }
+  return { cellWidth, cellHeight: CELL_HEIGHT, baselineY: CELL_HEIGHT, targetHeight: CELL_HEIGHT, strideX: 0, strideMeasured: false, transforms };
 }
 
 /** Places an image on a transparent canvas, clipping whatever falls outside. */

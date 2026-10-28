@@ -10,6 +10,18 @@ import { growMask } from "./reference-manager";
 // upload's own, byte for byte.
 
 export const LIVING_FPS = 24;
+/**
+ * The character moves on twos (12 drawings a second), the way anime animates
+ * characters: each pose holds for two frames, crisp, instead of sliding
+ * continuously like a puppet warp. The camera, the sky and floating pieces
+ * keep moving on every frame, like a pan behind held drawings.
+ */
+export const LIVING_BODY_HOLD = 2;
+
+/** Loop time of the character's pose at an output frame: it steps every LIVING_BODY_HOLD frames. */
+export function bodyTime(frame: number, frames: number): number {
+  return (frame - (frame % LIVING_BODY_HOLD)) / frames;
+}
 
 export type LivingStrength = number;
 
@@ -27,6 +39,8 @@ export type LivingScene = {
   readonly sky: { readonly mask: Uint8Array; readonly strength: LivingStrength } | null;
   /** The way the wind blows: 1 to the right, -1 to the left. */
   readonly wind: 1 | -1;
+  /** The eyes closed (the whole picture, used only where `alpha` is): a blink once per loop. */
+  readonly blink?: { readonly rgb: Buffer; readonly alpha: Float32Array; readonly at: number; readonly length: number } | null;
 };
 
 type Sprite = {
@@ -50,7 +64,18 @@ type Sprite = {
   readonly behind: boolean;
 };
 
-type Flow = { readonly weight: Float32Array; readonly phase: Float32Array; readonly amplitude: number };
+type Flow = {
+  readonly weight: Float32Array;
+  readonly phase: Float32Array;
+  readonly amplitude: number;
+  /** How much of a wave travels from root to tip, in radians. */
+  readonly wave: number;
+};
+
+/** A tip travels at most this share of its part's length; more, and a short part folds over itself. */
+const MAX_REACH_OF_LENGTH = 0.25;
+/** The steepest a bend may get (pixels moved per pixel along the part) before the picture folds. */
+const MAX_BEND = 0.5;
 
 export type PreparedLiving = {
   readonly width: number;
@@ -62,11 +87,14 @@ export type PreparedLiving = {
   /** Pixels some displacement reaches, and per field its weight there. */
   readonly active: Int32Array;
   readonly breath: { readonly weight: Float32Array; readonly bottom: number; readonly strength: number } | null;
-  /** The character's soft coverage, for sprites passing behind it. */
+  /** The character's soft coverage, for sprites passing behind it and for the "depth" camera. */
   readonly cover: Float32Array | null;
+  /** The character with its painted glow and the room breathing moves it, for "depth": the scene replaces all of it behind. */
+  readonly wideCover: Float32Array | null;
   readonly flows: readonly Flow[];
   readonly sprites: readonly Sprite[];
   readonly wind: 1 | -1;
+  readonly blink: { readonly indices: Int32Array; readonly alpha: Float32Array; readonly rgb: Buffer; readonly at: number; readonly length: number } | null;
 };
 
 // ── Field helpers ──────────────────────────────────────────────────────────
@@ -209,7 +237,7 @@ export const BREATH_DEPTH = 0.007;
 /** Sky drift per loop, as a share of the width. */
 export const SKY_DRIFT = 0.04;
 
-export function prepareLiving(scene: LivingScene): PreparedLiving {
+export function prepareLiving(scene: LivingScene, options: { readonly cover?: boolean } = {}): PreparedLiving {
   const { width, height, rgb } = scene;
   const total = width * height;
   const long = Math.max(width, height);
@@ -284,12 +312,21 @@ export function prepareLiving(scene: LivingScene): PreparedLiving {
     bottom = 0;
     for (let i = 0; i < total; i++) if (bodyInside[i]) bottom = Math.max(bottom, Math.floor(i / width));
   }
-  const flowFields: { weight: Float32Array; phase: Float32Array; amplitude: number }[] = [];
+  const flowFields: Flow[] = [];
   for (const flow of scene.flows) {
     if (flow.strength <= 0) continue;
-    // Wider falloff than the body's: a flowing tip travels far, and what's around it must follow smoothly.
-    const field = flowField(growMask(flow.mask, width, height, 2 * fringe), bodyInside, width, height, 2 * radius);
-    if (field) flowFields.push({ ...field, amplitude: flow.strength * FLOW_REACH * long });
+    // What's around a flowing part follows it over more than its tip's whole travel: a shorter
+    // reach would stop the picture before the tip and cut the part off at the field's edge.
+    const asked = flow.strength * FLOW_REACH * long;
+    // Three times the travel keeps the bend gentle enough that the picture never folds over itself.
+    // Grown for its painted glow, but only over the background: never into the rest of the character.
+    const grown = growMask(flow.mask, width, height, 2 * fringe);
+    if (bodyInside) for (let i = 0; i < total; i++) if (bodyInside[i] && flow.mask[i] < 128) grown[i] = 0;
+    const field = flowField(grown, bodyInside, width, height, Math.max(4 * radius, Math.ceil(asked * 3)));
+    if (!field) continue;
+    // A short part (a tail) moves less and carries less of a wave than a long one (a ponytail).
+    const amplitude = Math.min(asked, MAX_REACH_OF_LENGTH * field.length);
+    flowFields.push({ weight: field.weight, phase: field.phase, amplitude, wave: Math.min(1.5 * Math.PI, (MAX_BEND * field.length) / Math.max(1, amplitude)) });
   }
 
   const active: number[] = [];
@@ -304,11 +341,36 @@ export function prepareLiving(scene: LivingScene): PreparedLiving {
     sky,
     active: Int32Array.from(active),
     breath: bodyWeight && scene.body ? { weight: pick(bodyWeight), bottom, strength: scene.body.strength } : null,
-    cover: bodyInside && sprites.some((sprite) => sprite.behind) ? blurField(Float32Array.from(bodyInside), width, height, 1) : null,
-    flows: flowFields.map((field) => ({ weight: pick(field.weight), phase: pick(field.phase), amplitude: field.amplitude })),
+    // Kept when sprites pass behind the character, or when the camera moves it apart from the background
+    // (then a pixel or two wider, so its outline goes with it).
+    cover: bodyInside && (options.cover || sprites.some((sprite) => sprite.behind))
+      ? blurField(Float32Array.from(options.cover ? binary(growMask(scene.body!.mask, width, height, 2)) : bodyInside), width, height, 1)
+      : null,
+    wideCover: bodyInside && options.cover ? blurField(Float32Array.from(binary(growMask(scene.body!.mask, width, height, 3 * fringe + Math.ceil(BREATH_DEPTH * height)))), width, height, fringe) : null,
+    flows: flowFields.map((field) => ({ weight: pick(field.weight), phase: pick(field.phase), amplitude: field.amplitude, wave: field.wave })),
     sprites,
     wind: scene.wind,
+    blink: blinkOf(scene),
   };
+}
+
+function blinkOf(scene: LivingScene): PreparedLiving["blink"] {
+  if (!scene.blink) return null;
+  const indices: number[] = [];
+  for (let i = 0; i < scene.blink.alpha.length; i++) if (scene.blink.alpha[i] > 1e-3) indices.push(i);
+  if (!indices.length) return null;
+  return { indices: Int32Array.from(indices), alpha: Float32Array.from(indices, (i) => scene.blink!.alpha[i]), rgb: scene.blink.rgb, at: scene.blink.at, length: scene.blink.length };
+}
+
+/**
+ * How closed the eyes are at loop time t: shutting over the first quarter
+ * of the blink, shut for half, opening over the last quarter. Pure.
+ */
+export function blinkAmount(t: number, at: number, length: number): number {
+  const into = (((t - at) % 1) + 1) % 1;
+  if (into >= length) return 0;
+  const step = into / length;
+  return step < 0.25 ? step / 0.25 : step < 0.75 ? 1 : (1 - step) / 0.25;
 }
 
 /** Connected groups of set pixels, each with a way to list its surrounding ring. */
@@ -345,12 +407,41 @@ function* componentsOf(mask: Uint8Array, width: number, height: number): Generat
 }
 
 /**
- * A flowing part's weight (0 at its root, 1 at its farthest tip) and wave
- * phase, spread a little past its edge so what's around it bends along
- * instead of tearing. The root is where it touches the rest of the body;
- * without a body, its top.
+ * For every pixel, the nearest set pixel and how far it is (two raster
+ * passes propagating the nearest source, Euclidean distance to it). Pure.
  */
-function flowField(mask: Uint8Array, body: Uint8Array | null, width: number, height: number, radius: number): { weight: Float32Array; phase: Float32Array } | null {
+export function nearestSet(mask: Uint8Array, width: number, height: number): { distance: Float32Array; source: Int32Array } {
+  const distance = new Float32Array(width * height).fill(Infinity);
+  const source = new Int32Array(width * height).fill(-1);
+  for (let i = 0; i < mask.length; i++) if (mask[i]) { distance[i] = 0; source[i] = i; }
+  const visit = (index: number, x: number, y: number, nx: number, ny: number) => {
+    if (nx < 0 || ny < 0 || nx >= width || ny >= height) return;
+    const from = source[ny * width + nx];
+    if (from < 0) return;
+    const fx = from % width, fy = (from - fx) / width;
+    const d = Math.hypot(x - fx, y - fy);
+    if (d < distance[index]) { distance[index] = d; source[index] = from; }
+  };
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+    const index = y * width + x;
+    visit(index, x, y, x - 1, y); visit(index, x, y, x - 1, y - 1); visit(index, x, y, x, y - 1); visit(index, x, y, x + 1, y - 1);
+  }
+  for (let y = height - 1; y >= 0; y--) for (let x = width - 1; x >= 0; x--) {
+    const index = y * width + x;
+    visit(index, x, y, x + 1, y); visit(index, x, y, x + 1, y + 1); visit(index, x, y, x, y + 1); visit(index, x, y, x - 1, y + 1);
+  }
+  return { distance, source };
+}
+
+/**
+ * A flowing part's weight (0 at its root, 1 at its farthest tip) and wave
+ * phase. Past its edge, each pixel takes the weight of the part's nearest
+ * pixel, fading to nothing over `reach` (a cosine), so the background
+ * around the part bends along continuously instead of tearing at its
+ * outline; the rest of the character never does. The root is where it
+ * touches the rest of the body; without a body, its top.
+ */
+function flowField(mask: Uint8Array, body: Uint8Array | null, width: number, height: number, reach: number): { weight: Float32Array; phase: Float32Array; length: number } | null {
   const total = width * height;
   const inside = binary(mask);
   const roots = new Uint8Array(total);
@@ -370,29 +461,23 @@ function flowField(mask: Uint8Array, body: Uint8Array | null, width: number, hei
   const distance = geodesicDistance(inside, roots, width, height);
   let far = 1;
   for (const value of distance) if (value > far) far = value;
-  const own = new Float32Array(total);
-  const span = new Float32Array(total);
-  const alpha = new Float32Array(total);
-  for (let i = 0; i < total; i++) {
-    if (!inside[i]) continue;
-    const s = distance[i] < 0 ? 1 : distance[i] / far;
-    alpha[i] = 1;
-    own[i] = s ** 1.6;
-    span[i] = s;
-  }
-  // Around the part: the nearby weighted average, fading out with distance.
-  const den = blurField(alpha, width, height, radius);
-  const num = blurField(own, width, height, radius);
-  const phaseNum = blurField(span, width, height, radius);
   const weight = new Float32Array(total);
   const phase = new Float32Array(total);
   for (let i = 0; i < total; i++) {
-    if (inside[i]) { weight[i] = own[i]; phase[i] = span[i]; continue; }
-    if (den[i] < 1e-3) continue;
-    weight[i] = (num[i] / den[i]) * Math.min(1, den[i] * 2);
-    phase[i] = phaseNum[i] / den[i];
+    if (!inside[i]) continue;
+    const s = distance[i] < 0 ? 1 : distance[i] / far;
+    weight[i] = s ** 1.6;
+    phase[i] = s;
   }
-  return { weight, phase };
+  const near = nearestSet(inside, width, height);
+  for (let i = 0; i < total; i++) {
+    // Only the background bends along: the rest of the character (a leg a tail hangs behind) keeps its shape.
+    if (inside[i] || near.distance[i] >= reach || (body && body[i])) continue;
+    const from = near.source[i];
+    weight[i] = weight[from] * 0.5 * (1 + Math.cos((Math.PI * near.distance[i]) / reach));
+    phase[i] = phase[from];
+  }
+  return { weight, phase, length: far };
 }
 
 function cutSprite(rgb: Buffer, mask: Uint8Array, width: number, height: number): Omit<Sprite, "motion" | "strength" | "laps" | "phase" | "behind"> | null {
@@ -426,11 +511,22 @@ function cutSprite(rgb: Buffer, mask: Uint8Array, width: number, height: number)
 // ── Frames ─────────────────────────────────────────────────────────────────
 
 /** One frame at loop time t ∈ [0, 1), RGBA. */
-export function livingFrame(prepared: PreparedLiving, t: number): Buffer {
+export function livingFrame(prepared: PreparedLiving, t: number, body = t): Buffer {
+  return livingLayers(prepared, t, body).rgba;
+}
+
+/**
+ * One frame, and where the character covers it at that moment (0..1, when
+ * the character is kept). `body` is the loop time of the character's own
+ * motion (breathing, flowing parts, the blink), held on twos by the renderer
+ * (bodyTime); the sky and floating pieces follow `t`.
+ */
+export function livingLayers(prepared: PreparedLiving, t: number, body = t): { rgba: Buffer; cover: Float32Array | null } {
   const { width, height, base } = prepared;
   const total = width * height;
   const phase = ((t % 1) + 1) % 1;
-  const turn = 2 * Math.PI * phase;
+  const pose = ((body % 1) + 1) % 1;
+  const turn = 2 * Math.PI * pose;
 
   // The background at t: the base, with the sky drifting (two shifted copies
   // crossfaded, so the drift loops).
@@ -446,6 +542,19 @@ export function livingFrame(prepared: PreparedLiving, t: number): Buffer {
       for (let c = 0; c < 3; c++) {
         const drift = sampleRow(plate, width, y, x - a, c) * (1 - phase) + sampleRow(plate, width, y, x - b, c) * phase;
         backdrop[index * 3 + c] = Math.round(base[index * 3 + c] * (1 - weight) + drift * weight);
+      }
+    }
+  }
+
+  // The blink: the closed eyes faded in over the open ones, before anything bends, so they move with the face.
+  if (prepared.blink) {
+    const shut = blinkAmount(pose, prepared.blink.at, prepared.blink.length);
+    if (shut > 0) {
+      if (backdrop === base) backdrop = Buffer.from(base);
+      const { indices, alpha, rgb: closed } = prepared.blink;
+      for (let k = 0; k < indices.length; k++) {
+        const index = indices[k], w = alpha[k] * shut;
+        for (let c = 0; c < 3; c++) backdrop[index * 3 + c] = Math.round(backdrop[index * 3 + c] * (1 - w) + closed[index * 3 + c] * w);
       }
     }
   }
@@ -477,7 +586,7 @@ export function livingFrame(prepared: PreparedLiving, t: number): Buffer {
     for (const flow of flows) {
       const w = flow.weight[k];
       if (w <= 0) continue;
-      const angle = turn - 1.5 * Math.PI * flow.phase[k];
+      const angle = turn - flow.wave * flow.phase[k];
       dx += flow.amplitude * w * Math.sin(angle) * prepared.wind;
       dy += flow.amplitude * w * 0.35 * Math.cos(angle);
     }
@@ -487,7 +596,7 @@ export function livingFrame(prepared: PreparedLiving, t: number): Buffer {
   }
 
   for (const sprite of prepared.sprites) drawSprite(out, width, height, sprite, phase, prepared.wind, sprite.behind ? cover : null);
-  return out;
+  return { rgba: out, cover };
 }
 
 function sampleField(field: Float32Array, width: number, height: number, x: number, y: number): number {
@@ -567,4 +676,179 @@ function samplePremultiplied(sprite: Sprite, x: number, y: number): [number, num
     for (let c = 0; c < 4; c++) out[c] += sprite.data[index + c] * weight;
   }
   return out;
+}
+
+// ── Framing ────────────────────────────────────────────────────────────────
+
+/** How much closer a moving camera gets, at most. */
+export const CAMERA_ZOOM = 0.08;
+
+export type View = { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
+
+/** The video's size for an aspect: the picture's own, or the largest crop of that shape. Even sides, as H.264 needs. */
+export function framedSize(aspect: "original" | "9:16" | "1:1", width: number, height: number): { width: number; height: number } {
+  if (aspect === "original") return { width: width & ~1, height: height & ~1 };
+  const ratio = aspect === "9:16" ? 9 / 16 : 1;
+  const fit = width / height > ratio ? { width: Math.round(height * ratio), height } : { width, height: Math.round(width / ratio) };
+  return { width: fit.width & ~1, height: fit.height & ~1 };
+}
+
+/** Share of the character's height, from its top, that sets where a narrow crop looks: the head and shoulders. */
+const FOCUS_TOP = 0.4;
+
+/**
+ * Where the camera looks: across, the center of mass of the character's top
+ * (its head and hair, not an outstretched arm's reach); down, the middle of
+ * the character. The picture's middle without one.
+ */
+export function focusOf(mask: Uint8Array | null, width: number, height: number): { x: number; y: number } {
+  let top = height, bottom = -1;
+  if (mask) for (let i = 0; i < mask.length; i++) {
+    if (mask[i] < 128) continue;
+    const y = Math.floor(i / width);
+    if (y < top) top = y;
+    if (y > bottom) bottom = y;
+  }
+  if (!mask || bottom < 0) return { x: width / 2, y: height / 2 };
+  const limit = top + (bottom - top + 1) * FOCUS_TOP;
+  let sum = 0, count = 0;
+  for (let y = top; y < limit; y++) for (let x = 0; x < width; x++) if (mask[y * width + x] >= 128) { sum += x; count++; }
+  return { x: sum / count, y: (top + bottom + 1) / 2 };
+}
+
+/**
+ * The part of the picture shown at loop time t: a crop of the video's shape
+ * around the focus, closer during a slow zoom (in and back out), sliding
+ * side to side for a pan. Periodic, so the loop still closes; always inside
+ * the picture.
+ */
+export function cameraView(camera: "still" | "zoom" | "pan", t: number, source: { width: number; height: number }, crop: { width: number; height: number }, focus: { x: number; y: number }): View {
+  const turn = 2 * Math.PI * (((t % 1) + 1) % 1);
+  const zoom = camera === "zoom" ? 1 + (CAMERA_ZOOM * (1 - Math.cos(turn))) / 2 : camera === "pan" ? 1 + CAMERA_ZOOM : 1;
+  const width = crop.width / zoom, height = crop.height / zoom;
+  // A pan travels across the room the zoom makes inside the crop.
+  const x = focus.x + (camera === "pan" ? ((crop.width - width) / 2) * Math.sin(turn) : 0);
+  const clamp = (value: number, size: number, limit: number) => Math.min(Math.max(0, value - size / 2), limit - size);
+  return { x: clamp(x, width, source.width), y: clamp(focus.y, height, source.height), width, height };
+}
+
+/** How much more the character slides than the background with the "depth" camera: it is nearer. */
+export const DEPTH_NEAR = 1;
+export const DEPTH_FAR = 0.35;
+
+/**
+ * The "depth" camera: one slightly closer view per layer, the background's
+ * sliding a little and the character's more, side to side over the loop, as
+ * when a camera passes a near subject in front of a far scene. Periodic.
+ */
+export function depthViews(t: number, source: { width: number; height: number }, crop: { width: number; height: number }, focus: { x: number; y: number }): { back: View; front: View } {
+  const turn = 2 * Math.PI * (((t % 1) + 1) % 1);
+  const zoom = 1 + CAMERA_ZOOM;
+  const width = crop.width / zoom, height = crop.height / zoom;
+  const room = (crop.width - width) / 2;
+  const clamp = (value: number, size: number, limit: number) => Math.min(Math.max(0, value - size / 2), limit - size);
+  const at = (share: number): View => ({ x: clamp(focus.x + room * share * Math.sin(turn), width, source.width), y: clamp(focus.y, height, source.height), width, height });
+  return { back: at(DEPTH_FAR), front: at(DEPTH_NEAR) };
+}
+
+/** A 0..1 field seen through a view, resized to the video, bilinear. */
+export function viewField(field: Float32Array, sourceWidth: number, sourceHeight: number, view: View, width: number, height: number): Float32Array {
+  const out = new Float32Array(width * height);
+  const sx = view.width / width, sy = view.height / height;
+  for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) out[y * width + x] = sampleField(field, sourceWidth, sourceHeight, view.x + (x + 0.5) * sx - 0.5, view.y + (y + 0.5) * sy - 0.5);
+  return out;
+}
+
+/**
+ * A "depth" frame: the background (the frame with the character's place
+ * taken from the scene plate) through its view, the character through its
+ * own, laid over it by its coverage. What the character uncovers as it
+ * slides is the plate, never a hole.
+ */
+export function depthFrame(rgba: Buffer, cover: Float32Array, plate: Buffer, sourceWidth: number, sourceHeight: number, views: { back: View; front: View }, width: number, height: number, behind: Float32Array = cover): Buffer {
+  // Behind the character, its glow included (`behind`): the scene, so no outline is left on the background as it slides.
+  const background = Buffer.from(rgba);
+  for (let i = 0; i < behind.length; i++) {
+    const k = behind[i];
+    if (k <= 0) continue;
+    for (let c = 0; c < 3; c++) background[i * 4 + c] = Math.round(rgba[i * 4 + c] * (1 - k) + plate[i * 3 + c] * k);
+  }
+  const back = viewFrame(background, sourceWidth, sourceHeight, views.back, width, height);
+  const front = viewFrame(rgba, sourceWidth, sourceHeight, views.front, width, height);
+  const alpha = viewField(cover, sourceWidth, sourceHeight, views.front, width, height);
+  for (let i = 0; i < alpha.length; i++) {
+    const a = alpha[i];
+    if (a <= 0) continue;
+    for (let c = 0; c < 3; c++) back[i * 4 + c] = Math.round(back[i * 4 + c] * (1 - a) + front[i * 4 + c] * a);
+  }
+  return back;
+}
+
+/** The view, resized to the video. A view as large as the video is copied pixel for pixel. */
+export function viewFrame(rgba: Buffer, sourceWidth: number, sourceHeight: number, view: View, width: number, height: number): Buffer {
+  const out = Buffer.alloc(width * height * 4);
+  if (Math.abs(view.width - width) < 1e-6 && Math.abs(view.height - height) < 1e-6) {
+    const left = Math.round(view.x), top = Math.round(view.y);
+    for (let y = 0; y < height; y++) rgba.copy(out, y * width * 4, ((top + y) * sourceWidth + left) * 4, ((top + y) * sourceWidth + left + width) * 4);
+    return out;
+  }
+  const sx = view.width / width, sy = view.height / height;
+  for (let y = 0; y < height; y++) {
+    const fy = Math.min(sourceHeight - 1, Math.max(0, view.y + (y + 0.5) * sy - 0.5));
+    const y0 = Math.floor(fy), y1 = Math.min(sourceHeight - 1, y0 + 1), wy = fy - y0;
+    for (let x = 0; x < width; x++) {
+      const fx = Math.min(sourceWidth - 1, Math.max(0, view.x + (x + 0.5) * sx - 0.5));
+      const x0 = Math.floor(fx), x1 = Math.min(sourceWidth - 1, x0 + 1), wx = fx - x0;
+      const target = (y * width + x) * 4;
+      for (let c = 0; c < 3; c++) {
+        const top = rgba[(y0 * sourceWidth + x0) * 4 + c] * (1 - wx) + rgba[(y0 * sourceWidth + x1) * 4 + c] * wx;
+        const bottom = rgba[(y1 * sourceWidth + x0) * 4 + c] * (1 - wx) + rgba[(y1 * sourceWidth + x1) * 4 + c] * wx;
+        out[target + c] = Math.round(top * (1 - wy) + bottom * wy);
+      }
+      out[target + 3] = 255;
+    }
+  }
+  return out;
+}
+
+// ── Picking a part ─────────────────────────────────────────────────────────
+
+/** A step to a neighboring pixel larger than this is an edge (a line, a different color). */
+export const PICK_STEP = 12;
+/** How far from the clicked color a part may drift through a gradient. */
+export const PICK_RANGE = 90;
+
+/**
+ * The part around a clicked pixel, the way a cel-shaded drawing separates
+ * its parts: grow while each step to a neighbor changes the color only a
+ * little (following shading gradients) and stays within range of the
+ * clicked color, never past `inside` (the character). Then close the small
+ * gaps that thin lines inside the part leave. Null when the click isn't
+ * inside. Pure.
+ */
+export function pickPart(rgb: Buffer, width: number, height: number, x: number, y: number, inside: Uint8Array | null): Uint8Array | null {
+  const seed = y * width + x;
+  if (x < 0 || y < 0 || x >= width || y >= height || (inside && inside[seed] < 128)) return null;
+  const distance = (a: number, b: number) => Math.hypot(rgb[a * 3] - rgb[b * 3], rgb[a * 3 + 1] - rgb[b * 3 + 1], rgb[a * 3 + 2] - rgb[b * 3 + 2]);
+  const picked = new Uint8Array(width * height);
+  picked[seed] = 255;
+  const stack = [seed];
+  while (stack.length) {
+    const index = stack.pop()!;
+    const px = index % width;
+    for (const next of [px > 0 ? index - 1 : -1, px < width - 1 ? index + 1 : -1, index - width, index + width]) {
+      if (next < 0 || next >= picked.length || picked[next]) continue;
+      if (inside && inside[next] < 128) continue;
+      if (distance(next, index) > PICK_STEP || distance(next, seed) > PICK_RANGE) continue;
+      picked[next] = 255;
+      stack.push(next);
+    }
+  }
+  // Closing: grow, then shrink back (grow the outside), so line-thin gaps fill and the outline stays.
+  const radius = Math.max(2, Math.round(Math.max(width, height) * 0.002));
+  const grown = growMask(picked, width, height, radius);
+  const outside = growMask(grown.map((value) => (value >= 128 ? 0 : 255)), width, height, radius);
+  const closed = new Uint8Array(width * height);
+  for (let i = 0; i < closed.length; i++) closed[i] = outside[i] < 128 && (!inside || inside[i] >= 128) ? 255 : 0;
+  return closed;
 }

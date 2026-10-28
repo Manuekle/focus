@@ -1,6 +1,8 @@
 import { z } from "zod";
 import { ConceptSchema } from "./schemas";
 import { PoseIdSchema } from "./pose-library";
+import { CharacterSourceSchema } from "./characters";
+import { CameraViewSchema, ViewPreferenceSchema } from "./animation-view";
 
 // Focus Flipbook: one character illustration becomes a short cycle of real,
 // distinct drawings. Contracts shared by the studio, the API routes and the
@@ -46,8 +48,32 @@ export type FlipbookImage = z.infer<typeof FlipbookImageSchema>;
 // but never reorder, drop or invent a phase.
 
 export const ANIMATION_ACTIONS = ["walk", "run", "fight", "jump", "wave", "idle"] as const;
-export const AnimationActionSchema = z.enum(ANIMATION_ACTIONS);
+/** The six actions of one character: eight fixed phases that loop. */
+export const CycleActionSchema = z.enum(ANIMATION_ACTIONS);
+export type CycleAction = z.infer<typeof CycleActionSchema>;
+
+/**
+ * Several saved characters drawn together in every frame (a fight, a dance, a
+ * chase). It is not a cycle: its length is the duration the person picks, at
+ * a fixed pace, and every drawing is a beat of one choreographed scene.
+ */
+export const ENSEMBLE_ACTION = "ensemble" as const;
+export const AnimationActionSchema = z.enum([...ANIMATION_ACTIONS, ENSEMBLE_ACTION]);
 export type AnimationAction = z.infer<typeof AnimationActionSchema>;
+
+/** Drawings per second of a scene: on threes at 24 fps, so a scene lasts exactly as long as its drawings. */
+export const ENSEMBLE_FPS = 8;
+export const MIN_ENSEMBLE_SECONDS = 1;
+export const MAX_ENSEMBLE_SECONDS = 6;
+export const MIN_CAST = 2;
+export const MAX_CAST = 4;
+/** The most drawings an animation can hold: a scene of the longest duration. */
+export const MAX_FRAMES = MAX_ENSEMBLE_SECONDS * ENSEMBLE_FPS;
+
+/** Drawings a scene of this length needs. */
+export function ensembleDrawings(seconds: number): number {
+  return seconds * ENSEMBLE_FPS;
+}
 
 export const WALK_PHASES = ["left_contact", "left_down", "left_passing", "left_up", "right_contact", "right_down", "right_passing", "right_up"] as const;
 export const RUN_PHASES = ["left_strike", "left_load", "left_drive", "left_float", "right_strike", "right_load", "right_drive", "right_float"] as const;
@@ -56,7 +82,12 @@ export const JUMP_PHASES = ["jump_ready", "jump_crouch", "jump_push", "jump_rise
 export const WAVE_PHASES = ["wave_rest", "wave_raise", "wave_up", "wave_out", "wave_in", "wave_out_again", "wave_in_again", "wave_lower"] as const;
 export const IDLE_PHASES = ["idle_rest", "idle_inhale", "idle_full", "idle_blink", "idle_exhale", "idle_settle", "idle_sway", "idle_return"] as const;
 
-export const PhaseSchema = z.enum([...WALK_PHASES, ...RUN_PHASES, ...FIGHT_PHASES, ...JUMP_PHASES, ...WAVE_PHASES, ...IDLE_PHASES]);
+const CyclePhaseSchema = z.enum([...WALK_PHASES, ...RUN_PHASES, ...FIGHT_PHASES, ...JUMP_PHASES, ...WAVE_PHASES, ...IDLE_PHASES]);
+/** The phase of the nth drawing of a scene: beat_0, beat_1, … */
+export type BeatPhase = `beat_${number}`;
+export const beatPhase = (index: number): BeatPhase => `beat_${index}`;
+const BeatPhaseSchema = z.custom<BeatPhase>((value) => typeof value === "string" && /^beat_(?:[0-9]|[1-3][0-9]|4[0-7])$/.test(value));
+export const PhaseSchema = z.union([CyclePhaseSchema, BeatPhaseSchema]);
 export type Phase = z.infer<typeof PhaseSchema>;
 /** Kept for the walk-only call sites and tests. */
 export const WalkPhaseSchema = z.enum(WALK_PHASES);
@@ -74,6 +105,13 @@ export type PoseSpec = {
   readonly relativeRootY: number;
   /** How far the lowest foot floats above the ground line, as a share of body height (a run's flight). */
   readonly lift: number;
+  /**
+   * Output frames (24 fps) this drawing stays on screen at 8 and at 12
+   * drawings per second: anime timing, where the anticipation and the hit
+   * hold and the fast part goes by on ones. Absent, every drawing is held
+   * evenly (on threes or twos), as a walk or a run should be.
+   */
+  readonly hold?: readonly [atEight: number, atTwelve: number];
 };
 
 const half = (lead: "left" | "right"): readonly PoseSpec[] => {
@@ -146,15 +184,16 @@ const runHalf = (lead: "left" | "right"): readonly PoseSpec[] => {
   ] as PoseSpec[];
 };
 
+// Each column of holds sums to one cycle (24 frames at 8/s, 16 at 12/s).
 const FIGHT_POSES: readonly PoseSpec[] = [
-  { phase: "guard", label: "Guard", constraints: "Fighting stance, side view: feet a shoulder-width apart, lead foot forward, knees slightly bent; both fists up by the chin, elbows tucked, chin down, eyes forward.", relativeRootY: 0, lift: 0 },
-  { phase: "jab_load", label: "Jab load", constraints: "Weight shifts slightly onto the front foot; the lead fist starts moving forward from the chin; the rear fist stays guarding the face. Feet planted.", relativeRootY: -0.005, lift: 0 },
-  { phase: "jab_hit", label: "Jab", constraints: "The lead arm is fully extended straight forward at shoulder height, fist closed, lead shoulder raised to protect the chin; the rear fist guards the face. Feet planted in the stance.", relativeRootY: 0, lift: 0 },
-  { phase: "jab_return", label: "Jab return", constraints: "The lead fist snaps back halfway toward the chin; the stance is unchanged, rear fist still guarding.", relativeRootY: 0, lift: 0 },
-  { phase: "cross_load", label: "Cross load", constraints: "The rear hip and shoulder start rotating forward and the rear heel lifts; the lead fist is back at the chin, the rear fist starts forward.", relativeRootY: -0.005, lift: 0 },
-  { phase: "cross_hit", label: "Cross", constraints: "The rear arm is fully extended straight forward at shoulder height, torso rotated forward, rear heel raised and pivoted; the lead fist guards the chin. Feet stay in place.", relativeRootY: 0, lift: 0 },
-  { phase: "cross_return", label: "Cross return", constraints: "The rear fist pulls back toward the chin and the torso rotates back toward the stance; feet in place.", relativeRootY: 0, lift: 0 },
-  { phase: "guard_bounce", label: "Guard bounce", constraints: "Back in the fighting stance with the knees bent a little more, a small bounce on the balls of the feet; both fists up by the chin.", relativeRootY: -0.02, lift: 0 },
+  { phase: "guard", label: "Guard", constraints: "Fighting stance, side view: feet a shoulder-width apart, lead foot forward, knees slightly bent; both fists up by the chin, elbows tucked, chin down, eyes forward.", relativeRootY: 0, lift: 0, hold: [4, 3] },
+  { phase: "jab_load", label: "Jab load", constraints: "Weight shifts slightly onto the front foot; the lead fist starts moving forward from the chin; the rear fist stays guarding the face. Feet planted.", relativeRootY: -0.005, lift: 0, hold: [2, 1] },
+  { phase: "jab_hit", label: "Jab", constraints: "The lead arm is fully extended straight forward at shoulder height, fist closed, lead shoulder raised to protect the chin; the rear fist guards the face. Feet planted in the stance.", relativeRootY: 0, lift: 0, hold: [4, 3] },
+  { phase: "jab_return", label: "Jab return", constraints: "The lead fist snaps back halfway toward the chin; the stance is unchanged, rear fist still guarding.", relativeRootY: 0, lift: 0, hold: [2, 1] },
+  { phase: "cross_load", label: "Cross load", constraints: "The rear hip and shoulder start rotating forward and the rear heel lifts; the lead fist is back at the chin, the rear fist starts forward.", relativeRootY: -0.005, lift: 0, hold: [2, 1] },
+  { phase: "cross_hit", label: "Cross", constraints: "The rear arm is fully extended straight forward at shoulder height, torso rotated forward, rear heel raised and pivoted; the lead fist guards the chin. Feet stay in place.", relativeRootY: 0, lift: 0, hold: [4, 3] },
+  { phase: "cross_return", label: "Cross return", constraints: "The rear fist pulls back toward the chin and the torso rotates back toward the stance; feet in place.", relativeRootY: 0, lift: 0, hold: [3, 2] },
+  { phase: "guard_bounce", label: "Guard bounce", constraints: "Back in the fighting stance with the knees bent a little more, a small bounce on the balls of the feet; both fists up by the chin.", relativeRootY: -0.02, lift: 0, hold: [3, 2] },
 ];
 
 // Jump, wave and idle stay on the spot. Heights follow the bob chart: a
@@ -165,14 +204,14 @@ const FIGHT_POSES: readonly PoseSpec[] = [
 const HANDS = "Hands stay at or below the top of the head.";
 
 const JUMP_POSES: readonly PoseSpec[] = [
-  { phase: "jump_ready", label: "Ready", constraints: `Standing, side view, knees softly bent, weight on both feet, arms relaxed slightly behind the hips, looking ahead. ${HANDS}`, relativeRootY: -0.04, lift: 0 },
-  { phase: "jump_crouch", label: "Crouch", constraints: `A deep crouch to load the jump: knees and hips strongly bent, torso leaning forward, both feet flat on the ground, both arms swung far back behind the body. The body is clearly shorter than standing. ${HANDS}`, relativeRootY: -0.22, lift: 0 },
-  { phase: "jump_push", label: "Push off", constraints: `Exploding upward: legs almost straight, rising onto the toes, heels off the ground, torso upright, both arms swinging forward and up to shoulder height. ${HANDS}`, relativeRootY: 0.02, lift: 0 },
-  { phase: "jump_rise", label: "Rise", constraints: `Just left the ground: both feet in the air with the toes pointing down, legs straight and together, body stretched tall, arms forward at shoulder height. ${HANDS}`, relativeRootY: 0.02, lift: 0.07 },
-  { phase: "jump_apex", label: "Apex", constraints: `The top of the jump: both knees tucked up toward the chest, feet well off the ground, arms forward for balance, hair and clothing floating slightly. The body is compact, clearly shorter than standing. ${HANDS}`, relativeRootY: -0.14, lift: 0.14 },
-  { phase: "jump_fall", label: "Fall", constraints: `Coming down: legs extending toward the ground, feet still in the air, arms spread out to the sides for balance, hair and clothing trailing upward. ${HANDS}`, relativeRootY: 0, lift: 0.07 },
-  { phase: "jump_land", label: "Land", constraints: `Touchdown: both feet flat on the ground, knees deeply bent to absorb the landing, torso leaning forward, arms forward and down. The body is clearly shorter than standing. ${HANDS}`, relativeRootY: -0.16, lift: 0 },
-  { phase: "jump_recover", label: "Recover", constraints: `Rising out of the landing back toward the ready stance: knees half bent, torso upright, arms coming back down beside the hips. ${HANDS}`, relativeRootY: -0.07, lift: 0 },
+  { phase: "jump_ready", label: "Ready", constraints: `Standing, side view, knees softly bent, weight on both feet, arms relaxed slightly behind the hips, looking ahead. ${HANDS}`, relativeRootY: -0.04, lift: 0, hold: [3, 2] },
+  { phase: "jump_crouch", label: "Crouch", constraints: `A deep crouch to load the jump: knees and hips strongly bent, torso leaning forward, both feet flat on the ground, both arms swung far back behind the body. The body is clearly shorter than standing. ${HANDS}`, relativeRootY: -0.22, lift: 0, hold: [4, 3] },
+  { phase: "jump_push", label: "Push off", constraints: `Exploding upward: legs almost straight, rising onto the toes, heels off the ground, torso upright, both arms swinging forward and up to shoulder height. ${HANDS}`, relativeRootY: 0.02, lift: 0, hold: [2, 1] },
+  { phase: "jump_rise", label: "Rise", constraints: `Just left the ground: both feet in the air with the toes pointing down, legs straight and together, body stretched tall, arms forward at shoulder height. ${HANDS}`, relativeRootY: 0.02, lift: 0.07, hold: [2, 1] },
+  { phase: "jump_apex", label: "Apex", constraints: `The top of the jump: both knees tucked up toward the chest, feet well off the ground, arms forward for balance, hair and clothing floating slightly. The body is compact, clearly shorter than standing. ${HANDS}`, relativeRootY: -0.14, lift: 0.14, hold: [4, 3] },
+  { phase: "jump_fall", label: "Fall", constraints: `Coming down: legs extending toward the ground, feet still in the air, arms spread out to the sides for balance, hair and clothing trailing upward. ${HANDS}`, relativeRootY: 0, lift: 0.07, hold: [2, 1] },
+  { phase: "jump_land", label: "Land", constraints: `Touchdown: both feet flat on the ground, knees deeply bent to absorb the landing, torso leaning forward, arms forward and down. The body is clearly shorter than standing. ${HANDS}`, relativeRootY: -0.16, lift: 0, hold: [4, 3] },
+  { phase: "jump_recover", label: "Recover", constraints: `Rising out of the landing back toward the ready stance: knees half bent, torso upright, arms coming back down beside the hips. ${HANDS}`, relativeRootY: -0.07, lift: 0, hold: [3, 2] },
 ];
 
 const WAVE_POSES: readonly PoseSpec[] = [
@@ -219,6 +258,8 @@ export const ACTION_SPECS: Readonly<Record<AnimationAction, ActionSpec>> = {
   jump: { action: "jump", label: "jump", poses: JUMP_POSES, travels: false, stride: null, drawingFps: 12, subtle: false },
   wave: { action: "wave", label: "wave", poses: WAVE_POSES, travels: false, stride: null, drawingFps: 8, subtle: true },
   idle: { action: "idle", label: "idle loop", poses: IDLE_POSES, travels: false, stride: null, drawingFps: 8, subtle: true },
+  // A scene's drawings come from its plan, not from a fixed list of phases.
+  ensemble: { action: "ensemble", label: "scene", poses: [], travels: false, stride: null, drawingFps: ENSEMBLE_FPS, subtle: true },
 };
 
 export function actionSpec(action: AnimationAction | null | undefined): ActionSpec {
@@ -231,8 +272,10 @@ export const WALK_POSES: readonly PoseSpec[] = ACTION_SPECS.walk.poses;
 export const WALK_FRAME_COUNT = 8;
 export const FRAME_COUNT = WALK_FRAME_COUNT;
 
+const POSES_BY_PHASE: ReadonlyMap<string, PoseSpec> = new Map(Object.values(ACTION_SPECS).flatMap((spec) => spec.poses).map((pose) => [pose.phase, pose]));
+
 export function poseFor(phase: Phase): PoseSpec {
-  return Object.values(ACTION_SPECS).flatMap((spec) => spec.poses).find((pose) => pose.phase === phase)!;
+  return POSES_BY_PHASE.get(phase)!;
 }
 
 // ── Timing ─────────────────────────────────────────────────────────────────
@@ -240,28 +283,102 @@ export function poseFor(phase: Phase): PoseSpec {
 export const OUTPUT_FPS = 24;
 export const DrawingFpsSchema = z.union([z.literal(8), z.literal(12)]);
 export type DrawingFps = z.infer<typeof DrawingFpsSchema>;
+/** The lengths a cycle is exported at: whole numbers of cycles. */
 export const DurationSchema = z.union([z.literal(2), z.literal(4), z.literal(6)]);
 export type FlipbookDuration = z.infer<typeof DurationSchema>;
 export const DURATIONS: readonly FlipbookDuration[] = [2, 4, 6];
 export const DRAWING_RATES: readonly DrawingFps[] = [8, 12];
+/** Any whole number of seconds a scene can last; a cycle only takes the three above. */
+export const PlaybackSecondsSchema = z.number().int().min(MIN_ENSEMBLE_SECONDS).max(MAX_ENSEMBLE_SECONDS);
 
-/** Output frames each drawing is held for: 8 drawings/s on 24 fps is "on threes". */
+/** Average output frames per drawing: 8 drawings/s on 24 fps is "on threes". */
 export function holdFrames(drawingFps: DrawingFps): number {
   return OUTPUT_FPS / drawingFps;
 }
 
-export function outputFrameCount(durationSeconds: FlipbookDuration): number {
+export function outputFrameCount(durationSeconds: number): number {
   return durationSeconds * OUTPUT_FPS;
 }
 
-/** The drawing tick shown on an output frame. Ticks advance in steps: no in-betweening. */
-export function tickAtOutputFrame(outputFrame: number, drawingFps: DrawingFps): number {
-  return Math.floor(outputFrame / holdFrames(drawingFps));
+/** Drawing ticks in an export of this length. Every supported length is a whole number of cycles. */
+export function tickCount(durationSeconds: number, drawingFps: DrawingFps): number {
+  return durationSeconds * drawingFps;
 }
 
-/** Drawing ticks in an export of this length. Every supported length is a whole number of cycles. */
-export function tickCount(durationSeconds: FlipbookDuration, drawingFps: DrawingFps): number {
-  return durationSeconds * drawingFps;
+/**
+ * The exposure sheet: output frames each drawing stays on screen, in
+ * playback order. Phases with anime timing (PoseSpec.hold) keep it; a cycle
+ * whose holds don't add up to the even total (a partial or foreign set)
+ * falls back to even holds, so every length is still a whole number of cycles.
+ */
+export function exposures(phases: readonly string[], drawingFps: DrawingFps): number[] {
+  const even = holdFrames(drawingFps);
+  const holds = phases.map((phase) => {
+    const hold = POSES_BY_PHASE.get(phase)?.hold;
+    return hold ? hold[drawingFps === 8 ? 0 : 1] : even;
+  });
+  return holds.reduce((sum, hold) => sum + hold, 0) === phases.length * even ? holds : phases.map(() => even);
+}
+
+/**
+ * The drawing on screen at an output frame. `tick` counts the drawings shown
+ * since the start (root motion steps once per drawing); `index` is its place
+ * in the cycle. Drawings change in steps: no in-betweening, no blending.
+ */
+export function drawingAtFrame(outputFrame: number, holds: readonly number[]): { tick: number; index: number } {
+  const cycle = holds.reduce((sum, hold) => sum + hold, 0);
+  if (!holds.length || cycle <= 0) return { tick: 0, index: 0 };
+  const lap = Math.floor(outputFrame / cycle);
+  let rest = outputFrame - lap * cycle;
+  let index = 0;
+  while (index < holds.length - 1 && rest >= holds[index]) rest -= holds[index++];
+  return { tick: lap * holds.length + index, index };
+}
+
+/**
+ * The exposure sheet with in-betweens. Keys keep their anime timing
+ * (exposures); an in-between takes one frame from the key before it, so the
+ * cycle keeps its length: the keys hold and the in-betweens go by on ones. A
+ * key already on ones leaves no room, so its in-between isn't shown at that pace.
+ */
+export function exposureSheet<T extends { readonly phase: string; readonly inbetween?: boolean }>(drawings: readonly T[], drawingFps: DrawingFps): { drawings: T[]; holds: number[] } {
+  const keyHolds = exposures(drawings.filter((drawing) => !drawing.inbetween).map((drawing) => drawing.phase), drawingFps);
+  const shown: T[] = [];
+  const holds: number[] = [];
+  let key = -1;
+  for (const drawing of drawings) {
+    if (!drawing.inbetween) {
+      shown.push(drawing);
+      holds.push(keyHolds[++key]);
+      continue;
+    }
+    const last = holds.length - 1;
+    if (last < 0 || shown[last].inbetween || holds[last] < 2) continue;
+    holds[last]--;
+    shown.push(drawing);
+    holds.push(1);
+  }
+  return { drawings: shown, holds };
+}
+
+/** The first output frame of a drawing tick: where stepping or picking a drawing lands. */
+export function frameAtTick(tick: number, holds: readonly number[]): number {
+  const cycle = holds.reduce((sum, hold) => sum + hold, 0);
+  if (!holds.length) return 0;
+  const lap = Math.floor(tick / holds.length);
+  const index = tick - lap * holds.length;
+  let frame = lap * cycle;
+  for (let i = 0; i < index; i++) frame += holds[i];
+  return frame;
+}
+
+/**
+ * The camera clock at an output frame, in average drawings. Backgrounds,
+ * pans and zooms run on it: they move on every output frame ("on ones"),
+ * like an anime follow pan, while the character keeps its drawings.
+ */
+export function stageClock(outputFrame: number, drawingFps: DrawingFps): number {
+  return outputFrame / holdFrames(drawingFps);
 }
 
 // ── Placement ──────────────────────────────────────────────────────────────
@@ -280,12 +397,20 @@ export type FlipbookAspect = z.infer<typeof AspectSchema>;
 
 export const PlaybackSettingsSchema = z.object({
   drawingFps: DrawingFpsSchema,
-  durationSeconds: DurationSchema,
+  /** A cycle plays 2, 4 or 6 s; a scene always plays its own length (the server holds it to the plan). */
+  durationSeconds: PlaybackSecondsSchema,
   motion: MotionSchema,
   /** Landscape (16:9) or portrait (9:16) stage. Drawings saved before this existed are landscape. */
   aspect: AspectSchema.default("16:9"),
   /** Multiplier of the stride measured from the drawings; 1 keeps the feet planted. */
   speed: z.number().min(SPEED_BOUNDS[0]).max(SPEED_BOUNDS[1]),
+  /**
+   * Legacy: interpolated 60 fps playback was retired because it morphed the
+   * drawings. Saved values still parse; every render is drawn.
+   */
+  renderMode: z.enum(["drawn", "smooth"]).optional(),
+  /** Play the current in-betweens between the key drawings. Absent means yes, when there are any. */
+  inbetweens: z.boolean().optional(),
 });
 export type PlaybackSettings = z.infer<typeof PlaybackSettingsSchema>;
 
@@ -313,9 +438,11 @@ export function cellTopAt(settings: Pick<PlaybackSettings, "aspect">, cell: Pick
 }
 
 /**
- * Left edge of the sprite cell on the stage at a drawing tick. Root motion
- * moves once per drawing, like the drawings themselves, and wraps around the
- * stage so a walk across never runs out of room.
+ * Left edge of the sprite cell on the stage. `tick` counts key drawings: the
+ * renderers pass the stage clock at the shown drawing's first frame (an
+ * in-between lands partway), so root motion steps once per drawing, like the
+ * drawings themselves, and keeps pace with time. It wraps around the stage so
+ * a walk across never runs out of room. `frameCount` is the number of keys.
  */
 export function cellLeftAt(tick: number, settings: Pick<PlaybackSettings, "motion" | "speed" | "aspect">, cell: Cell, frameCount: number): number {
   const stage = stageSize(settings, cell);
@@ -338,13 +465,13 @@ export const PARALLAX_FAR = 0.3;
 export const ZOOM_DEPTH = 0.06;
 
 /**
- * Scale of a slowly zooming background at a drawing tick: in from 1 to
- * 1 + ZOOM_DEPTH and back out over the whole length, so the export loops.
- * Like every other motion here, it changes once per drawing.
+ * Scale of a slowly zooming background at a stage clock (stageClock): in
+ * from 1 to 1 + ZOOM_DEPTH and back out over the whole length, so the export
+ * loops. The clock is fractional, so the zoom moves on every output frame.
  */
-export function backgroundZoomAt(tick: number, settings: Pick<PlaybackSettings, "durationSeconds" | "drawingFps">): number {
+export function backgroundZoomAt(clock: number, settings: Pick<PlaybackSettings, "durationSeconds" | "drawingFps">): number {
   const total = tickCount(settings.durationSeconds, settings.drawingFps);
-  const t = (((tick % total) + total) % total) / total;
+  const t = (((clock % total) + total) % total) / total;
   return 1 + (ZOOM_DEPTH * (1 - Math.cos(2 * Math.PI * t))) / 2;
 }
 
@@ -352,18 +479,19 @@ export function backgroundZoomAt(tick: number, settings: Pick<PlaybackSettings, 
 const BACKGROUND_PARALLAX = { inPlace: 1, travelling: 0.35 } as const;
 
 /**
- * Horizontal scroll of a moving background at a drawing tick, in stage
- * pixels (unbounded; wrap it by the plate width). In place, the ground slides
- * back at exactly the stride, so the feet stay planted on it. Like the
- * character, it moves once per drawing.
+ * Horizontal scroll of a moving background at a stage clock (stageClock), in
+ * stage pixels (unbounded; wrap it by the plate width). In place, the ground
+ * slides back at exactly the stride per cycle. The clock is fractional: the
+ * background pans on every output frame while the character holds each
+ * drawing, as in an anime follow pan, so the screen never stutters.
  */
-export function backgroundShiftAt(tick: number, settings: Pick<PlaybackSettings, "motion" | "speed">, cell: Cell, frameCount: number, facing: FlipbookDirection): number {
+export function backgroundShiftAt(clock: number, settings: Pick<PlaybackSettings, "motion" | "speed">, cell: Cell, frameCount: number, facing: FlipbookDirection): number {
   if (frameCount <= 0) return 0;
   const inPlace = settings.motion === "in_place";
   const heading = inPlace ? facing : settings.motion;
   // Actions that don't travel (fight) have no stride: a slow drift.
   const perDrawing = cell.strideX > 0 ? (cell.strideX * (inPlace ? 1 : settings.speed)) / frameCount : cell.width * 0.03;
-  const shift = Math.round(tick * perDrawing * (inPlace ? BACKGROUND_PARALLAX.inPlace : BACKGROUND_PARALLAX.travelling));
+  const shift = Math.round(clock * perDrawing * (inPlace ? BACKGROUND_PARALLAX.inPlace : BACKGROUND_PARALLAX.travelling));
   return heading === "right" ? shift : -shift;
 }
 
@@ -377,7 +505,7 @@ export const CharacterAnalysisSchema = z.object({
   /** A short noun phrase SAM 3.1 can segment ("girl", "cartoon fox"). */
   subject: ConceptSchema,
   facing: z.enum(["left", "right", "front", "back", "unclear"]),
-  view: z.enum(["side", "three_quarter", "front", "back", "unclear"]),
+  view: z.enum(["side", "three_quarter", "front", "back", "high", "low", "unclear"]),
   fullBodyVisible: z.boolean(),
   feetVisible: z.boolean(),
   background: z.enum(["plain", "simple", "detailed"]),
@@ -393,7 +521,7 @@ export const CharacterAnalysisSchema = z.object({
 export type CharacterAnalysis = z.infer<typeof CharacterAnalysisSchema>;
 
 export const AnimationPoseSchema = z.object({
-  index: z.number().int().min(0).max(WALK_FRAME_COUNT - 1),
+  index: z.number().int().min(0).max(MAX_FRAMES - 1),
   phase: PhaseSchema,
   label: z.string().max(40),
   /** Internal visual guide, selected by the planner; absent in older plans. */
@@ -412,13 +540,35 @@ export const FlipbookPlanSchema = z
     /** A gallery posture animated through the idle phases; absent in ordinary cycles. */
     poseId: PoseIdSchema.optional(),
     direction: DirectionSchema,
+    view: CameraViewSchema.optional(),
     motion: MotionSchema,
     drawingFps: DrawingFpsSchema,
-    durationSeconds: DurationSchema,
+    durationSeconds: PlaybackSecondsSchema,
     loop: z.literal(true),
-    poses: z.array(AnimationPoseSchema).length(WALK_FRAME_COUNT),
+    poses: z.array(AnimationPoseSchema).min(WALK_FRAME_COUNT).max(MAX_FRAMES),
   })
   .superRefine((plan, context) => {
+    if (plan.action === ENSEMBLE_ACTION) {
+      // A scene is one drawing per beat: its length is its duration at the fixed pace.
+      if (plan.drawingFps !== ENSEMBLE_FPS || plan.motion !== "in_place") {
+        context.addIssue({ code: "custom", path: ["drawingFps"], message: `A scene is drawn at ${ENSEMBLE_FPS} drawings per second, in place.` });
+      }
+      if (plan.poses.length !== ensembleDrawings(plan.durationSeconds)) {
+        context.addIssue({ code: "custom", path: ["poses"], message: `A ${plan.durationSeconds} s scene needs ${ensembleDrawings(plan.durationSeconds)} drawings.` });
+      }
+      plan.poses.forEach((pose, index) => {
+        if (pose.index !== index || pose.phase !== beatPhase(index)) {
+          context.addIssue({ code: "custom", path: ["poses", index], message: `pose ${index} must be ${beatPhase(index)}` });
+        }
+      });
+      return;
+    }
+    if (!DurationSchema.safeParse(plan.durationSeconds).success) {
+      context.addIssue({ code: "custom", path: ["durationSeconds"], message: "A cycle lasts 2, 4 or 6 seconds." });
+    }
+    if (plan.poses.length !== WALK_FRAME_COUNT) {
+      context.addIssue({ code: "custom", path: ["poses"], message: `A cycle has ${WALK_FRAME_COUNT} drawings.` });
+    }
     if (plan.poseId && (plan.action !== "idle" || plan.motion !== "in_place")) {
       context.addIssue({ code: "custom", path: ["poseId"], message: "A selected pose must use an idle cycle in place." });
     }
@@ -433,9 +583,25 @@ export type FlipbookPlan = z.infer<typeof FlipbookPlanSchema>;
 
 // ── Frames ─────────────────────────────────────────────────────────────────
 
+/** The eight drawings of a cycle. A scene numbers its drawings f0…f47 (frameIdAt). */
 export const FRAME_IDS = ["f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7"] as const;
-export const FrameIdSchema = z.enum(FRAME_IDS);
+const INDEX = "(?:[0-9]|[1-3][0-9]|4[0-7])";
+export const FrameIdSchema = z.string().regex(new RegExp(`^f${INDEX}$`));
 export type FrameId = z.infer<typeof FrameIdSchema>;
+export function frameIdAt(index: number): FrameId {
+  return `f${index}`;
+}
+/** In-between drawings: "i3" goes after key drawing "f3", toward the key that follows it in playback order. */
+export const INBETWEEN_IDS = ["i0", "i1", "i2", "i3", "i4", "i5", "i6", "i7"] as const;
+export const InbetweenIdSchema = z.enum(INBETWEEN_IDS);
+export type InbetweenId = z.infer<typeof InbetweenIdSchema>;
+/** Any drawing with files on disk: a key pose or an in-between. */
+export const DrawingIdSchema = z.string().regex(new RegExp(`^[fi]${INDEX}$`));
+export type DrawingId = z.infer<typeof DrawingIdSchema>;
+
+export function inbetweenAfter(frameId: FrameId): InbetweenId {
+  return `i${frameId.slice(1)}` as InbetweenId;
+}
 export const VersionIdSchema = z.string().regex(/^v-[0-9a-f]{12}$/);
 
 export const FrameWarningCodeSchema = z.enum([
@@ -489,7 +655,7 @@ export type FrameStatus = z.infer<typeof FrameStatusSchema>;
 
 export const FlipbookFrameSchema = z.object({
   id: FrameIdSchema,
-  poseIndex: z.number().int().min(0).max(WALK_FRAME_COUNT - 1),
+  poseIndex: z.number().int().min(0).max(MAX_FRAMES - 1),
   phase: PhaseSchema,
   label: z.string().max(40),
   status: FrameStatusSchema,
@@ -540,9 +706,28 @@ export const AlignmentSchema = z.object({
   /** Horizontal travel of one full cycle, measured from the contact and passing drawings. */
   strideX: z.number().nonnegative(),
   strideMeasured: z.boolean(),
-  transforms: z.partialRecord(FrameIdSchema, FrameTransformSchema),
+  /** Key drawings and in-betweens, registered on the same cell. */
+  transforms: z.partialRecord(DrawingIdSchema, FrameTransformSchema),
 });
 export type FlipbookAlignment = z.infer<typeof AlignmentSchema>;
+
+/**
+ * One in-between drawing: the pose halfway from one key drawing to the next,
+ * drawn from both. It remembers which drawings it was made from; when either
+ * key is redrawn or the order changes, it is stale and stops playing until it
+ * is drawn again.
+ */
+export const InbetweenSchema = z.object({
+  id: InbetweenIdSchema,
+  from: FrameIdSchema,
+  to: FrameIdSchema,
+  fromVersion: VersionIdSchema,
+  toVersion: VersionIdSchema,
+  status: z.enum(["generating", "processing", "ready", "failed"]),
+  version: VersionIdSchema.nullable(),
+  error: z.object({ code: z.string(), message: z.string() }).nullable(),
+});
+export type Inbetween = z.infer<typeof InbetweenSchema>;
 
 // ── Export ─────────────────────────────────────────────────────────────────
 
@@ -595,6 +780,7 @@ export const ExportRecordSchema = z.object({
     height: z.number().int().positive(),
     frames: z.number().int().positive(),
     durationSeconds: z.number().nonnegative().nullable(),
+    fps: z.number().positive().optional(),
   }),
   createdAt: z.iso.datetime(),
 });
@@ -620,11 +806,23 @@ export const ACTIVE_FLIPBOOK_STATUSES: readonly FlipbookStatus[] = ["analyzing",
 
 export const FLIPBOOK_TITLE_MAX = 80;
 
+/** One of the characters drawn together in a scene: the exact saved version, and what Muse Spark saw in it. */
+export const CastMemberSchema = CharacterSourceSchema.extend({
+  name: z.string().max(80),
+  versionName: z.string().max(60),
+  analysis: CharacterAnalysisSchema.nullable(),
+});
+export type CastMember = z.infer<typeof CastMemberSchema>;
+
 export const FlipbookSchema = z.object({
   id: FlipbookIdSchema,
   imageId: FlipbookImageIdSchema,
   /** The account it is saved to. Saved animations skip the 24-hour cleanup. */
   ownerId: z.uuid().nullable().default(null),
+  characterSource: CharacterSourceSchema.extend({ name: z.string().max(80), versionName: z.string().max(60) }).optional(),
+  /** The characters of a scene, in the order they were picked. Empty for a single character. */
+  cast: z.array(CastMemberSchema).max(MAX_CAST).default([]),
+  requestedView: ViewPreferenceSchema.optional(),
   title: z.string().max(FLIPBOOK_TITLE_MAX).default(""),
   prompt: z.string().max(500),
   poseId: PoseIdSchema.optional(),
@@ -641,14 +839,18 @@ export const FlipbookSchema = z.object({
   reference: ReferenceSchema.nullable(),
   /** Saved animations from before extra references existed have none. */
   extraReferences: z.array(ExtraReferenceSchema).max(MAX_EXTRA_REFERENCES).default([]),
-  frames: z.array(FlipbookFrameSchema).max(WALK_FRAME_COUNT),
+  frames: z.array(FlipbookFrameSchema).max(MAX_FRAMES),
   /** Playback order, by frame id. */
-  order: z.array(FrameIdSchema).max(WALK_FRAME_COUNT),
+  order: z.array(FrameIdSchema).max(MAX_FRAMES),
   alignment: AlignmentSchema.nullable(),
+  /** Saved animations from before in-betweens existed have none. */
+  inbetweens: z.array(InbetweenSchema).max(WALK_FRAME_COUNT).default([]),
   budget: z.object({ limit: z.number().int().nonnegative(), used: z.number().int().nonnegative() }),
   backgrounds: z.object({
     scene: z.boolean(),
     custom: z.boolean(),
+    /** A picture of a place the person gave to inspire the next generated background. */
+    reference: z.boolean().default(false),
     generated: z.object({ prompt: z.string().max(BACKGROUND_PROMPT_MAX), createdAt: z.iso.datetime() }).nullable().default(null),
     /** Whether the plate was split into a far layer (the sky) and a near one, for parallax. */
     depth: z.object({ scene: z.boolean(), generated: z.boolean() }).default({ scene: false, generated: false }),
@@ -663,15 +865,26 @@ export const FlipbookSchema = z.object({
 });
 export type Flipbook = z.infer<typeof FlipbookSchema>;
 
+/** Several saved characters, one scene: what happens, and for how many seconds. */
+export const CreateEnsembleRequestSchema = z.object({
+  cast: z.array(CharacterSourceSchema).min(MIN_CAST).max(MAX_CAST),
+  view: ViewPreferenceSchema.optional(),
+  prompt: z.string().trim().min(3).max(500),
+  seconds: PlaybackSecondsSchema,
+}).refine((input) => new Set(input.cast.map((member) => `${member.characterId}:${member.versionId}`)).size === input.cast.length, { path: ["cast"], message: "Each character version can be in the scene once." });
+export type CreateEnsembleRequest = z.infer<typeof CreateEnsembleRequestSchema>;
+
 export const CreateFlipbookRequestSchema = z.object({
-  imageId: FlipbookImageIdSchema,
+  imageId: FlipbookImageIdSchema.optional(),
+  characterSource: CharacterSourceSchema.optional(),
+  view: ViewPreferenceSchema.optional(),
   prompt: z.string().trim().min(3).max(500),
   /** The motion picked from the reading; with it, the reading's character facts are reused. */
-  action: AnimationActionSchema.optional(),
+  action: CycleActionSchema.optional(),
   poseId: PoseIdSchema.optional(),
   /** Separate the uploaded scene from the character and use it as the background (one drawing). */
   keepScene: z.boolean().optional(),
-}).refine((input) => !input.poseId || !input.action || input.action === "idle", {
+}).refine((input) => Boolean(input.imageId) !== Boolean(input.characterSource), { path: ["imageId"], message: "Choose an upload or a character version." }).refine((input) => !input.poseId || !input.action || input.action === "idle", {
   path: ["poseId"], message: "A selected pose uses an idle cycle.",
 });
 
@@ -680,7 +893,7 @@ export const CreateFlipbookRequestSchema = z.object({
 export const IdeaDirectionSchema = z.enum(["left", "right", "in_place"]);
 export type IdeaDirection = z.infer<typeof IdeaDirectionSchema>;
 
-export const ImageIdeaSchema = z.object({ action: AnimationActionSchema, direction: IdeaDirectionSchema, detail: z.string().max(80) });
+export const ImageIdeaSchema = z.object({ action: CycleActionSchema, direction: IdeaDirectionSchema, detail: z.string().max(80) });
 export type ImageIdea = z.infer<typeof ImageIdeaSchema>;
 
 /** What Focus saw in an upload before anything was asked: the character, the scene, motions that suit it, and its layers. */
@@ -714,7 +927,9 @@ export type FrameAction = z.infer<typeof FrameActionSchema>;
 export const FlipbookActionSchema = z.discriminatedUnion("action", [
   /** Draw every frame that has no drawing yet (first run after a reference check, or after failures). */
   z.object({ action: z.literal("generate"), confirmExtra: z.boolean().optional() }),
-  z.object({ action: z.literal("reorder"), order: z.array(FrameIdSchema).length(WALK_FRAME_COUNT) }),
+  /** Draw an in-between after every key drawing that has no current one (one drawing each). */
+  z.object({ action: z.literal("inbetweens"), confirmExtra: z.boolean().optional() }),
+  z.object({ action: z.literal("reorder"), order: z.array(FrameIdSchema).min(WALK_FRAME_COUNT).max(MAX_FRAMES) }),
   z.object({ action: z.literal("reference"), kind: z.enum(["original", "clean"]), confirmExtra: z.boolean().optional() }),
   z.object({ action: z.literal("scene"), confirmExtra: z.boolean().optional() }),
   /** Draw a new setting behind the character (one drawing). */
@@ -737,6 +952,8 @@ export const FlipbookSummarySchema = z.object({
   action: AnimationActionSchema.nullable(),
   status: FlipbookStatusSchema,
   frames: z.number().int().nonnegative(),
+  /** How many drawings the animation has when complete: eight, or a scene's duration at its pace. */
+  total: z.number().int().positive().default(WALK_FRAME_COUNT),
   posterUrl: z.string(),
   updatedAt: z.iso.datetime(),
 });
@@ -748,7 +965,7 @@ export function flipbookTitle(flipbook: Pick<Flipbook, "title" | "prompt">): str
 
 // ── URLs ───────────────────────────────────────────────────────────────────
 
-export type BackgroundMedia = "scene" | "scene-loop" | "scene-far" | "scene-near" | "custom" | "generated" | "generated-loop" | "generated-far" | "generated-near";
+export type BackgroundMedia = "scene" | "scene-loop" | "scene-far" | "scene-near" | "custom" | "bg-reference" | "generated" | "generated-loop" | "generated-far" | "generated-near";
 
 export const flipbookUrls = {
   source: (id: string) => `/api/flipbooks/${id}/media?kind=source`,
@@ -764,4 +981,44 @@ export const flipbookUrls = {
 /** The frames in playback order, skipping ids the order no longer names. */
 export function orderedFrames(flipbook: Pick<Flipbook, "frames" | "order">): FlipbookFrame[] {
   return flipbook.order.map((id) => flipbook.frames.find((frame) => frame.id === id)).filter((frame): frame is FlipbookFrame => Boolean(frame));
+}
+
+/** The key drawing that follows a frame in playback order: an in-between goes toward it. */
+export function nextInOrder(flipbook: Pick<Flipbook, "order">, frameId: FrameId): FrameId {
+  const at = flipbook.order.indexOf(frameId);
+  return flipbook.order[(at + 1) % flipbook.order.length];
+}
+
+/** Whether an in-between is registered and still sits between the drawings it was made from. */
+export function inbetweenCurrent(flipbook: Pick<Flipbook, "frames" | "order" | "alignment">, inbetween: Inbetween): boolean {
+  if (inbetween.status !== "ready" || !inbetween.version) return false;
+  if (flipbook.alignment?.transforms[inbetween.id]?.version !== inbetween.version) return false;
+  if (!flipbook.order.includes(inbetween.from) || nextInOrder(flipbook, inbetween.from) !== inbetween.to) return false;
+  const version = (frameId: FrameId) => flipbook.frames.find((frame) => frame.id === frameId)?.version;
+  return version(inbetween.from) === inbetween.fromVersion && version(inbetween.to) === inbetween.toVersion;
+}
+
+/** Key drawings whose in-between is missing, failed or no longer matches its keys: what "Add in-betweens" draws. */
+export function inbetweenTargets(flipbook: Pick<Flipbook, "frames" | "order" | "alignment" | "inbetweens">): FrameId[] {
+  return orderedFrames(flipbook).filter((frame) => {
+    const inbetween = flipbook.inbetweens.find((entry) => entry.from === frame.id);
+    return !inbetween || !inbetweenCurrent(flipbook, inbetween);
+  }).map((frame) => frame.id);
+}
+
+/** A drawing of the played cycle: a key pose, or the in-between after one. */
+export type CycleDrawing = { readonly id: DrawingId; readonly phase: string; readonly label: string; readonly inbetween: boolean };
+
+/** The played cycle: key drawings in order, each followed by its current in-between when in-betweens are on. */
+export function playbackCycle(flipbook: Pick<Flipbook, "frames" | "order" | "alignment" | "inbetweens">, useInbetweens: boolean): CycleDrawing[] {
+  const cycle: CycleDrawing[] = [];
+  for (const frame of orderedFrames(flipbook)) {
+    cycle.push({ id: frame.id, phase: frame.phase, label: frame.label, inbetween: false });
+    const inbetween = useInbetweens ? flipbook.inbetweens.find((entry) => entry.from === frame.id) : undefined;
+    if (inbetween && inbetweenCurrent(flipbook, inbetween)) {
+      const to = flipbook.frames.find((entry) => entry.id === inbetween.to);
+      cycle.push({ id: inbetween.id, phase: frame.phase, label: `${frame.label} → ${to?.label ?? ""}`, inbetween: true });
+    }
+  }
+  return cycle;
 }

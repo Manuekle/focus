@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { NextIcon, PauseIcon, PlayIcon, PreviousIcon, Exchange01Icon, RotateLeft01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
@@ -9,21 +9,27 @@ import { ToggleChip } from "../../components/ui/toggle-chip";
 import { useReducedMotion } from "../../lib/hooks/use-reduced-motion";
 import {
   DRAWING_RATES,
+  OUTPUT_FPS,
   PARALLAX_FAR,
   SPEED_BOUNDS,
   backgroundShiftAt,
   backgroundZoomAt,
   cellLeftAt,
   cellTopAt,
+  drawingAtFrame,
+  exposureSheet,
+  frameAtTick,
+  outputFrameCount,
+  stageClock,
   stageSize,
-  tickCount,
   type Cell,
   type FlipbookDirection,
   type PlaybackSettings,
 } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
 
-export type PlayerFrame = { readonly id: string; readonly label: string; readonly src: string | null };
+/** A drawing of the cycle: a key pose, or an in-between after the key before it. */
+export type PlayerFrame = { readonly id: string; readonly label: string; readonly phase: string; readonly src: string | null; readonly inbetween?: boolean };
 export type PlayerBackground =
   | { readonly kind: "transparent" }
   | { readonly kind: "color"; readonly color: string }
@@ -39,11 +45,13 @@ const RATES = [0.5, 1, 2] as const;
 const mod = (value: number, size: number) => ((value % size) + size) % size;
 
 /**
- * The flipbook player. It shows the real drawings, one at a time, each for
- * exactly 1/fps of a second (scaled by the preview speed), at the position
- * the exporter will use: both read shared/flipbook.ts. Time runs on
- * requestAnimationFrame against a fixed start, so a slow frame never makes
- * the cycle drift; React only re-renders when the shown drawing changes.
+ * The flipbook player. It runs the exporter's 24 fps clock: each drawing
+ * stays on screen for its frames in the exposure sheet (anime timing), and a
+ * moving background pans on every frame, at the positions the exporter uses
+ * (both read shared/flipbook.ts). Drawings change in steps, never blended.
+ * Time runs on requestAnimationFrame against a fixed start, so a slow frame
+ * never makes the cycle drift; the canvas redraws once per output frame and
+ * React only re-renders when the shown drawing changes.
  */
 export function SequencePlayer({
   frames,
@@ -58,7 +66,10 @@ export function SequencePlayer({
   facing,
   strip,
   onSelect,
+  inbetweenCount = 0,
+  fixedPace = false,
 }: {
+  /** The played cycle, in-betweens included. `selectedIndex` and `onSelect` count key drawings only. */
   readonly frames: readonly PlayerFrame[];
   readonly cell: Cell;
   readonly settings: PlaybackSettings;
@@ -75,12 +86,25 @@ export function SequencePlayer({
   /** The frame strip, placed right under the transport so it stays in view. */
   readonly strip?: ReactNode;
   readonly onSelect: (index: number) => void;
+  /** Current in-betweens: when there are any, a switch plays them or leaves them out. */
+  readonly inbetweenCount?: number;
+  /** A scene is drawn at one pace: there is no drawings-per-second choice. */
+  readonly fixedPace?: boolean;
 }) {
   const reducedMotion = useReducedMotion();
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const images = useRef(new Map<string, HTMLImageElement>());
-  const tickRef = useRef(selectedIndex);
-  const [tick, setTick] = useState(selectedIndex);
+  // The drawings that play at this pace, and how long each holds.
+  const { drawings, holds } = useMemo(() => exposureSheet(frames, settings.drawingFps), [frames, settings.drawingFps]);
+  // Key position of each shown drawing (an in-between counts as the key before it), and back.
+  const keyIndex = useMemo(() => {
+    let key = -1;
+    return drawings.map((drawing) => (drawing.inbetween ? Math.max(0, key) : ++key));
+  }, [drawings]);
+  const drawingOfKey = useCallback((key: number) => Math.max(0, keyIndex.findIndex((value, index) => value === key && !drawings[index].inbetween)), [keyIndex, drawings]);
+  const frameRef = useRef(frameAtTick(drawingOfKey(selectedIndex), holds));
+  const tickRef = useRef(drawingOfKey(selectedIndex));
+  const [tick, setTick] = useState(() => drawingOfKey(selectedIndex));
   const [playing, setPlaying] = useState(false);
   const [loop, setLoop] = useState(true);
   const [rate, setRate] = useState<(typeof RATES)[number]>(1);
@@ -88,9 +112,11 @@ export function SequencePlayer({
   const [onionOpacity, setOnionOpacity] = useState(0.35);
   const [onionNext, setOnionNext] = useState(true);
 
-  const count = frames.length;
+  const count = drawings.length;
+  const keyCount = drawings.filter((drawing) => !drawing.inbetween).length;
   const stage = stageSize(settings, cell);
-  const total = tickCount(settings.durationSeconds, settings.drawingFps);
+  const total = outputFrameCount(settings.durationSeconds);
+  const ticks = count ? drawingAtFrame(total - 1, holds).tick + 1 : 0;
   const ready = count > 0 && frames.every((frame) => frame.src);
 
   const imageFor = useCallback((src: string | null, redraw: () => void) => {
@@ -106,11 +132,13 @@ export function SequencePlayer({
     return image.complete && image.naturalWidth ? image : null;
   }, []);
 
-  const draw = useCallback((at: number) => {
+  const draw = useCallback((frame: number) => {
     const canvas = canvasRef.current;
     const context = canvas?.getContext("2d");
     if (!canvas || !context || !count) return;
-    const again = () => draw(tickRef.current);
+    const again = () => draw(frameRef.current);
+    const { tick: at, index } = drawingAtFrame(frame, holds);
+    const clock = stageClock(frame, settings.drawingFps);
     context.clearRect(0, 0, canvas.width, canvas.height);
     if (background.kind === "color") {
       context.fillStyle = background.color;
@@ -126,7 +154,7 @@ export function SequencePlayer({
       }
     } else if (background.kind === "scroll" || background.kind === "parallax") {
       // Fitted to the stage height and wrapped, the same as the exporter.
-      const shift = backgroundShiftAt(at, settings, cell, count, facing);
+      const shift = backgroundShiftAt(clock, settings, cell, keyCount, facing);
       const strip = (src: string, by: number) => {
         const plate = imageFor(src, again);
         if (!plate) return;
@@ -142,49 +170,55 @@ export function SequencePlayer({
       const plate = imageFor(background.src, again);
       if (plate) {
         // Cover-fit, then zoomed about the center, the same as the exporter.
-        const scale = Math.max(canvas.width / plate.naturalWidth, canvas.height / plate.naturalHeight) * backgroundZoomAt(at, settings);
+        const scale = Math.max(canvas.width / plate.naturalWidth, canvas.height / plate.naturalHeight) * backgroundZoomAt(clock, settings);
         const width = plate.naturalWidth * scale;
         const height = plate.naturalHeight * scale;
         context.drawImage(plate, (canvas.width - width) / 2, (canvas.height - height) / 2, width, height);
       }
     }
-    const index = mod(at, count);
-    const left = cellLeftAt(at, settings, cell, count);
+    // Root motion steps once per drawing, at the clock of the drawing's first frame.
+    const left = cellLeftAt(stageClock(frameAtTick(at, holds), settings.drawingFps), settings, cell, keyCount);
     const top = cellTopAt(settings, cell);
     if (onion && count > 1) {
       context.globalAlpha = onionOpacity;
-      const previous = imageFor(frames[mod(index - 1, count)].src, again);
+      const previous = imageFor(drawings[mod(index - 1, count)].src, again);
       if (previous) context.drawImage(previous, left, top, cell.width, cell.height);
       if (onionNext) {
-        const next = imageFor(frames[mod(index + 1, count)].src, again);
+        const next = imageFor(drawings[mod(index + 1, count)].src, again);
         if (next) context.drawImage(next, left, top, cell.width, cell.height);
       }
       context.globalAlpha = 1;
     }
-    const current = imageFor(frames[index].src, again);
+    const current = imageFor(drawings[index].src, again);
     if (current) context.drawImage(current, left, top, cell.width, cell.height);
-  }, [background, cell, count, facing, frames, imageFor, onion, onionNext, onionOpacity, settings]);
+  }, [background, cell, count, drawings, facing, holds, imageFor, keyCount, onion, onionNext, onionOpacity, settings]);
 
-  // Preload every drawing of the cycle (eight images), nothing else.
+  // Preload the drawings and selected background.
   useEffect(() => {
     const wanted = new Set(frames.map((frame) => frame.src).filter((src): src is string => Boolean(src)));
     if (background.kind === "image" || background.kind === "scroll" || background.kind === "zoom") wanted.add(background.src);
     if (background.kind === "parallax") { wanted.add(background.far); wanted.add(background.near); }
     for (const src of [...images.current.keys()]) if (!wanted.has(src)) images.current.delete(src);
-    for (const src of wanted) imageFor(src, () => draw(tickRef.current));
+    for (const src of wanted) imageFor(src, () => draw(frameRef.current));
   }, [frames, background, imageFor, draw]);
 
   useEffect(() => {
-    draw(tickRef.current);
+    draw(frameRef.current);
   }, [draw, stage.width, stage.height]);
 
-  // The player owns the current tick. Effects read the latest draw, count and
-  // parent callbacks through refs, so a parent re-render (new prop objects)
-  // never restarts playback, pauses it, or bounces the selection back and forth.
+  // The player owns the current frame. Effects read the latest draw, timing
+  // and parent callbacks through refs, so a parent re-render (new prop
+  // objects) never restarts playback, pauses it, or bounces the selection.
   const drawRef = useRef(draw);
   drawRef.current = draw;
+  const holdsRef = useRef(holds);
+  holdsRef.current = holds;
   const countRef = useRef(count);
   countRef.current = count;
+  const keyIndexRef = useRef(keyIndex);
+  keyIndexRef.current = keyIndex;
+  const drawingOfKeyRef = useRef(drawingOfKey);
+  drawingOfKeyRef.current = drawingOfKey;
   const onSelectRef = useRef(onSelect);
   onSelectRef.current = onSelect;
   const selectedRef = useRef(selectedIndex);
@@ -194,50 +228,55 @@ export function SequencePlayer({
   // its next frame would put the old timeline back.
   const clockRef = useRef(0);
 
-  const seek = useCallback((next: number) => {
-    tickRef.current = next;
-    setTick(next);
-    drawRef.current(next);
+  const seek = useCallback((frame: number) => {
+    frameRef.current = frame;
+    drawRef.current(frame);
+    const next = drawingAtFrame(frame, holdsRef.current).tick;
+    if (next !== tickRef.current) {
+      tickRef.current = next;
+      setTick(next);
+    }
   }, []);
 
-  // A frame picked in the strip (each pick bumps the nonce): pause there. Only the nonce triggers it.
+  // A frame picked in the strip (each pick bumps the nonce): pause on it. Only the nonce triggers it.
   useEffect(() => {
     const size = countRef.current;
     if (!seekNonce || !size) return;
     setPlaying(false);
-    if (mod(tickRef.current, size) !== selectedRef.current) seek(selectedRef.current);
+    const target = drawingOfKeyRef.current(selectedRef.current);
+    if (mod(tickRef.current, size) !== target) seek(frameAtTick(target, holdsRef.current));
   }, [seekNonce, seek]);
 
   useEffect(() => {
     if (!playing || !count) return;
     let started = performance.now();
-    let from = !loop && tickRef.current >= total - 1 ? 0 : tickRef.current;
+    let from = !loop && frameRef.current >= total - 1 ? 0 : frameRef.current;
     let clock = clockRef.current;
     let raf = 0;
     const step = (now: number) => {
       if (clock !== clockRef.current) {
         clock = clockRef.current;
         started = now;
-        from = tickRef.current;
+        from = frameRef.current;
       }
-      const next = from + Math.floor(((now - started) * rate * settings.drawingFps) / 1000);
+      const next = from + Math.floor(((now - started) * rate * OUTPUT_FPS) / 1000);
       if (!loop && next >= total - 1) {
         seek(total - 1);
         setPlaying(false);
         return;
       }
-      if (next !== tickRef.current) seek(next);
+      if (next !== frameRef.current) seek(next);
       raf = requestAnimationFrame(step);
     };
     raf = requestAnimationFrame(step);
     return () => cancelAnimationFrame(raf);
-  }, [playing, loop, rate, settings.drawingFps, count, total, seek]);
+  }, [playing, loop, rate, count, total, seek]);
 
-  // Paused on a drawing: the strip and the frame panel follow it, once per change.
+  // Paused on a drawing: the strip and the frame panel follow its key, once per change.
   useEffect(() => {
     if (playing || !count) return;
-    const index = mod(tick, count);
-    if (index !== selectedRef.current) onSelectRef.current(index);
+    const key = keyIndexRef.current[mod(tick, count)] ?? 0;
+    if (key !== selectedRef.current) onSelectRef.current(key);
   }, [playing, tick, count]);
 
   // Autoplay once the whole cycle exists, unless the person asked for less motion.
@@ -249,9 +288,12 @@ export function SequencePlayer({
     }
   }, [ready, reducedMotion]);
 
+  // Stepping moves one drawing, landing on its first frame.
   const stepBy = (delta: number) => {
     setPlaying(false);
-    seek(loop ? tickRef.current + delta : Math.max(0, Math.min(total - 1, tickRef.current + delta)));
+    const from = tickRef.current;
+    const next = loop ? mod(from + delta, ticks) : Math.max(0, Math.min(ticks - 1, from + delta));
+    seek(frameAtTick(next, holds));
   };
   const restart = () => {
     clockRef.current++;
@@ -265,7 +307,7 @@ export function SequencePlayer({
   };
 
   const index = count ? mod(tick, count) : 0;
-  const current = frames[index];
+  const current = drawings[index];
 
   return (
     <div className={styles.player}>
@@ -299,21 +341,29 @@ export function SequencePlayer({
           </ToggleChip>
         </div>
         <output className={styles.readout} aria-live={playing ? "off" : "polite"}>
-          {count ? `${index + 1}/${count} · ${current?.label ?? ""}` : "—"}
+          {count ? `${(keyIndex[index] ?? 0) + 1}/${keyCount} · ${current?.label ?? ""}` : "—"}
         </output>
       </div>
 
       {strip}
 
       <div className={styles.controlsGrid}>
-        <div className={styles.controlRow}>
+        {fixedPace ? null : <div className={styles.controlRow}>
           <span className={styles.controlLabel}>Drawings per second</span>
           <div className={styles.chips}>
             {DRAWING_RATES.map((fps) => (
               <ToggleChip key={fps} size="xs" selected={settings.drawingFps === fps} onClick={() => onSettingsChange({ ...settings, drawingFps: fps })}>{fps}</ToggleChip>
             ))}
           </div>
-        </div>
+        </div>}
+        {inbetweenCount > 0 ? (
+          <div className={styles.controlRow}>
+            <span className={styles.controlLabel}>In-betweens</span>
+            <div className={styles.chips}>
+              <Switch checked={settings.inbetweens !== false} onCheckedChange={(checked) => onSettingsChange({ ...settings, inbetweens: checked })} label="Play in-betweens" />
+            </div>
+          </div>
+        ) : null}
         <div className={styles.controlRow}>
           <span className={styles.controlLabel}>Preview speed</span>
           <div className={styles.chips}>

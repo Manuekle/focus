@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { WALK_POSES, type FrameId } from "../../shared/flipbook";
 import { AppError } from "../errors";
 import { DRIFT, walkerPng, walkerPose } from "./__fixtures__/walker";
-import { BASELINE_Y, CELL_HEIGHT, TARGET_HEIGHT, computeAlignment, extractSubject, renderSprite, segmentation, segmentationConcepts, type AlignInput, type Extraction } from "./frame-alignment";
+import { BASELINE_Y, CELL_HEIGHT, TARGET_HEIGHT, computeAlignment, despill, extractSubject, renderSprite, segmentation, segmentationConcepts, type AlignInput, type Extraction } from "./frame-alignment";
 import { contactSheet } from "./quality-control";
 
 // Cut-out and registration on deterministic drawings. SAM is switched off:
@@ -124,6 +124,12 @@ describe("registration on one sprite cell", () => {
     expect(alignment.strideX).toBeLessThan(TARGET_HEIGHT * 1.6);
   });
 
+  it("does not mistake frontal foreshortening for a measured lateral stride", () => {
+    expect(computeAlignment(entries, null, "walk", "side").strideMeasured).toBe(true);
+    expect(computeAlignment(entries, null, "walk", "front").strideMeasured).toBe(false);
+    expect(computeAlignment(entries, null, "walk", "back").strideMeasured).toBe(false);
+  });
+
   it("never shrinks the cell, so approved frames keep their place", () => {
     const first = computeAlignment(entries, null);
     const wider = { ...first, cellWidth: first.cellWidth + 200 };
@@ -184,5 +190,56 @@ describe("segmentation concepts", () => {
     expect(segmentationConcepts("boy in red hoodie")).toEqual(["boy in red hoodie", "boy", "character"]);
     expect(segmentationConcepts("cartoon fox")).toEqual(["cartoon fox", "fox", "character"]);
     expect(segmentationConcepts("character")).toEqual(["character"]);
+  });
+});
+
+describe("key color spill", () => {
+  // A 12×12 cut-out on a magenta key: blond inside, a magenta-tinted rim, transparent outside.
+  const MAGENTA = [255, 0, 255] as const;
+  const BLOND = [230, 200, 120] as const;
+  const TINTED = [236, 150, 170] as const;
+  const picture = (inside: readonly number[]) => {
+    const size = 12;
+    const data = Buffer.alloc(size * size * 4);
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      const i = (y * size + x) * 4;
+      const edge = Math.min(x, y, size - 1 - x, size - 1 - y);
+      if (edge === 0) continue;
+      const color = edge === 1 ? TINTED : inside;
+      data[i] = color[0]; data[i + 1] = color[1]; data[i + 2] = color[2]; data[i + 3] = 255;
+    }
+    return data;
+  };
+  const at = (data: Buffer, x: number, y: number) => [...data.subarray((y * 12 + x) * 4, (y * 12 + x) * 4 + 3)];
+
+  it("takes the key's hue out of the rim and leaves the inside alone", () => {
+    const data = picture(BLOND);
+    despill(data, 12, 12, MAGENTA);
+    const [r, g, b] = at(data, 1, 6);
+    // The pink rim turns toward the blond fill: green no longer far below red and blue.
+    expect(g).toBeGreaterThan(b);
+    expect(r + g + b).toBeCloseTo(TINTED[0] + TINTED[1] + TINTED[2], -1);
+    expect(at(data, 6, 6)).toEqual([...BLOND]);
+  });
+
+  it("pulls back a soft edge that un-blending pushed past the inside, away from the key", () => {
+    const data = picture(BLOND);
+    // A half-transparent rim pixel over-corrected to green.
+    const i = (6 * 12 + 1) * 4;
+    data[i] = 190; data[i + 1] = 235; data[i + 2] = 140; data[i + 3] = 160;
+    despill(data, 12, 12, MAGENTA);
+    const [r, g] = at(data, 1, 6);
+    expect(g - r).toBeLessThan(45 - 20);
+    // An opaque green edge is the drawing's own color: it stays.
+    const opaque = picture(BLOND);
+    opaque[i] = 190; opaque[i + 1] = 235; opaque[i + 2] = 140;
+    despill(opaque, 12, 12, MAGENTA);
+    expect(at(opaque, 1, 6)).toEqual([190, 235, 140]);
+  });
+
+  it("keeps a pink rim where the drawing really is pink inside", () => {
+    const data = picture(TINTED);
+    despill(data, 12, 12, MAGENTA);
+    expect(at(data, 1, 6)).toEqual([...TINTED]);
   });
 });

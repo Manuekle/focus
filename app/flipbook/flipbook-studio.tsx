@@ -3,13 +3,13 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Add01Icon, Delete02Icon } from "@hugeicons/core-free-icons";
+import { Add01Icon, Delete02Icon, UserGroupIcon, UserMultiple02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { ProgressMeter } from "../../components/ui/progress-meter";
 import { useToast } from "../../components/toast-provider";
 import { cn } from "../../lib/utils";
-import { ACTION_SPECS, FLIPBOOK_TITLE_MAX, WALK_FRAME_COUNT, flipbookTitle, type Flipbook, type FlipbookImage, type FlipbookSummary } from "../../shared/flipbook";
+import { ACTION_SPECS, FLIPBOOK_TITLE_MAX, flipbookTitle, type CreateEnsembleRequest, type Flipbook, type FlipbookImage, type FlipbookSummary } from "../../shared/flipbook";
 import { AccountButton } from "../_auth/account-button";
 import { FacebookButton } from "../_auth/facebook-button";
 import { LoginDialog } from "../_auth/login-dialog";
@@ -18,10 +18,13 @@ import { ago } from "../_editor/ago";
 import { ModeSwitch } from "../_editor/mode-switch";
 import { SidebarResizer, useSidebar } from "../_editor/sidebar-resizer";
 import { SidebarListSkeleton } from "../_editor/studio-skeletons";
+import { EnsembleCreate } from "./ensemble-create";
 import { FlipbookCreate, type CreateOptions } from "./flipbook-create";
 import { FlipbookApiError, flipbookApi, isActive, useFlipbook } from "./flipbook-client";
 import { FlipbookEditor } from "./flipbook-editor";
 import { FlipbookSkeleton } from "./flipbook-skeleton";
+import { characterApi } from "../characters/character-client";
+import { characterUrls, type CharacterSource } from "../../shared/characters";
 import shell from "../editor/studio.module.css";
 import styles from "./flipbook.module.css";
 
@@ -31,7 +34,7 @@ import styles from "./flipbook.module.css";
  * the free-edit allowance), and the animation. The current animation lives
  * in the URL (?f=id), so a reload keeps every drawing.
  */
-export function FlipbookStudio({ flipbookId }: { readonly flipbookId: string | null }) {
+export function FlipbookStudio({ flipbookId, characterSource, together = false }: { readonly flipbookId: string | null; readonly characterSource?: CharacterSource; /** Several saved characters in one scene: the create screen picks them. */ readonly together?: boolean }) {
   const { session } = useSession();
   const user = session?.user ?? null;
   const { toast } = useToast();
@@ -41,14 +44,29 @@ export function FlipbookStudio({ flipbookId }: { readonly flipbookId: string | n
   const [login, setLogin] = useState<"quota" | "save" | null>(null);
   const [saved, setSaved] = useState<FlipbookSummary[] | null>(null);
   const [title, setTitle] = useState("");
-  const here = flipbook ? `/flipbook?f=${flipbook.id}` : "/flipbook";
+  const [imported, setImported] = useState<{ image: FlipbookImage; source: CharacterSource; name: string } | null>(null);
+  const [importError, setImportError] = useState<string | null>(null);
+  const sourcePath = characterSource ? `/flipbook?${together ? "together=1&" : ""}character=${characterSource.characterId}&version=${characterSource.versionId}` : together ? "/flipbook?together=1" : "/flipbook";
+  const here = flipbook ? `/flipbook?f=${flipbook.id}` : sourcePath;
   const outOfFreeEdits = Boolean(session && !session.user && session.quota?.remaining === 0);
   const owned = Boolean(user && flipbook?.ownerId === user.id);
 
   useEffect(() => {
-    const url = flipbook ? `/flipbook?f=${flipbook.id}` : "/flipbook";
+    const url = flipbook ? `/flipbook?f=${flipbook.id}` : sourcePath;
     if (`${window.location.pathname}${window.location.search}` !== url && (flipbook || !flipbookId)) window.history.replaceState(null, "", url);
-  }, [flipbook, flipbookId]);
+  }, [flipbook, flipbookId, sourcePath]);
+
+  useEffect(() => {
+    if (!characterSource || !session || flipbookId || together) return;
+    if (!user) { setImportError("Sign in to open this character version."); setLogin("save"); return; }
+    let canceled = false;
+    void characterApi.get(characterSource.characterId).then((character) => {
+      const version = character.versions.find((entry) => entry.id === characterSource.versionId);
+      if (!version) throw new Error("This character version no longer exists.");
+      if (!canceled) setImported({ source: characterSource, name: character.name, image: { id: character.id, originalName: `${character.name} · ${version.name}`, width: version.width, height: version.height, hasAlpha: false, createdAt: version.createdAt, url: characterUrls.version(character.id, version.id) } });
+    }).catch((error: unknown) => { if (!canceled) setImportError(error instanceof Error ? error.message : "This character couldn’t be opened."); });
+    return () => { canceled = true; };
+  }, [characterSource, session, user, flipbookId, together]);
 
   const loadSaved = useCallback(async () => {
     setSaved(await flipbookApi.list().catch(() => []));
@@ -87,6 +105,18 @@ export function FlipbookStudio({ flipbookId }: { readonly flipbookId: string | n
     } catch (error) {
       if (error instanceof FlipbookApiError && error.code === "login_required") setLogin("quota");
       else toast({ title: "Couldn’t start the animation", description: error instanceof Error ? error.message : "Try again.", status: "error" });
+    } finally {
+      setCreating(false);
+    }
+  };
+
+  const createTogether = async (request: CreateEnsembleRequest) => {
+    setCreating(true);
+    try {
+      setFlipbook(await flipbookApi.createEnsemble(request));
+    } catch (error) {
+      if (error instanceof FlipbookApiError && error.code === "login_required") setLogin("save");
+      else toast({ title: "Couldn’t start the scene", description: error instanceof Error ? error.message : "Try again.", status: "error" });
     } finally {
       setCreating(false);
     }
@@ -146,6 +176,15 @@ export function FlipbookStudio({ flipbookId }: { readonly flipbookId: string | n
             New animation
           </Button>
 
+          <Link href="/characters" className={styles.sideLink}>
+            <HugeiconsIcon icon={UserGroupIcon} size={14} strokeWidth={1.75} />
+            My characters
+          </Link>
+          <Link href="/flipbook?together=1" className={styles.sideLink}>
+            <HugeiconsIcon icon={UserMultiple02Icon} size={14} strokeWidth={1.75} />
+            Animate together
+          </Link>
+
           {user ? (
             <nav className={shell.projects} aria-label="Animations">
               <p className={shell.sideLabel}>Animations</p>
@@ -163,7 +202,7 @@ export function FlipbookStudio({ flipbookId }: { readonly flipbookId: string | n
                         <span className="min-w-0">
                           <span className="block truncate text-xs text-foreground">{entry.title}</span>
                           <span className="block text-[11px] text-muted-foreground">
-                            {entry.action ? `${ACTION_SPECS[entry.action].label} · ` : ""}{entry.frames}/{WALK_FRAME_COUNT} frames · {ago(entry.updatedAt)}
+                            {entry.action ? `${ACTION_SPECS[entry.action].label} · ` : ""}{entry.frames}/{entry.total} frames · {ago(entry.updatedAt)}
                           </span>
                         </span>
                       </Link>
@@ -191,7 +230,7 @@ export function FlipbookStudio({ flipbookId }: { readonly flipbookId: string | n
 
         <main className={shell.main}>
           {pollError ? <p className={styles.hint} data-invalid="" role="status">{pollError}</p> : null}
-          {flipbookId && !flipbook && !loadError ? (
+          {!together && characterSource && !flipbook && importError ? <p className={styles.hint} role="alert">{importError} <Link href="/characters">Open my characters</Link></p> : !together && characterSource && !flipbook && !imported ? <FlipbookSkeleton /> : flipbookId && !flipbook && !loadError ? (
             <FlipbookSkeleton />
           ) : flipbook ? (
             <>
@@ -208,11 +247,19 @@ export function FlipbookStudio({ flipbookId }: { readonly flipbookId: string | n
           ) : (
             <>
               {loadError ? <p className={styles.hint} data-invalid="" role="alert">{loadError.message}</p> : null}
-              <FlipbookCreate
+              {together ? (
+                <EnsembleCreate
+                  initialCast={characterSource ? [characterSource] : undefined}
+                  onCreate={(request) => void createTogether(request)}
+                  creating={creating}
+                  blockedReason={session && !user ? "Sign in with Facebook to animate your saved characters together." : undefined}
+                />
+              ) : <FlipbookCreate
+                initialCharacter={imported ?? undefined}
                 onCreate={(image, prompt, options) => void create(image, prompt, options)}
                 creating={creating}
                 blockedReason={outOfFreeEdits ? "You’ve used your free edits. Sign in with Facebook to keep going." : undefined}
-              />
+              />}
             </>
           )}
         </main>

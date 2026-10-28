@@ -42,6 +42,7 @@ import { AppError } from "./errors";
 import { renderComparison, renderVideo, trackingMaskSource, verifyOutput } from "./video/compositor";
 import { retainedIds } from "./projects";
 import { activeFlipbookCount } from "./animation/store";
+import { activeCharacterCount } from "./characters/store";
 import { VIDEO_FILES, dataRoot, videoDir } from "./storage";
 import { getVideo } from "./videos";
 
@@ -204,7 +205,7 @@ export function activeJobCount(): number {
  * cap against this one number, so neither can slip past the other.
  */
 export function activeWorkCount(): number {
-  return running.size + activeFlipbookCount();
+  return running.size + activeFlipbookCount() + activeCharacterCount();
 }
 
 function assertEffectEnabled(effect: EffectId): void {

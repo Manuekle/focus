@@ -46,12 +46,17 @@ textarea {
   font-family: inherit;
 }
 
-/* Phones keep the same compact field scale with touch or a mouse. These
-   tokens also reach raw fields and portalled menus. Do not restore a 16px
-   font or a 44px height just because the primary pointer is coarse. */
+/* One compact field scale on every screen and pointer. These tokens also
+   reach raw fields and portalled menus. Do not restore a 16px font or a 44px
+   height just because the primary pointer is coarse. The text size is set
+   outside the media query: left undefined, wide screens fell back to the
+   inherited 16px. */
+:root {
+  --field-text-size: 0.8125rem;
+}
+
 @media (width < 48rem) {
   :root {
-    --field-text-size: 0.8125rem;
     --field-textarea-min-height: 3rem;
   }
 }
