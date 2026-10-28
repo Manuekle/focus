@@ -6,7 +6,8 @@ import {
   FlipbookIdSchema,
   FlipbookImageIdSchema,
   FlipbookSchema,
-  FrameIdSchema,
+  DrawingIdSchema,
+  MAX_CAST,
   VersionIdSchema,
   type BackgroundMedia,
   type Flipbook,
@@ -67,7 +68,8 @@ export function flipbookDir(id: string): string {
 }
 
 function checkedFrame(frameId: string): string {
-  const parsed = FrameIdSchema.safeParse(frameId);
+  // Key drawings and in-betweens keep their versions and sprites side by side.
+  const parsed = DrawingIdSchema.safeParse(frameId);
   if (!parsed.success) throw new AppError("frame_not_found", 404, "That frame doesn’t exist.");
   return parsed.data;
 }
@@ -84,6 +86,12 @@ export const flipbookFiles = {
   source: (id: string) => path.join(flipbookDir(id), "source.png"),
   /** The upload flattened on white: what the models receive. */
   sourceFlat: (id: string) => path.join(flipbookDir(id), "source-flat.png"),
+  identity: (id: string) => path.join(flipbookDir(id), "character-identity.png"),
+  /** One character of a scene, flattened on white, in the order they were picked. */
+  cast: (id: string, index: number) => {
+    if (!Number.isInteger(index) || index < 0 || index >= MAX_CAST) throw new AppError("media_not_found", 404, "This file is no longer available.");
+    return path.join(flipbookDir(id), "cast", `${index}.png`);
+  },
   reference: (id: string, version: string) => path.join(flipbookDir(id), "reference", `${checkedVersion(version)}.png`),
   extraReference: (id: string, version: string) => path.join(flipbookDir(id), "reference", `extra-${checkedVersion(version)}.png`),
   referenceMeasure: (id: string, version: string) => path.join(flipbookDir(id), "reference", `${checkedVersion(version)}.json`),

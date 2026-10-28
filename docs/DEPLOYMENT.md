@@ -40,6 +40,22 @@ Recommended: 2 vCPU, 2 GB RAM, 5 GB disk for `/data`. A render holds one decoded
 
 **Clips up to 60 s / 150 MB** (`FOCUS_MAX_VIDEO_DURATION_SECONDS`, `FOCUS_MAX_UPLOAD_MB`). Stage times scale roughly linearly with frame count, so expect about 7× the figures above for a 60 s clip (1,440 frames at 24 fps). Normalization allows 10 s of FFmpeg time per second of clip (at least 2 min). SAM streams its answer, so the 180 s Meta request timeout covers only the start of the response; SAM accepts up to 15,000 frames per request. Per clip, `/data` holds the source (≤ 150 MB), the normalized copy and every render for 24 h: size the volume for that. A reverse proxy in front of the container must accept 150 MB request bodies (for nginx: `client_max_body_size 150m;`). Next.js itself adds no limit for these uploads: there is no `proxy.ts`, and the upload route streams the body to disk with its own cap.
 
+### Animate as is: CPU, memory and disk
+
+"Animate as is" renders on the instance's CPU with no AI call, one render at a time (`renderLimiter`), at most 4 waiting; past that the server answers `render_busy` (503). A cached render is free and skips the queue. Measured on the reference picture (1536×864, Apple Silicon, native), with all five layers moving:
+
+| Render | Time | Result |
+| --- | --- | --- |
+| 4 s loop, still camera | 11 s | MP4 1.1 MB + GIF 4.5 MB |
+| 4 s loop, Pan | 13 s | MP4 1.1 MB + GIF 5.3 MB |
+| 4 s loop, Depth | 18 s | MP4 1.1 MB + GIF 5.1 MB |
+| 6 s loop, Depth + blinking | 26 s | MP4 1.4 MB + GIF 7.4 MB |
+
+- **CPU.** The drawing is single-threaded JavaScript (about one core for the whole render), followed by FFmpeg for the MP4 and the GIF. Time grows with pixels × frames. A 2 vCPU instance keeps one render going while still answering requests; on a shared vCPU expect about twice these times. Renders are limited by `FOCUS_RENDERS_PER_HOUR` and the queue above, not by `FOCUS_MAX_ACTIVE_JOBS`.
+- **Memory.** About 0.5 GB resident for a render at this size (the process measured with the test runner included). It holds the picture, the masks, one frame and, for Depth, the scene; nothing grows with the loop's length. The 2 GB recommended above is enough, but a render and a 60 s clip render do not run together safely on 1 GB.
+- **Disk.** Each distinct request keeps its own files for 24 h: about 7 to 11 MB per render (the GIF is most of it; a busy picture reached 13 MB). A picture keeps at most 12 renders (`MAX_CACHED_RENDERS`); past that the oldest are deleted when a new one finishes, and one asked for again is simply drawn again. So a picture holds about 100 to 150 MB at most, plus its masks (a few MB), and everything goes 24 h after the upload. The 5 GB recommended is enough for a few dozen pictures in that window; with many users at once, lower `FOCUS_RENDERS_PER_HOUR` or size `/data` accordingly.
+- **Paid calls.** Finding what can move is 1 Muse Spark call and a SAM frame per part, once per upload. The Depth scene (only for a detailed background) and blinking are 1 Muse Image drawing each, once per upload; blinking also 1 SAM frame. All three count toward `FOCUS_AI_REQUESTS_PER_HOUR`, and rendering never does.
+
 ## Environment
 
 See `.env.example`. Required: `MODEL_API_KEY`. For a public demo, set at least:

@@ -47,7 +47,8 @@ export async function generateImage(input: {
   readonly size?: string;
   /** "edit" reworks Image 1 instead of drawing a new picture. */
   readonly action?: "edit";
-  readonly flipbookId: string;
+  readonly flipbookId?: string;
+  readonly characterId?: string;
   readonly signal?: AbortSignal;
 }): Promise<GeneratedImage> {
   const config = requireMetaConfig();
@@ -86,6 +87,7 @@ export async function generateImage(input: {
       cached: false,
       ok: Boolean(call && "result" in call && call.result),
       flipbookId: input.flipbookId,
+      characterId: input.characterId,
       inputTokens: response.usage?.input_tokens,
       outputTokens: response.usage?.output_tokens,
       durationMs: Date.now() - started,
@@ -105,9 +107,9 @@ export async function generateImage(input: {
     }
   } catch (error) {
     if (error instanceof AppError) throw error;
-    await recordUsage({ model: config.imageModel, kind: "image_generate", cached: false, ok: false, flipbookId: input.flipbookId, error: String(error), durationMs: Date.now() - started });
+    await recordUsage({ model: config.imageModel, kind: "image_generate", cached: false, ok: false, flipbookId: input.flipbookId, characterId: input.characterId, error: String(error), durationMs: Date.now() - started });
     if (blocked(error)) {
-      throw new AppError("image_blocked", 422, "Muse Image declined to draw this. Try another reference image or correction note.");
+      throw new AppError("image_blocked", 422, "Muse Image’s content filter declined this request, so nothing was drawn and it wasn’t counted against your allowance. Try a different reference image or reword the change.");
     }
     throw metaError(error, "drawing generation");
   }

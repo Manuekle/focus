@@ -10,7 +10,7 @@ export type UsageEntry = {
   readonly kind:
     | "plan" | "suggest" | "assist" | "segment" | "file_upload"
     // Focus Flipbook: Muse Image drawings, SAM 3.1 on still images, Muse Spark analysis/plan/review.
-    | "image_generate" | "segment_image" | "flipbook_analyze" | "flipbook_plan" | "flipbook_review";
+    | "image_generate" | "segment_image" | "flipbook_analyze" | "flipbook_plan" | "flipbook_review" | "flipbook_chat";
   readonly cached: boolean;
   readonly ok: boolean;
   readonly videoId?: string;
@@ -18,6 +18,7 @@ export type UsageEntry = {
   readonly outputTokens?: number;
   readonly videoFramesProcessed?: number;
   readonly flipbookId?: string;
+  readonly characterId?: string;
   readonly durationMs?: number;
   readonly error?: string;
 };

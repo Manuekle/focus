@@ -142,17 +142,38 @@ describe("MP4", () => {
   });
 });
 
+describe("in-betweens", () => {
+  it("plays each one for a frame taken from the key before it, and exports it with its duration", async () => {
+    // Keys and in-betweens alternate; an in-between borrows a sprite unlike both of its keys, so every change shows.
+    const cycle: ExportFrame[] = frames.flatMap((frame, index) => [frame, { ...frames[(index + 2) % frames.length], frameId: `i${index}`, label: "in-between", phase: frame.phase, inbetween: true }]);
+    const value = request("mp4", { background: { kind: "color", color: "#ffffff" } });
+    const result = await renderExport({ request: value, frames: cycle, alignment, plate: null, outputDir: path.join(work, "inbetween-mp4"), baseName: "walk" });
+    expect(result.facts.frames).toBe(48);
+    const stage = stageSize(value.settings, cellOf());
+    const decoded: Buffer[] = [];
+    for await (const frame of readFrames(result.files[0].path, stage.width, stage.height)) decoded.push(frame);
+    // H.264 adds a little noise to a held picture; a new drawing moves far more.
+    const moved = (a: Buffer, b: Buffer) => a.reduce((sum, value, i) => sum + Math.abs(value - b[i]), 0) / a.length > 0.3;
+    const changes = decoded.slice(1, 24).map((frame, index) => (moved(frame, decoded[index]) ? 1 : 0));
+    // Key on twos, in-between on ones: changes after frames 2, 3, 5, 6, … of the 24-frame cycle.
+    expect(changes.join("")).toBe("01101101101101101101101");
+    const zip = await renderExport({ request: request("frames", { background: { kind: "transparent" } }), frames: cycle, alignment, plate: null, outputDir: path.join(work, "inbetween-zip"), baseName: "walk" });
+    expect(zip.facts.frames).toBe(16);
+  });
+});
+
 describe("GIF", () => {
-  it("loops one cycle forever with 1/8 s per drawing, in order, with transparency", async () => {
+  it("loops one cycle forever with each drawing held on threes at 24 fps, in order, with transparency", async () => {
     const result = await exportTo("gif", request("gif", { background: { kind: "transparent" } }));
-    expect(result.facts.frames).toBe(8);
+    // 8 drawings × 3 frames: the GIF keeps the 24 fps exposure sheet; a repeated frame costs almost nothing.
+    expect(result.facts.frames).toBe(24);
     expect(result.facts.durationSeconds).toBeGreaterThan(0.95);
     expect(result.facts.durationSeconds).toBeLessThan(1.05);
     const { width, height } = result.facts;
     expect(Math.max(width, height)).toBeLessThanOrEqual(640);
     const decoded: Rgba[] = [];
     for await (const frame of readFrames(result.files[0].path, width, height)) decoded.push({ data: frame, width, height });
-    expect(decoded.length).toBe(8);
+    expect(decoded.length).toBe(24);
     // The drawing sits centered on the stage; compare that region, scaled like the GIF.
     const stage = stageSize(settings(), cellOf());
     const scale = width / stage.width;
@@ -165,7 +186,8 @@ describe("GIF", () => {
     const expected = await Promise.all(sprites.map(async (sprite) => rgba(await sharp(sprite).resize(region.width, region.height, { fit: "fill" }).png().toBuffer())));
     // Each decoded frame matches its own drawing best. The fixture's two half-cycles share
     // silhouettes (only the leg shading swaps), so the phase is compared modulo four.
-    decoded.forEach((frame, index) => {
+    decoded.forEach((frame, outputFrame) => {
+      const index = Math.floor(outputFrame / 3);
       const scores = expected.map((sprite) => alphaIou(crop(frame), sprite));
       expect(scores[index]).toBeGreaterThan(0.85);
       expect(scores.indexOf(Math.max(...scores)) % 4).toBe(index % 4);
@@ -288,7 +310,7 @@ describe("moving scenes", () => {
   it("slides the far layer slower than the near one in parallax", async () => {
     const value = request("gif", { background: { kind: "scene", motion: "parallax" } });
     const result = await renderExport({ request: value, frames, alignment, plate: await plateWithMarks("near.png", true), far: await plateWithMarks("far.png"), outputDir: path.join(work, "parallax"), baseName: "walk" });
-    // A moving background takes the whole length, not one looping cycle.
-    expect(result.facts.frames).toBe(16);
+    // A moving background takes the whole length at 24 fps, not one looping cycle.
+    expect(result.facts.frames).toBe(48);
   });
 });

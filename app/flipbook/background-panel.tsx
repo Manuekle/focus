@@ -11,6 +11,15 @@ import { ToggleChip } from "../../components/ui/toggle-chip";
 import { BACKGROUND_PROMPT_MAX, IMAGE_ACCEPT_ATTRIBUTE, flipbookUrls, type BackgroundMotion, type Flipbook, type FlipbookBackground } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
 
+/** Starting points for the description: specific places draw better than "a park". */
+const IDEAS: readonly string[] = [
+  "a misty pine forest at dawn, soft light through the trees",
+  "a rainy neon alley at night, wet pavement and glowing signs",
+  "a cozy bedroom in the afternoon, sunlight through the window",
+  "a seaside cliff at sunset with tide pools and warm clouds",
+  "a castle courtyard in autumn with fallen leaves",
+];
+
 const MOTIONS: readonly { motion: BackgroundMotion; label: string; hint: string }[] = [
   { motion: "static", label: "Still", hint: "" },
   { motion: "scroll", label: "Slide", hint: "The scene slides behind the character at the length of its stride, so the feet stay planted while it seems to go somewhere." },
@@ -37,6 +46,8 @@ export function BackgroundPanel({
   creatingScene,
   onCreateScene,
   onUploadBackground,
+  onUploadReference,
+  onRemoveReference,
   stamp,
 }: {
   readonly flipbook: Flipbook;
@@ -48,10 +59,14 @@ export function BackgroundPanel({
   readonly creatingScene: boolean;
   readonly onCreateScene: () => void;
   readonly onUploadBackground: (file: File) => void;
+  /** A picture of a place to draw one like; it is never the background itself. */
+  readonly onUploadReference: (file: File) => void;
+  readonly onRemoveReference: () => void;
   /** Changes whenever the scene or the uploaded image is replaced, so a previewed picture is never stale. */
   readonly stamp: string;
 }) {
   const fileRef = useRef<HTMLInputElement>(null);
+  const referenceRef = useRef<HTMLInputElement>(null);
   const [zoom, setZoom] = useState<number | null>(null);
   const generated = flipbook.backgrounds.generated;
   const [prompt, setPrompt] = useState(generated?.prompt ?? "");
@@ -99,7 +114,7 @@ export function BackgroundPanel({
         {flipbook.backgrounds.custom ? (
           <ToggleChip size="xs" selected={background.kind === "custom"} onClick={() => onBackgroundChange({ kind: "custom" })}>Your image</ToggleChip>
         ) : null}
-        <Button size="xs" variant="ghost" disabled={busy} onClick={() => fileRef.current?.click()}>{flipbook.backgrounds.custom ? "Replace image" : "Upload image"}</Button>
+        <Button size="xs" variant="ghost" disabled={busy} onClick={() => fileRef.current?.click()}title="Use a picture of your own as the background, exactly as it is.">{flipbook.backgrounds.custom ? "Replace my image" : "Use my own image"}</Button>
         <input
           ref={fileRef} type="file" accept={IMAGE_ACCEPT_ATTRIBUTE} className="sr-only" tabIndex={-1} aria-hidden
           onChange={(event) => {
@@ -141,16 +156,46 @@ export function BackgroundPanel({
       <div className={styles.generate}>
         <p className={styles.sectionLabel}>{generated ? "Draw another background" : "Generate a background"}</p>
         {bare && !generated ? <p className={styles.hint}>Your drawing has no background. Describe a setting and Focus draws it in the same style, ready to stay still or move.</p> : null}
+        <div className={styles.chips} role="group" aria-label="Ideas for the background">
+          {IDEAS.map((idea) => (
+            <ToggleChip key={idea} size="xs" selected={prompt === idea} disabled={busy || generating} onClick={() => setPrompt(idea)}>{idea.split(",")[0].replace(/^an? /, "")}</ToggleChip>
+          ))}
+        </div>
         <div className={styles.field}>
           <textarea
             className={styles.fieldInput}
             rows={2}
             maxLength={BACKGROUND_PROMPT_MAX}
-            placeholder="Where is it? e.g. “a park at sunset”, “a neon city street at night”"
+            placeholder="Describe the place, the light and the mood. e.g. “a misty pine forest at dawn, soft light through the trees”"
             value={prompt}
             onChange={(event) => setPrompt(event.target.value)}
             disabled={busy || generating}
             aria-label="Describe the background to generate"
+          />
+        </div>
+        <div className={styles.referenceRow}>
+          {flipbook.backgrounds.reference ? (
+            <>
+              {/* eslint-disable-next-line @next/next/no-img-element -- media route */}
+              <img className={styles.referenceThumb} src={flipbookUrls.background(flipbook.id, "bg-reference", stamp)} alt="The place you gave as a reference" />
+              <span className={styles.hint}>Reference picture. The next background is painted inspired by it.</span>
+              <Button size="xs" variant="ghost" disabled={busy || generating} onClick={onRemoveReference}>Remove</Button>
+            </>
+          ) : (
+            <>
+              <Button size="xs" variant="outline" disabled={busy || generating} onClick={() => referenceRef.current?.click()} title="Optional: a picture of the kind of place you want.">
+                <HugeiconsIcon icon={Image01Icon} size={12} strokeWidth={1.75} />Add a reference picture
+              </Button>
+              <span className={styles.hint}>Optional. Focus takes its place, light and mood and paints a new one in your character’s style.</span>
+            </>
+          )}
+          <input
+            ref={referenceRef} type="file" accept={IMAGE_ACCEPT_ATTRIBUTE} className="sr-only" tabIndex={-1} aria-hidden
+            onChange={(event) => {
+              const file = event.currentTarget.files?.[0];
+              event.currentTarget.value = "";
+              if (file) onUploadReference(file);
+            }}
           />
         </div>
         <Button size="sm" variant="ai" disabled={busy || generating} onClick={() => onGenerate(prompt.trim())} title="Muse Image draws one background in your character’s style (1 drawing).">

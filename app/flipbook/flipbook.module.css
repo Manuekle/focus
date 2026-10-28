@@ -10,7 +10,7 @@
 /* ── Shared bits ─────────────────────────────────────────────────────── */
 .hint { color: var(--muted-foreground); font-size: 12px; line-height: 1.55; }
 .hint[data-invalid] { color: var(--destructive); }
-.sectionLabel { color: var(--muted-foreground); font-size: 11px; font-weight: 500; letter-spacing: 0.04em; text-transform: uppercase; }
+.sectionLabel { color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
 .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .buttonRow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .inline { display: inline-flex; align-items: center; gap: 8px; }
@@ -120,10 +120,11 @@
 .plate img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .palette { display: flex; gap: 4px; }
 .palette span { width: 16px; height: 16px; border-radius: 5px; box-shadow: inset 0 0 0 1px #ffffff1f; }
-.metrics { display: grid; gap: 4px; font-size: 12px; }
-.metrics > div { display: flex; justify-content: space-between; gap: 12px; }
+/* One column that can shrink: a long value wraps inside the panel instead of widening the track under the stage. */
+.metrics { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; font-size: 12px; }
+.metrics > div { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 12px; }
 .metrics dt { color: var(--muted-foreground); }
-.metrics dd { min-width: 0; overflow: hidden; text-align: right; text-overflow: ellipsis; white-space: nowrap; }
+.metrics dd { min-width: 0; text-align: right; text-wrap: pretty; overflow-wrap: anywhere; }
 .checks { display: flex; flex-direction: column; gap: 6px; }
 .checkList { display: flex; flex-direction: column; gap: 6px; font-size: 12px; line-height: 1.5; }
 .checkList li { position: relative; padding-left: 12px; }
@@ -163,6 +164,11 @@
 .stripMeta { display: flex; min-width: 0; gap: 4px; font-size: 11px; }
 .stripLabel { overflow: hidden; color: var(--muted-foreground); text-overflow: ellipsis; white-space: nowrap; }
 .stripState { color: var(--muted-foreground); font-size: 10px; }
+/* A scene has up to 48 drawings: small thumbnails that wrap, with no captions. */
+.strip[data-dense] { grid-template-columns: repeat(auto-fill, minmax(52px, 1fr)); gap: 4px; max-height: 320px; overflow-y: auto; }
+.strip[data-dense] .stripFrame { padding: 2px; gap: 2px; border-radius: 8px; }
+.strip[data-dense] .stripLabel, .strip[data-dense] .stripState { display: none; }
+.strip[data-dense] .stripMeta { font-size: 10px; }
 
 /* Frame inspector */
 .inspect { position: relative; display: grid; height: 360px; place-items: center; overflow: hidden; border-radius: 12px; box-shadow: inset 0 0 0 1px #ffffff0a; }
@@ -188,9 +194,6 @@
   .grid > .columnSide:first-child > .panel ~ .panel { padding-top: 20px; border-top: 1px solid var(--border); }
   .columnMain { position: static; }
   .strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
-}
-@media (max-width: 680px) {
-  .fieldInput { font-size: 16px; }
 }
 @media (prefers-reduced-motion: reduce) {
   .stripFrame, .field, .extraRemove { transition: none; }
@@ -245,3 +248,36 @@
 .livingDownload { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px; border-radius: 999px; box-shadow: inset 0 0 0 1px #ffffff14; color: var(--foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
 .livingDownload:hover { background: #ffffff0a; }
 @media (prefers-reduced-motion: reduce) { .layerHighlight { animation: none; } }
+.mediaBox img[data-picking] { cursor: crosshair; }
+
+/* Start from a saved character: flat tiles on the page, like the sidebar's animation rows. */
+.picker { display: flex; min-width: 0; flex-direction: column; gap: 10px; }
+.pickerHead { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
+.pickerAll { display: inline-flex; align-items: center; gap: 2px; color: var(--muted-foreground); font-size: 12px; text-decoration: none; transition: color 150ms; }
+.pickerAll:hover { color: var(--foreground); }
+.pickerAll:focus-visible, .pickerItem:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.pickerRow { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
+.pickerItem { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 10px 6px 6px; border-radius: 12px; background: linear-gradient(180deg, #ffffff06, #ffffff02); box-shadow: inset 0 0 0 1px #ffffff0d, inset 0 1px 0 #ffffff08; color: inherit; text-decoration: none; transition: background-color 150ms, box-shadow 150ms; }
+.pickerItem:hover { background-color: #ffffff06; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 45%, transparent), inset 0 1px 0 #ffffff08; }
+.pickerCover { width: 40px; height: 48px; flex-shrink: 0; border-radius: 8px; background: #ffffff0a; object-fit: contain; }
+.pickerSkeleton { height: 60px; border-radius: 12px; }
+/* Picking the characters of a scene: the same rows as the picker, with a number on each one chosen. */
+.castItem { position: relative; width: 100%; border: 0; font: inherit; text-align: left; cursor: pointer; }
+.castItem[aria-pressed="true"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 70%, transparent), inset 0 1px 0 #ffffff08; background-color: #ffffff08; }
+.castItem:disabled { cursor: default; opacity: 0.5; }
+.castItem:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.castBadge { display: grid; width: 20px; height: 20px; flex-shrink: 0; place-items: center; margin-left: auto; border-radius: 999px; background: var(--primary); color: #fff; font-size: 11px; font-weight: 600; }
+.castLineup { display: flex; min-height: 0; flex: 1; align-items: flex-end; justify-content: center; gap: 12px; padding: 24px 16px; }
+.castLineup figure { display: flex; min-width: 0; flex: 1 1 0; max-width: 240px; flex-direction: column; align-items: center; gap: 6px; }
+.castLineup img { display: block; width: auto; max-width: 100%; height: auto; max-height: min(52vh, 480px); object-fit: contain; }
+.castLineup figcaption { max-width: 100%; overflow: hidden; color: var(--muted-foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
+.castEmpty { display: grid; min-height: 220px; place-items: center; padding: 24px; color: var(--muted-foreground); font-size: 13px; text-align: center; }
+.cost { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+.cost strong { color: var(--foreground); font-weight: 600; font-variant-numeric: tabular-nums; }
+.pickerEmpty { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+.sideLink { display: flex; align-items: center; gap: 8px; min-height: 36px; margin-top: -10px; padding: 8px 10px; border-radius: 8px; color: var(--muted-foreground); font-size: 12px; text-decoration: none; transition: background-color 150ms, color 150ms; }
+.sideLink:hover { background: var(--muted); color: var(--foreground); }
+.sideLink:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+
+.referenceRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.referenceThumb { height: 48px; width: auto; max-width: 96px; border-radius: 6px; object-fit: cover; box-shadow: inset 0 0 0 1px #ffffff0f; }

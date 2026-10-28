@@ -1,6 +1,7 @@
 import catalog from "./pose-catalog.json";
 import { PoseIdSchema, type PoseId } from "../../shared/pose-library";
 import type { AnimationAction } from "../../shared/flipbook";
+import type { CameraView } from "../../shared/animation-view";
 
 // Preserve the English geometry descriptions of already-saved pose loops.
 const LEGACY_DESCRIPTIONS = [
@@ -36,14 +37,14 @@ export function poseReferenceFor(id: PoseId) {
   return pose;
 }
 
-/** The renderer currently draws one character in profile. Normalize other
- * camera variants to the same posture's side view; never apply a pair to it. */
-export function compatiblePoseId(value: unknown, action: AnimationAction = "idle"): PoseId | undefined {
+/** Match the requested camera; never substitute a side guide for another view. */
+export function compatiblePoseId(value: unknown, action: AnimationAction = "idle", view: CameraView = "side"): PoseId | undefined {
   const parsed = PoseIdSchema.safeParse(value);
   if (!parsed.success) return undefined;
   const pose = poseReferenceFor(parsed.data);
   if (pose.subjects !== 1 || !fitsAction(pose, action)) return undefined;
-  return pose.images.find((image) => image.angle === "side")?.id;
+  const angle = view === "three_quarter" ? "diag" : view;
+  return pose.images.find((image) => image.angle === angle)?.id;
 }
 
 /** Compact data for the existing planner, with one entry per compatible
@@ -52,9 +53,10 @@ function fitsAction(pose: (typeof catalog.poses)[number], action: AnimationActio
   return action === "idle" || pose.body === "upper" || pose.category === "立ち" || (action === "jump" && pose.category === "しゃがみ");
 }
 
-export function poseCandidates(action: AnimationAction = "idle") {
+export function poseCandidates(action: AnimationAction = "idle", view: CameraView = "side") {
   return catalog.poses.filter((pose) => pose.subjects === 1 && fitsAction(pose, action)).flatMap((pose) => {
-    const image = pose.images.find((image) => image.angle === "side");
+    const angle = view === "three_quarter" ? "diag" : view;
+    const image = pose.images.find((image) => image.angle === angle);
     return image ? [{ id: image.id, body: pose.body, name: pose.name, category: pose.category }] : [];
   });
 }

@@ -63,9 +63,11 @@ describe("character analysis", () => {
     expect(risky.warnings.every((warning) => warning.length <= 240)).toBe(true);
   });
 
-  it("keeps a usable side view as the reference and redraws only when needed", () => {
+  it("keeps a usable original camera view and redraws only when needed", () => {
     expect(decideReference(analysis).kind).toBe("original");
-    expect(decideReference({ ...analysis, view: "three_quarter" }).kind).toBe("clean");
+    expect(decideReference({ ...analysis, view: "three_quarter" }).kind).toBe("original");
+    expect(decideReference({ ...analysis, view: "front" }).kind).toBe("original");
+    expect(decideReference(analysis, "front").kind).toBe("clean");
     expect(decideReference({ ...analysis, feetVisible: false }).kind).toBe("clean");
     expect(decideReference({ ...analysis, background: "detailed" }).kind).toBe("clean");
   });

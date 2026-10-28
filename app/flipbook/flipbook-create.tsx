@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { AiPaintbrushIcon, AiSearch02Icon, ArrowLeftRightIcon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
@@ -12,13 +13,15 @@ import { FileUpload } from "../../components/motion/file-upload";
 import { Button } from "../../components/ui/button";
 import { Spinner } from "../../components/ui/spinner";
 import { formatBytes } from "../../shared/media";
+import type { CharacterSource } from "../../shared/characters";
+import { VIEW_OPTIONS, type ViewPreference } from "../../shared/animation-view";
 import {
   IMAGE_ACCEPT_ATTRIBUTE,
   actionSpec,
   MAX_IMAGE_BYTES,
   hasAcceptedImageExtension,
   imageUrls,
-  type AnimationAction,
+  type CycleAction,
   type FlipbookImage,
   type ImageIdea,
   type ImageLook,
@@ -26,6 +29,8 @@ import {
 import { cn } from "../../lib/utils";
 import { livingUrls } from "../../shared/living";
 import { FlipbookApiError, flipbookApi, uploadCharacter, type UploadHandle } from "./flipbook-client";
+import { Select } from "../../components/ui/select";
+import { CharacterPicker } from "./character-picker";
 import { LivingPanel, type LivingPreview } from "./living-panel";
 import shell from "../editor/studio.module.css";
 import composer from "../_editor/composer.module.css";
@@ -43,7 +48,7 @@ const MODES: readonly { id: Mode; label: string; note: string }[] = [
   { id: "living", label: "Animate as is", note: "Nothing is redrawn: hair sways, leaves fly and the sky drifts, made only of your picture’s own pixels." },
 ];
 
-const ACTIONS: readonly { action: AnimationAction; label: string; note: string }[] = [
+const ACTIONS: readonly { action: CycleAction; label: string; note: string }[] = [
   { action: "walk", label: "Walk", note: "A relaxed stride in eight drawings, with the classic up-and-down bob." },
   { action: "run", label: "Run", note: "Fast and leaning forward; both feet leave the ground mid-stride." },
   { action: "jump", label: "Jump", note: "Crouch, push off, tuck at the top, land and recover, on the spot." },
@@ -52,8 +57,8 @@ const ACTIONS: readonly { action: AnimationAction; label: string; note: string }
   { action: "idle", label: "Idle", note: "Breathes, blinks and gently sways. Describe a posture, or keep the one in your drawing." },
 ];
 
-/** Walks and runs can travel; the other motions stay on the spot and only face a side. */
-const travels = (action: AnimationAction) => actionSpec(action).travels;
+/** Walks and runs can travel; the other motions stay on the spot. */
+const travels = (action: CycleAction) => actionSpec(action).travels;
 
 const DIRECTIONS: readonly { id: Direction; label: string }[] = [
   { id: "left", label: "Left" },
@@ -63,11 +68,11 @@ const DIRECTIONS: readonly { id: Direction; label: string }[] = [
 
 const DETAIL_MAX = 400;
 
-export type CreateOptions = { readonly action?: AnimationAction; readonly keepScene?: boolean };
+export type CreateOptions = { readonly action?: CycleAction; readonly keepScene?: boolean; readonly characterSource?: CharacterSource; readonly view?: ViewPreference };
 
-const VIEW_LABEL: Record<ImageLook["analysis"]["view"], string> = { side: "Side view", three_quarter: "Three-quarter view", front: "Front view", back: "Back view", unclear: "View unclear" };
+const VIEW_LABEL: Record<ImageLook["analysis"]["view"], string> = { side: "Side view", three_quarter: "Three-quarter view", front: "Front view", back: "Back view", high: "View from above", low: "View from below", unclear: "View unclear" };
 
-const VERB: Record<AnimationAction, string> = { walk: "Walk", run: "Run", jump: "Jump", fight: "Shadowbox", wave: "Wave", idle: "Idle" };
+const VERB: Record<CycleAction, string> = { walk: "Walk", run: "Run", jump: "Jump", fight: "Shadowbox", wave: "Wave", idle: "Idle" };
 
 /** "Run right · hair and tail flowing", "Wave facing left · shy" */
 function ideaLabel(idea: ImageIdea): string {
@@ -75,7 +80,7 @@ function ideaLabel(idea: ImageIdea): string {
   return `${VERB[idea.action]} ${where}${idea.detail ? ` · ${idea.detail}` : ""}`;
 }
 
-const PLACEHOLDER: Record<AnimationAction, string> = {
+const PLACEHOLDER: Record<CycleAction, string> = {
   walk: "How does it walk? e.g. “cheerful, arms swinging wide”",
   run: "How does it run? e.g. “sprinting, hair flying back”",
   jump: "How does it jump? e.g. “a big joyful leap”",
@@ -84,7 +89,7 @@ const PLACEHOLDER: Record<AnimationAction, string> = {
   idle: "How does it rest? e.g. “sitting calmly, slow breathing”",
 };
 
-const IDEAS: Record<AnimationAction, readonly string[]> = {
+const IDEAS: Record<CycleAction, readonly string[]> = {
   walk: ["cheerful, arms swinging wide", "sneaking on tiptoe", "tired, dragging its feet"],
   run: ["sprinting at full speed", "a light jog", "running late, panicked"],
   jump: ["a big joyful leap", "a small excited hop", "a heavy, powerful jump"],
@@ -94,16 +99,16 @@ const IDEAS: Record<AnimationAction, readonly string[]> = {
 };
 
 /** The instruction the pickers stand for; the analysis reads it like typed text. */
-function instruction(action: AnimationAction, direction: Direction, detail: string, facing: "left" | "right"): string {
+function instruction(action: CycleAction, direction: Direction, detail: string, facing: "left" | "right", view: ViewPreference, originalLateral: boolean): string {
   const side = direction === "in_place" ? facing : direction;
+  const camera = view === "original" ? originalLateral ? `preserve the original camera view, facing ${side}` : "preserve the original camera view and facing direction" : view === "front" ? "front view, facing the camera" : view === "back" ? "back view, facing away from the camera" : view === "three_quarter" ? `three-quarter view facing ${side}` : view === "high" ? "high-angle view from above" : view === "low" ? "low-angle view from below" : `side profile facing ${side}`;
   const base =
-    action === "fight" ? `Shadowbox: a jab and a cross, facing ${side}`
-    : action === "jump" ? `Jump in place, facing ${side}`
-    : action === "wave" ? `Wave hello, facing ${side}`
-    : action === "idle" ? `Rest in place, breathing and blinking, facing ${side}`
-    : direction === "in_place" ? `${action === "run" ? "Run" : "Walk"} in place, facing ${side}`
-    : action === "run" ? `Run across the screen to the ${direction}`
-    : `Walk to the ${direction}`;
+    action === "fight" ? `Shadowbox: a jab and a cross, ${camera}`
+    : action === "jump" ? `Jump in place, ${camera}`
+    : action === "wave" ? `Wave hello, ${camera}`
+    : action === "idle" ? `Rest in place, breathing and blinking, ${camera}`
+    : direction === "in_place" ? `${action === "run" ? "Run" : "Walk"} in place, ${camera}`
+    : `${action === "run" ? "Run" : "Walk"} across the screen to the ${direction}, ${camera}`;
   const extra = detail.trim().replace(/^[,.\s]+/, "");
   return extra ? `${base}, ${extra}` : base;
 }
@@ -118,16 +123,19 @@ export function FlipbookCreate({
   onCreate,
   creating,
   blockedReason,
+  initialCharacter,
 }: {
   readonly onCreate: (image: FlipbookImage, prompt: string, options: CreateOptions) => void;
   readonly creating: boolean;
   readonly blockedReason?: string;
+  readonly initialCharacter?: { readonly image: FlipbookImage; readonly source: CharacterSource; readonly name: string };
 }) {
-  const [image, setImage] = useState<FlipbookImage | null>(null);
+  const [image, setImage] = useState<FlipbookImage | null>(initialCharacter?.image ?? null);
   const [progress, setProgress] = useState<number | null>(null);
   const [pending, setPending] = useState<{ name: string; size: number } | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [action, setAction] = useState<AnimationAction>("walk");
+  const [action, setAction] = useState<CycleAction>("walk");
+  const [cameraView, setCameraView] = useState<ViewPreference>("original");
   const [direction, setDirection] = useState<Direction>("right");
   const [detail, setDetail] = useState("");
   const [look, setLook] = useState<ImageLook | null>(null);
@@ -145,8 +153,10 @@ export function FlipbookCreate({
   // it, and its layers. Its first idea becomes the starting pick, unless the
   // person has already chosen.
   const imageId = image?.id;
+  const fromCharacter = Boolean(initialCharacter && imageId === initialCharacter.image.id && image?.url === initialCharacter.image.url);
   useEffect(() => {
     if (!imageId) return;
+    if (fromCharacter) { setLookFailed(true); return; }
     let canceled = false;
     setLook(null);
     setLookFailed(false);
@@ -162,7 +172,7 @@ export function FlipbookCreate({
         const idea = next.ideas[0];
         if (idea) {
           setAction(idea.action);
-          setDirection(idea.direction);
+          setDirection(travels(idea.action) && ["front", "back"].includes(next.analysis.view) ? "in_place" : idea.direction);
           setDetail(idea.detail);
         } else if (next.analysis.facing === "left" || next.analysis.facing === "right") {
           setDirection(next.analysis.facing);
@@ -171,7 +181,7 @@ export function FlipbookCreate({
       () => { if (!canceled) setLookFailed(true); },
     );
     return () => { canceled = true; };
-  }, [imageId]);
+  }, [imageId, fromCharacter]);
 
   const pickIdea = (idea: ImageIdea) => {
     touched.current = true;
@@ -202,12 +212,13 @@ export function FlipbookCreate({
 
   /** The side to face when a motion stays on the spot: the drawing's own, when it has one. */
   const facing = look?.analysis.facing === "left" ? "left" : "right";
-  const prompt = instruction(action, direction, detail, facing);
+  const lateralView = cameraView === "side" || cameraView === "three_quarter" || (cameraView === "original" && Boolean(look && ["side", "three_quarter"].includes(look.analysis.view)));
+  const prompt = instruction(action, direction, detail, facing, cameraView, lateralView);
   const canSubmit = Boolean(image) && !creating && !blockedReason;
   const submit = () => {
     if (!image || !canSubmit || mode === "living") return;
     // With a reading, the picked motion says which action it is, and its character facts are reused.
-    onCreate(image, prompt, { action, keepScene: Boolean(look?.layers.scene && keepScene) });
+    onCreate(image, prompt, { action, view: cameraView, keepScene: Boolean(look?.layers.scene && keepScene), ...(fromCharacter ? { characterSource: initialCharacter!.source } : {}) });
   };
   const layerSrc = image && layer !== "original" && mode === "cycle" ? imageUrls.layer(image.id, layer) : image?.url;
   const shown = mode === "cycle" ? layer : "original";
@@ -219,18 +230,32 @@ export function FlipbookCreate({
         <figure className={styles.drawingFigure}>
           <div className={styles.drawingStage} data-transparent={image.hasAlpha || shown !== "original" || undefined}>
             <div className={styles.mediaBox}>
-              {mode === "living" && living.video ? (
+              {/* A hovered layer is shown on the still picture: the video may be cropped or zoomed, its mask isn't. */}
+              {mode === "living" && living.video && !living.highlight && !living.pick ? (
                 // Muted so it can autoplay; with sound, the controls turn it on.
                 <video key={living.video} src={living.video} width={image.width} height={image.height} autoPlay loop muted playsInline controls={living.hasAudio || undefined} aria-label="Your picture in motion" />
               ) : (
                 /* eslint-disable-next-line @next/next/no-img-element -- media route */
-                <img key={shown} src={layerSrc} alt={shown === "character" ? "Your character, cut out" : shown === "scene" ? "The scene with the character taken out" : "Your character illustration"} width={image.width} height={image.height} className={shown === "character" ? styles.layerCharacter : undefined} />
+                <img
+                  key={shown}
+                  src={layerSrc}
+                  alt={shown === "character" ? "Your character, cut out" : shown === "scene" ? "The scene with the character taken out" : "Your character illustration"}
+                  width={image.width}
+                  height={image.height}
+                  className={shown === "character" ? styles.layerCharacter : undefined}
+                  data-picking={mode === "living" && living.pick ? "" : undefined}
+                  // Picking a part: the click, in the picture's own pixels.
+                  onClick={mode === "living" && living.pick ? (event) => {
+                    const box = event.currentTarget.getBoundingClientRect();
+                    living.pick!(Math.floor(((event.clientX - box.left) / box.width) * image.width), Math.floor(((event.clientY - box.top) / box.height) * image.height));
+                  } : undefined}
+                />
               )}
               {mode === "living" && living.highlight ? (
                 <span className={styles.layerHighlight} style={{ maskImage: `url(${livingUrls.mask(image.id, living.highlight)})`, WebkitMaskImage: `url(${livingUrls.mask(image.id, living.highlight)})` }} aria-hidden="true" />
               ) : null}
             </div>
-            {(!look && !lookFailed) || (mode === "living" && living.busy) ? <Skeleton className={styles.readingSweep} /> : null}
+            {(!fromCharacter && !look && !lookFailed) || (mode === "living" && living.busy) ? <Skeleton className={styles.readingSweep} /> : null}
           </div>
         </figure>
         {look?.layers.character && mode === "cycle" ? (
@@ -259,8 +284,8 @@ export function FlipbookCreate({
       <aside className={view.controls}>
         <form className={composer.composer} onSubmit={(event) => { event.preventDefault(); submit(); }}>
           <section className={styles.reading} aria-live="polite" aria-busy={!look && !lookFailed}>
-            <span className={composer.groupLabel}><HugeiconsIcon icon={AiSearch02Icon} size={12} strokeWidth={1.75} />{look ? "In this drawing" : lookFailed ? "Pick a motion" : "Reading your drawing…"}</span>
-            {look ? (
+            <span className={composer.groupLabel}><HugeiconsIcon icon={AiSearch02Icon} size={12} strokeWidth={1.75} />{fromCharacter ? "From your characters" : look ? "In this drawing" : lookFailed ? "Pick a motion" : "Reading your drawing…"}</span>
+            {fromCharacter ? <><p className={styles.readingSummary}>{image.originalName}</p><p className={styles.hint}>This version is kept with the animation. New character designs won’t change it. <Link href={`/characters?c=${initialCharacter!.source.characterId}`} className="text-primary hover:underline">Back to {initialCharacter!.name}</Link></p></> : look ? (
               <>
                 {look.summary ? <p className={styles.readingSummary}>{look.summary}</p> : null}
                 <div className={composer.chips}>
@@ -289,26 +314,31 @@ export function FlipbookCreate({
             )}
           </section>
 
-          <fieldset className={composer.effects}>
+          {!fromCharacter && <fieldset className={composer.effects}>
             <legend className="sr-only">How it moves</legend>
             <SlidingTabs className={composer.tabs} tabs={MODES.map((entry) => ({ id: entry.id, label: entry.label }))} value={mode} onValueChange={(id) => { touched.current = true; setMode(id as Mode); }} />
             <p className={composer.summary} aria-live="polite">{MODES.find((entry) => entry.id === mode)!.note}</p>
-          </fieldset>
+          </fieldset>}
 
           {mode === "living" ? <LivingPanel image={image} onPreview={setLiving} /> : <>
+          <div className={composer.group}>
+            <label htmlFor="flipbook-camera-view" className={composer.label}>Camera view</label>
+            <Select id="flipbook-camera-view" value={cameraView} options={VIEW_OPTIONS} onValueChange={(value) => { touched.current = true; const next = value as ViewPreference; setCameraView(next); if (["front", "back", "high", "low"].includes(next) && travels(action)) setDirection("in_place"); }} />
+            <p className={styles.hint}>{cameraView === "original" ? "Keeps your character’s view. It won’t automatically turn into a side profile." : "The selected view stays fixed through every drawing. New angles may reveal details absent from the reference."}</p>
+          </div>
           <fieldset className={composer.effects}>
             <legend className="sr-only">Choose a motion</legend>
             <SlidingTabs
               className={composer.tabs}
               tabs={ACTIONS.map((entry) => ({ id: entry.action, label: entry.label }))}
               value={action}
-              onValueChange={(id) => { touched.current = true; setAction(id as AnimationAction); if (!travels(id as AnimationAction) && direction === "in_place") setDirection(facing); }}
+              onValueChange={(id) => { touched.current = true; setAction(id as CycleAction); if (!travels(id as CycleAction) && direction === "in_place") setDirection(facing); }}
             />
             <p className={composer.summary} aria-live="polite">{ACTIONS.find((entry) => entry.action === action)!.note}</p>
           </fieldset>
 
-          <fieldset className={composer.effects}>
-            <legend className={composer.label}>{travels(action) ? "Direction" : "Facing"}</legend>
+          {(travels(action) || lateralView) && <fieldset className={composer.effects}>
+            <legend className={composer.label}>{travels(action) ? "Screen movement" : "Facing"}</legend>
             <SlidingTabs
               key={travels(action) ? "direction" : "facing"}
               className={composer.tabs}
@@ -316,7 +346,7 @@ export function FlipbookCreate({
               value={direction}
               onValueChange={(id) => { touched.current = true; setDirection(id as Direction); }}
             />
-          </fieldset>
+          </fieldset>}
 
           <div className={composer.instruction}>
             <label htmlFor="flipbook-detail" className={composer.label}>Describe the motion</label>
@@ -390,6 +420,7 @@ export function FlipbookCreate({
     <section className={shell.empty} aria-labelledby="flipbook-title">
       <h1 id="flipbook-title" className={shell.emptyTitle}>Start with a drawing</h1>
       <p className="text-sm text-muted-foreground">One character, PNG, JPEG or WebP. Then pick how it should move.</p>
+      <CharacterPicker />
 
       <div className={shell.drop}>
         {progress !== null ? (
@@ -432,7 +463,7 @@ export function FlipbookCreate({
               onFilesAdded={(_items, files) => { if (files[0]) start(files[0]); }}
               title="Drop your drawing here"
               dropzoneIcon={<FeatherSparkleColored24 className={styles.dropIcon} width={88} height={88} />}
-              description={`PNG, JPEG or WebP · ${formatBytes(MAX_IMAGE_BYTES)} max · full body, side view`}
+              description={`PNG, JPEG or WebP · ${formatBytes(MAX_IMAGE_BYTES)} max · any camera view`}
               browseLabel="Choose an image"
               browseVariant="default"
               classNames={{ root: upload.upload, dropzone: upload.dropzone }}

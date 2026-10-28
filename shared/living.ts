@@ -43,8 +43,18 @@ export const LivingLayerSchema = z.object({
   pieces: z.number().int().min(1).max(200),
   /** Share of the picture it covers. */
   share: z.number().min(0).max(1),
+  /** Picked by the person with a click, not found by SAM; only these can be removed. */
+  custom: z.boolean().default(false),
 });
 export type LivingLayer = z.infer<typeof LivingLayerSchema>;
+
+/** A part the person points at: the spot clicked, in the picture's pixels. */
+export const LivingPartRequestSchema = z.object({
+  x: z.number().int().nonnegative(),
+  y: z.number().int().nonnegative(),
+  name: z.string().trim().min(1).max(40).optional(),
+}).strict();
+export type LivingPartRequest = z.infer<typeof LivingPartRequestSchema>;
 
 export const LivingInventorySchema = z.object({
   imageId: z.uuid(),
@@ -52,6 +62,10 @@ export const LivingInventorySchema = z.object({
   layers: z.array(LivingLayerSchema).max(8),
   /** Things that were seen and stay as they are (people in the background, a building). */
   stills: z.array(z.string().max(60)).max(12),
+  /** The scene with the character taken out exists: the "depth" camera can move them apart. */
+  scene: z.boolean().default(false),
+  /** A closed-eyes version of the eyes exists: the character can blink. */
+  blink: z.boolean().default(false),
   createdAt: z.iso.datetime(),
 });
 export type LivingInventory = z.infer<typeof LivingInventorySchema>;
@@ -107,6 +121,20 @@ export function suggestAmbience(inventory: Pick<LivingInventory, "layers">): Amb
   return null;
 }
 
+// ── Framing ────────────────────────────────────────────────────────────────
+
+/** A camera that moves within the loop (and is back where it started at its end). */
+export const LIVING_CAMERAS = ["still", "zoom", "pan", "depth"] as const;
+export const LivingCameraSchema = z.enum(LIVING_CAMERAS);
+export type LivingCamera = z.infer<typeof LivingCameraSchema>;
+export const CAMERA_LABELS: Readonly<Record<LivingCamera, string>> = { still: "Still", zoom: "Slow zoom", pan: "Pan", depth: "Depth" };
+
+/** The shape of the video: the picture's own, or a crop around the character. */
+export const LIVING_ASPECTS = ["original", "9:16", "1:1"] as const;
+export const LivingAspectSchema = z.enum(LIVING_ASPECTS);
+export type LivingAspect = z.infer<typeof LivingAspectSchema>;
+export const ASPECT_LABELS: Readonly<Record<LivingAspect, string>> = { original: "Original", "9:16": "9:16", "1:1": "1:1" };
+
 /** Motion strength: 1 is the default amount, 0 none, 2 twice as much. */
 export const LIVING_STRENGTH = [0, 2] as const;
 
@@ -120,6 +148,10 @@ export const LivingRequestSchema = z.object({
   }).strict()).max(8),
   audio: LivingAudioSchema,
   lengthSeconds: VideoLengthSchema,
+  camera: LivingCameraSchema,
+  aspect: LivingAspectSchema,
+  /** The character blinks once per loop (needs the closed-eyes version). */
+  blink: z.boolean(),
 }).strict();
 export type LivingRequest = z.infer<typeof LivingRequestSchema>;
 
@@ -145,6 +177,9 @@ export function defaultLivingRequest(inventory: Pick<LivingInventory, "wind" | "
     layers: inventory.layers.map((layer) => ({ id: layer.id, motion: MOTIONS_FOR[layer.kind][0], strength: 1 })),
     audio: { kind: "none" },
     lengthSeconds: 0,
+    camera: "still",
+    aspect: "original",
+    blink: false,
   };
 }
 
@@ -153,6 +188,9 @@ export const livingUrls = {
   render: (imageId: string) => `/api/flipbooks/images/${imageId}/living/render`,
   audio: (imageId: string) => `/api/flipbooks/images/${imageId}/living/audio`,
   editor: (imageId: string) => `/api/flipbooks/images/${imageId}/living/editor`,
+  parts: (imageId: string) => `/api/flipbooks/images/${imageId}/living/parts`,
+  scene: (imageId: string) => `/api/flipbooks/images/${imageId}/living/scene`,
+  blink: (imageId: string) => `/api/flipbooks/images/${imageId}/living/blink`,
   mask: (imageId: string, layerId: string) => `/api/flipbooks/images/${imageId}/living/media?layer=${encodeURIComponent(layerId)}`,
   file: (imageId: string, key: string, name: string, download = false) =>
     `/api/flipbooks/images/${imageId}/living/media?x=${key}&name=${encodeURIComponent(name)}${download ? "&download=1" : ""}`,

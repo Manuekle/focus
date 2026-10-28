@@ -19,7 +19,7 @@ export function LoginDialog({
   readonly onOpenChange: (open: boolean) => void;
   /** Where to come back after signing in. */
   readonly next: string;
-  readonly reason: "quota" | "save";
+  readonly reason: "quota" | "save" | "characters";
 }) {
   return (
     <Dialog.Root open={open} onOpenChange={onOpenChange}>
@@ -29,11 +29,12 @@ export function LoginDialog({
           <div className="flex items-start justify-between gap-4">
             <div>
               <Dialog.Title className="text-base font-semibold text-foreground">
-                {reason === "quota" ? "You’ve used your free edits" : "Save your projects"}
+                {reason === "quota" ? "You’ve used your free edits" : reason === "characters" ? "Keep your characters together" : "Save your projects"}
               </Dialog.Title>
               <Dialog.Description className="mt-1.5 text-sm leading-6 text-muted-foreground">
                 {reason === "quota"
                   ? "Sign in with Facebook to keep editing. Your clip and instruction are waiting for you."
+                  : reason === "characters" ? "Sign in to save your references, character designs and every version you create."
                   : "Sign in with Facebook and every clip you edit is saved to your account, with all its versions."}
               </Dialog.Description>
             </div>

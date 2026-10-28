@@ -67,9 +67,11 @@ const median = (values: readonly number[]) => {
 };
 
 /** Checks every ready frame, in playback order (the loop's wrap counts as a neighbor). */
-export async function checkFrames(entries: readonly QcEntry[], referenceHistogram: readonly number[] | null, action: AnimationAction = "walk"): Promise<Map<string, QcResult>> {
+export async function checkFrames(entries: readonly QcEntry[], referenceHistogram: readonly number[] | null, action: AnimationAction = "walk", view: string = "side"): Promise<Map<string, QcResult>> {
   const spec = actionSpec(action);
-  const stride = spec.stride;
+  const stride = view === "side" ? spec.stride : null;
+  // A scene has several figures that move about a fixed frame: neither a second figure nor a shifting center of mass is a fault.
+  const group = action === "ensemble";
   const results = new Map<string, QcResult>();
   if (!entries.length) return results;
   const shapes = await Promise.all(entries.map((entry) => silhouette(entry.sprite)));
@@ -93,7 +95,7 @@ export async function checkFrames(entries: readonly QcEntry[], referenceHistogra
     if (colorDistance !== null && colorDistance > 0.38) warnings.push({ code: "color_shift", message: "Its colors differ noticeably from the reference character." });
     if (measure.method !== "alpha" && measure.backgroundUniformity < 0.85) warnings.push({ code: "background_not_plain", message: "Muse Image drew a background here; the cut-out may include part of it." });
     if (measure.method === "key") warnings.push({ code: "key_extraction", message: "Cut out by its flat background color (SAM found no match). Check the edges." });
-    if (measure.multiple) warnings.push({ code: "multiple_subjects", message: "More than one figure was found in this drawing; the largest was kept." });
+    if (measure.multiple && !group) warnings.push({ code: "multiple_subjects", message: "More than one figure was found in this drawing; the largest was kept." });
     const previous = (index - 1 + entries.length) % entries.length;
     if (!spec.subtle && entries.length > 1 && previous !== index && iou(shapes[index].mask, shapes[previous].mask) > 0.95) {
       warnings.push({ code: "near_duplicate", message: `Almost identical to the frame before it (“${entries[previous].label}”). The pose may not have changed.` });
@@ -102,7 +104,7 @@ export async function checkFrames(entries: readonly QcEntry[], referenceHistogra
       warnings.push({ code: "stride_unclear", message: "The feet are not clearly apart, as a contact pose needs." });
     }
     // Center of mass as a share of the cell width; the torso is registered, so a big shift is the body leaning or sliding.
-    if (Math.abs(shapes[index].comX - medianCom) > 0.08) {
+    if (!group && Math.abs(shapes[index].comX - medianCom) > 0.08) {
       warnings.push({ code: "body_offset", message: "The body’s weight sits off-center compared with the other frames." });
     }
     results.set(entry.frameId, { warnings: warnings.slice(0, 12), relativeScale, colorDistance });
@@ -177,7 +179,7 @@ export async function reviewFrames(input: {
   const client = metaClient(config);
   const started = Date.now();
   const instructions = `You review the drawings of a hand-drawn ${spec.label} for Focus Flipbook. Image 1 is the character reference. Image 2 is a contact sheet of ${input.labels.length} drawings in playback order, read left to right, top to bottom; frame 1 is at the top left. The cycle loops from the last frame back to frame 1.
-Frames: ${input.labels.map((label, index) => `${index + 1} = ${label}`).join(", ")}. The character should face ${input.direction} in every frame.
+Frames: ${input.labels.map((label, index) => `${index + 1} = ${label}`).join(", ")}. Camera and heading in every frame: ${input.direction}.
 For each frame, report only problems you can actually see: wrong_facing, identity_change (outfit, hair, colors or accessories differ from the reference), missing_limb, extra_limb, wrong_pose (does not match its phase), cropped, style_change, same_as_neighbor (pose barely differs from an adjacent frame), other. Write every note and the summary in English. Keep each note under 20 words. ok=true when a frame has no visible problem.
 recognizableWalk: true when playing the frames in order would read as a ${spec.label}. summary: one or two sentences for the animator. Be honest; do not praise.`;
   try {

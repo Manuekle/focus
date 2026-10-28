@@ -11,7 +11,8 @@ import { formatBytes } from "../../shared/media";
 import {
   DURATIONS,
   backgroundMoves,
-  holdFrames,
+  exposures,
+  orderedFrames,
   type ExportFormat,
   type FlipbookAspect,
   type Flipbook,
@@ -62,6 +63,9 @@ export function ExportPanel({
   readonly sending: boolean;
   readonly onSendToEditor: () => void;
 }) {
+  const scene = flipbook.cast.length > 0;
+  const holds = exposures(orderedFrames(flipbook).map((frame) => frame.phase), settings.drawingFps);
+  const [shortest, longest] = [Math.min(...holds), Math.max(...holds)];
   const timed = format === "mp4" || (format === "gif" && (settings.motion !== "in_place" || backgroundMoves(background)));
   const allowed = backgroundAllowed(format, background.kind);
   const latest = flipbook.exports.slice(0, 6);
@@ -97,17 +101,24 @@ export function ExportPanel({
       </div>
       {format === "spritesheet" || format === "frames" ? <p className={styles.hint}>Sprite sheets and PNG frames keep the drawing size; the aspect applies to MP4, GIF and the preview.</p> : null}
 
-      <div className={styles.controlRow}>
-        <span className={styles.controlLabel}>Length</span>
-        <div className={styles.chips}>
-          {DURATIONS.map((value) => (
-            <ToggleChip key={value} size="xs" selected={settings.durationSeconds === value} onClick={() => onSettingsChange({ ...settings, durationSeconds: value })}>{value} s</ToggleChip>
-          ))}
+      {scene ? (
+        <div className={styles.controlRow}>
+          <span className={styles.controlLabel}>Length</span>
+          <span className="text-xs text-foreground tabular-nums">{flipbook.plan?.durationSeconds ?? settings.durationSeconds} s · {flipbook.frames.length} drawings</span>
         </div>
-      </div>
-      {!timed ? <p className={styles.hint}>{format === "gif" ? "The GIF is one cycle that loops forever." : "One cycle, eight drawings, with frame order and timing."}</p> : null}
+      ) : (
+        <div className={styles.controlRow}>
+          <span className={styles.controlLabel}>Length</span>
+          <div className={styles.chips}>
+            {DURATIONS.map((value) => (
+              <ToggleChip key={value} size="xs" selected={settings.durationSeconds === value} onClick={() => onSettingsChange({ ...settings, durationSeconds: value })}>{value} s</ToggleChip>
+            ))}
+          </div>
+        </div>
+      )}
+      {!timed ? <p className={styles.hint}>{scene ? "The scene plays once through, as long as you asked." : format === "gif" ? "The GIF is one cycle that loops forever." : "One cycle, eight drawings, with frame order and timing."}</p> : null}
 
-      {format === "mp4" ? <p className={styles.hint}>MP4 · H.264 · 24 fps. Each drawing is held for {holdFrames(settings.drawingFps)} frames ({settings.drawingFps} drawings per second). MP4 has no transparency.</p> : null}
+      {format === "mp4" ? <p className={styles.hint}>MP4 · H.264 · 24 fps. {shortest === longest ? <>Each drawing is held for {shortest} frames ({settings.drawingFps} drawings per second).</> : <>Anime timing: each drawing is held {shortest}–{longest} frames ({settings.drawingFps} drawings per second on average).</>} MP4 has no transparency.</p> : null}
       {!allowed ? <p className={styles.hint} data-invalid="">{BACKGROUND_LABEL[background.kind]} backgrounds aren’t available for {FORMAT_LABEL[format]}. Pick another background or format.</p> : null}
       {!exportable.ok ? <p className={styles.hint} data-invalid="">{exportable.reason}</p> : null}
 
@@ -134,6 +145,7 @@ export function ExportPanel({
             {latest.map((record) => (
               <li key={record.key}>
                 <span className="text-xs text-foreground">{FORMAT_LABEL[record.format]}</span>
+                {record.facts.fps ? <span className="text-[11px] text-muted-foreground">{record.facts.fps} fps</span> : null}
                 <span className="text-[11px] text-muted-foreground tabular-nums">
                   {record.facts.width}×{record.facts.height} · {record.facts.frames} {record.format === "mp4" ? "frames" : "drawings"}
                   {record.facts.durationSeconds !== null ? ` · ${record.facts.durationSeconds.toFixed(2)} s` : ""}
