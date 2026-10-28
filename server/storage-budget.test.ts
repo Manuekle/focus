@@ -1,6 +1,6 @@
 import path from "node:path";
 import { tmpdir } from "node:os";
-import { mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { assertStorageAvailable, storageBudgetStatus, writeMediaFile } from "./storage-budget";
 import { writeAtomic } from "./animation/store";
@@ -31,6 +31,19 @@ beforeEach(async () => {
 afterEach(async () => { vi.unstubAllEnvs(); await rm(root, { recursive: true, force: true }); });
 
 describe("demo storage budget", () => {
+  it("omits protected filesystem recovery metadata while keeping the real free-space reserve", async () => {
+    const metadata = path.join(root, "lost+found");
+    await mkdir(metadata);
+    await writeFile(path.join(metadata, "recovered"), Buffer.alloc(2 * 1024 * 1024));
+    await chmod(metadata, 0o000);
+    try {
+      const status = await storageBudgetStatus();
+      expect(status?.usedBytes).toBe(0);
+      await expect(writeAtomic(path.join(root, "reference.png"), Buffer.alloc(100))).resolves.toBeUndefined();
+      vi.stubEnv("FOCUS_MIN_FREE_MB", String(Math.ceil(status!.freeBytes / 1024 / 1024)));
+      await expect(assertStorageAvailable()).rejects.toMatchObject({ code: "storage_full" });
+    } finally { await chmod(metadata, 0o700); }
+  });
   it("measures existing data and refuses a write before it fills the allowance", async () => {
     await writeFile(path.join(root, "existing.png"), Buffer.alloc(800_000));
     await expect(writeAtomic(path.join(root, "new.png"), Buffer.alloc(300_000))).rejects.toMatchObject({ code: "storage_full", status: 507 });

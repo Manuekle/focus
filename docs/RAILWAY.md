@@ -20,6 +20,8 @@ La demo configura `FOCUS_MAX_DATA_MB=350` y `FOCUS_MIN_FREE_MB=100`. Se comprueb
 
 `FOCUS_PUBLIC_URL=https://focusmeta.up.railway.app` define también el origen permitido para modificar personajes. La comparación usa la URL pública HTTPS aunque Next reciba una URL HTTP interna. Esto no requiere habilitar `FOCUS_TRUST_PROXY` ni confiar en cabeceras de IP arbitrarias.
 
+El conteo de archivos omite `lost+found` en la raíz del volumen: es una carpeta de recuperación del sistema de archivos que Railway mantiene protegida. La reserva se calcula con el espacio libre real del volumen completo, incluido el que ocupe esa carpeta; no se cambian sus permisos.
+
 `railway.json` define:
 
 - Build con el `Dockerfile` existente; Next.js standalone + FFmpeg/FFprobe.

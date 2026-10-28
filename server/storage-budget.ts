@@ -15,13 +15,16 @@ export function storageBudgetEnabled(): boolean {
   return positive("FOCUS_MAX_DATA_MB", 0) > 0;
 }
 
-async function directoryBytes(dir: string): Promise<number> {
+async function directoryBytes(dir: string, volumeRoot = false): Promise<number> {
   let total = 0;
   const entries = await readdir(dir, { withFileTypes: true }).catch((error: NodeJS.ErrnoException) => {
     if (error.code === "ENOENT") return [];
     throw error;
   });
   for (const entry of entries) {
+    // ext4 recovery metadata belongs to the filesystem, not Focus. Railway
+    // keeps this directory root-only; statfs still includes its disk usage.
+    if (volumeRoot && entry.isDirectory() && entry.name === "lost+found") continue;
     const file = path.join(dir, entry.name);
     if (entry.isDirectory()) total += await directoryBytes(file);
     else if (entry.isFile()) total += await stat(file).then((info) => info.size).catch((error: NodeJS.ErrnoException) => {
@@ -37,7 +40,7 @@ export async function storageBudgetStatus() {
   if (!storageBudgetEnabled()) return null;
   const root = dataRoot();
   await mkdir(root, { recursive: true });
-  const [usedBytes, disk] = await Promise.all([directoryBytes(root), statfs(root)]);
+  const [usedBytes, disk] = await Promise.all([directoryBytes(root, true), statfs(root)]);
   const limitBytes = positive("FOCUS_MAX_DATA_MB", 0) * MB;
   const reserveBytes = positive("FOCUS_MIN_FREE_MB", 100) * MB;
   const freeBytes = disk.bavail * disk.bsize;
