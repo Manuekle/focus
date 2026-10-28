@@ -9,8 +9,8 @@ import { assertFlipbookEnabled, cleanupFlipbooks } from "../../../../server/anim
 export async function POST(request: Request) {
   try {
     assertFlipbookEnabled();
-    guardUpload(request);
-    void cleanupFlipbooks();
+    await cleanupFlipbooks();
+    await guardUpload(request);
     const header = request.headers.get("x-focus-filename");
     let fileName = "";
     try {

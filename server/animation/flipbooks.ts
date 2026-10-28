@@ -2,7 +2,8 @@ import path from "node:path";
 import { createHash, randomUUID } from "node:crypto";
 import { createReadStream } from "node:fs";
 import sharp from "sharp";
-import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { copyMediaFile as copyFile } from "../storage-budget";
 import { Readable } from "node:stream";
 import {
   FRAME_IDS,

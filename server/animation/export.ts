@@ -1,5 +1,6 @@
 import path from "node:path";
-import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat } from "node:fs/promises";
+import { writeMediaFile as writeFile } from "../storage-budget";
 import sharp from "sharp";
 import {
   OUTPUT_FPS,

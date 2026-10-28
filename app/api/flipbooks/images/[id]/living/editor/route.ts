@@ -17,7 +17,7 @@ export async function POST(request: Request, { params }: Context) {
     const parsed = BodySchema.safeParse(await readJsonBody(request));
     if (!parsed.success) throw new AppError("invalid_living", 400, "Render the animation first.");
     // A new editor clip is an upload, as when a flipbook is sent there.
-    guardUpload(request);
+    await guardUpload(request);
     const user = await currentUser(request);
     return Response.json(await livingToEditor(id, parsed.data.key, user?.id ?? null), { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

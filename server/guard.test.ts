@@ -31,10 +31,10 @@ describe("rate limits", () => {
     expect(clientKey(request({ "x-forwarded-for": "1.2.3.4, 10.0.0.1" }))).toBe("1.2.3.4");
   });
 
-  it("limits uploads per client", () => {
+  it("limits uploads per client", async () => {
     process.env.FOCUS_UPLOADS_PER_HOUR = "1";
-    guardUpload(request());
-    expect(() => guardUpload(request())).toThrowError(expect.objectContaining({ code: "rate_limited", status: 429 }));
+    await guardUpload(request());
+    await expect(guardUpload(request())).rejects.toMatchObject({ code: "rate_limited", status: 429 });
   });
 });
 

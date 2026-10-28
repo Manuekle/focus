@@ -20,6 +20,7 @@ import {
   hasAcceptedImageExtension,
 } from "../../shared/flipbook";
 import type { Character, CharacterSummary } from "../../shared/characters";
+import { formatBytes } from "../../shared/media";
 import { AccountButton } from "../_auth/account-button";
 import { LoginDialog } from "../_auth/login-dialog";
 import { useSession } from "../_auth/session-client";
@@ -130,7 +131,7 @@ export function CharactersStudio({
       file &&
       (!hasAcceptedImageExtension(file.name) || file.size > MAX_IMAGE_BYTES)
     ) {
-      setError("Choose a PNG, JPEG or WebP image up to 15 MB.");
+      setError(`Choose a PNG, JPEG or WebP image up to ${formatBytes(MAX_IMAGE_BYTES)}.`);
       return;
     }
     createLock.current = true;

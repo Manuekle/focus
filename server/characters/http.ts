@@ -11,11 +11,12 @@ export async function characterUser(request: Request) {
   assertFlipbookEnabled();
   if (!["GET", "HEAD"].includes(request.method)) {
     const origin = request.headers.get("origin");
-    // Next may use an internal localhost URL while the browser uses 127.0.0.1
-    // or a reverse-proxied public host. Host is supplied by the HTTP request.
-    const expected = new URL(request.url);
-    expected.host = request.headers.get("host") ?? expected.host;
-    if (
+    // The configured public origin is authoritative behind Railway's HTTPS
+    // proxy. IP-header trust is a separate setting and must not control CSRF.
+    const publicUrl = process.env.FOCUS_PUBLIC_URL?.trim();
+    const expected = new URL(publicUrl || request.url);
+    if (!publicUrl) expected.host = request.headers.get("host") ?? expected.host;
+    if (!publicUrl &&
       process.env.FOCUS_TRUST_PROXY === "1" &&
       request.headers.get("x-forwarded-proto") === "https"
     )

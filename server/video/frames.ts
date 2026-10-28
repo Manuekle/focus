@@ -1,5 +1,6 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { MediaToolError } from "../ffmpeg";
+import { assertStorageAvailable, watchStorageBudget } from "../storage-budget";
 
 // Frame I/O through FFmpeg pipes. One RGBA frame in memory at a time (plus
 // whatever an effect chooses to keep), so a clip never becomes a giant array.
@@ -7,23 +8,27 @@ import { MediaToolError } from "../ffmpeg";
 
 const FFMPEG = process.env.FFMPEG_PATH ?? "ffmpeg";
 
-function start(args: readonly string[], signal?: AbortSignal): { child: ChildProcessWithoutNullStreams; stderr: () => string; done: Promise<void> } {
+function start(args: readonly string[], signal?: AbortSignal): { child: ChildProcessWithoutNullStreams; stderr: () => string; done: Promise<void>; storageFailure: () => Error | null } {
   const child = spawn(/*turbopackIgnore: true*/ FFMPEG, ["-hide_banner", "-nostdin", "-loglevel", "error", ...args], { stdio: ["pipe", "pipe", "pipe"] });
   let stderr = "";
   child.stderr.on("data", (chunk: Buffer) => {
     stderr = (stderr + chunk.toString()).slice(-6000);
   });
   const kill = () => child.kill("SIGKILL");
+  let storageError: Error | null = null;
+  const stopWatching = watchStorageBudget((error) => { storageError = error; kill(); });
   signal?.addEventListener("abort", kill, { once: true });
   const done = new Promise<void>((resolve, reject) => {
-    child.on("error", (error) => reject(new MediaToolError(`ffmpeg could not start: ${error.message}`, stderr)));
+    child.on("error", (error) => { stopWatching(); reject(new MediaToolError(`ffmpeg could not start: ${error.message}`, stderr)); });
     child.on("close", (code, killed) => {
       signal?.removeEventListener("abort", kill);
-      if (code === 0) resolve();
+      stopWatching();
+      if (storageError) reject(storageError);
+      else if (code === 0) resolve();
       else reject(new MediaToolError(`ffmpeg exited with ${killed ?? code}`, stderr));
     });
   });
-  return { child, stderr: () => stderr, done };
+  return { child, stderr: () => stderr, done, storageFailure: () => storageError };
 }
 
 /** Yields exactly-sized RGBA frames from a video, in presentation order. */
@@ -97,15 +102,16 @@ export function writeFrames(options: {
     "-movflags", "+faststart",
     output,
   ];
-  const { child, done } = start(args, signal);
+  const { child, done, storageFailure } = start(args, signal);
   done.catch(() => undefined);
   let failed: Error | null = null;
   child.stdin.on("error", (error) => {
-    failed = error;
+    failed = storageFailure() ?? error;
   });
   return {
     async write(frame) {
-      if (failed) throw failed;
+      const failure = storageFailure() ?? failed;
+      if (failure) throw failure;
       if (!child.stdin.write(frame)) {
         await new Promise<void>((resolve, reject) => {
           const onDrain = () => {
@@ -114,7 +120,7 @@ export function writeFrames(options: {
           };
           const onClose = () => {
             child.stdin.off("drain", onDrain);
-            reject(failed ?? new MediaToolError("Encoder closed its input", ""));
+            reject(storageFailure() ?? failed ?? new MediaToolError("Encoder closed its input", ""));
           };
           child.stdin.once("drain", onDrain);
           child.stdin.once("close", onClose);
@@ -163,6 +169,7 @@ export function freezeAudioArgs({ atSeconds, silenceSeconds, resume }: AudioFree
 
 /** Runs a one-shot FFmpeg command that can be canceled. */
 export async function runFfmpeg(args: readonly string[], signal?: AbortSignal): Promise<void> {
+  await assertStorageAvailable();
   const { child, done } = start(["-y", ...args], signal);
   child.stdin.end();
   await done;

@@ -10,3 +10,4 @@ export const limits = mediaLimits({
   duration: build.config.env.NEXT_PUBLIC_FOCUS_MAX_VIDEO_DURATION_SECONDS,
   uploadMb: build.config.env.NEXT_PUBLIC_FOCUS_MAX_UPLOAD_MB,
 });
+export const imageUploadMb = Number(build.config.env.NEXT_PUBLIC_FOCUS_MAX_IMAGE_UPLOAD_MB) || 15;

@@ -7,8 +7,8 @@ import { ingestVideo } from "../../../server/videos";
 // it to disk and enforce the size limit without buffering a multipart form.
 export async function POST(request: Request) {
   try {
-    guardUpload(request);
-    void cleanupJobs();
+    await cleanupJobs();
+    await guardUpload(request);
     if (!request.body) throw new AppError("empty_file", 400, "No file was received. Choose a file and try again.");
     const header = request.headers.get("x-focus-filename");
     let fileName = "";

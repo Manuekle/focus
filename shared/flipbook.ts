@@ -3,6 +3,7 @@ import { ConceptSchema } from "./schemas";
 import { PoseIdSchema } from "./pose-library";
 import { CharacterSourceSchema } from "./characters";
 import { CameraViewSchema, ViewPreferenceSchema } from "./animation-view";
+import { parseLimit } from "./media-limits";
 
 // Focus Flipbook: one character illustration becomes a short cycle of real,
 // distinct drawings. Contracts shared by the studio, the API routes and the
@@ -15,7 +16,7 @@ export const FlipbookImageIdSchema = z.uuid();
 
 // ── Uploads ────────────────────────────────────────────────────────────────
 
-export const MAX_IMAGE_BYTES = 15 * 1024 * 1024;
+export const MAX_IMAGE_BYTES = parseLimit(process.env.NEXT_PUBLIC_FOCUS_MAX_IMAGE_UPLOAD_MB, 15, [1, 15]) * 1024 * 1024;
 export const MIN_IMAGE_DIMENSION = 128;
 export const MAX_IMAGE_DIMENSION = 6000;
 /** Long side of the stored working copy and of the references sent to Muse Image. */

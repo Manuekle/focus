@@ -1,7 +1,8 @@
 import path from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 import { createReadStream } from "node:fs";
-import { mkdir, readdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readdir, readFile, rm, stat } from "node:fs/promises";
+import { writeMediaFile as writeFile } from "../storage-budget";
 import { Readable } from "node:stream";
 import sharp from "sharp";
 import {
