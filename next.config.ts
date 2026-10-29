@@ -1,5 +1,5 @@
 import type { NextConfig } from "next";
-import { mediaLimits } from "./shared/media-limits";
+import { mediaLimits, parseLimit } from "./shared/media-limits";
 
 // Upload limits come from the server's FOCUS_* variables (.env.local); only
 // their validated numbers reach the browser.
@@ -16,6 +16,7 @@ const config: NextConfig = {
     NEXT_PUBLIC_ENABLE_FLIPBOOK: process.env.NEXT_PUBLIC_ENABLE_FLIPBOOK === "true" ? "true" : "false",
     NEXT_PUBLIC_FOCUS_MAX_VIDEO_DURATION_SECONDS: String(limits.maxDurationSeconds),
     NEXT_PUBLIC_FOCUS_MAX_UPLOAD_MB: String(limits.maxUploadMb),
+    NEXT_PUBLIC_FOCUS_MAX_IMAGE_UPLOAD_MB: String(parseLimit(process.env.FOCUS_MAX_IMAGE_UPLOAD_MB, 15, [1, 15])),
   },
   experimental: { optimizePackageImports: ["@hugeicons/core-free-icons", "radix-ui"] },
 };

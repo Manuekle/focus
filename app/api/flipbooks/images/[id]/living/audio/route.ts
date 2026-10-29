@@ -22,7 +22,7 @@ export async function POST(request: Request, { params }: Context) {
   try {
     assertFlipbookEnabled();
     const { id } = await params;
-    guardUpload(request);
+    await guardUpload(request);
     let name = "";
     try {
       name = decodeURIComponent(request.headers.get("x-focus-filename") ?? "").trim();

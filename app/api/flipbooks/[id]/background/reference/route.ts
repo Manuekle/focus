@@ -11,7 +11,7 @@ type Context = { params: Promise<{ id: string }> };
 export async function PUT(request: Request, { params }: Context) {
   try {
     assertFlipbookEnabled();
-    guardUpload(request);
+    await guardUpload(request);
     const { id } = await params;
     await requireFlipbookAccess(request, id);
     const flipbook = await uploadBackgroundReference(id, request.body, declaredLength(request));

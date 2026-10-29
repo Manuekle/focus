@@ -17,6 +17,7 @@ import { SERVER_MAX_UPLOAD_BYTES as MAX_UPLOAD_BYTES } from "./media-limits";
 import { MediaToolError, ffmpeg, probe } from "./ffmpeg";
 import { describeSource, normalizedDimensions, parseRate } from "./media-validation";
 import { VIDEO_FILES, createVideoDir, parseVideoId, removeVideoDir, videoDir } from "./storage";
+import { withStorageWrite } from "./storage-budget";
 
 export type IngestInput = {
   readonly body: ReadableStream<Uint8Array>;
@@ -33,16 +34,18 @@ function cleanFileName(name: string): string {
 
 /** Streams the body to disk and stops as soon as it passes the size limit. */
 async function writeLimited(body: ReadableStream<Uint8Array>, target: string): Promise<number> {
-  let bytes = 0;
-  const limiter = new Transform({
-    transform(chunk: Buffer, _encoding, callback) {
-      bytes += chunk.length;
-      if (bytes > MAX_UPLOAD_BYTES) callback(tooLarge());
-      else callback(null, chunk);
-    },
+  return withStorageWrite(MAX_UPLOAD_BYTES, async () => {
+    let bytes = 0;
+    const limiter = new Transform({
+      transform(chunk: Buffer, _encoding, callback) {
+        bytes += chunk.length;
+        if (bytes > MAX_UPLOAD_BYTES) callback(tooLarge());
+        else callback(null, chunk);
+      },
+    });
+    await pipeline(Readable.fromWeb(body as WebReadableStream<Uint8Array>), limiter, createWriteStream(target), { signal: AbortSignal.timeout(120_000) });
+    return bytes;
   });
-  await pipeline(Readable.fromWeb(body as WebReadableStream<Uint8Array>), limiter, createWriteStream(target));
-  return bytes;
 }
 
 function tooLarge(): AppError {
@@ -143,6 +146,7 @@ async function normalize(
     ], timeoutMs);
     await ffmpeg(["-i", output, "-frames:v", "1", "-q:v", "3", path.join(dir, VIDEO_FILES.poster)]);
   } catch (error) {
+    if (error instanceof AppError && error.code.startsWith("storage_")) throw error;
     throw new AppError(
       "normalization_failed",
       422,

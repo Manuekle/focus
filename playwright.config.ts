@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { imageUploadMb, limits } from "./e2e/media-limits";
 
 // Browser E2E against the production build. Meta AI is switched off
 // (FOCUS_AI_DISABLED=1): these tests never spend credits. The live Meta path
@@ -28,6 +29,13 @@ export default defineConfig({
       NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS: process.env.FOCUS_E2E_RUNTIME_TEMPORAL_EFFECTS ?? process.env.NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS ?? "false",
       FOCUS_AI_DISABLED: "1",
       FOCUS_DATA_DIR: ".focus-data-e2e",
+      FOCUS_PUBLIC_URL: `http://127.0.0.1:${PORT}`,
+      FOCUS_SESSION_SECRET: "focus-e2e-session-key-for-isolated-tests-only",
+      FOCUS_MAX_VIDEO_DURATION_SECONDS: String(limits.maxDurationSeconds),
+      FOCUS_MAX_UPLOAD_MB: String(limits.maxUploadMb),
+      FOCUS_MAX_IMAGE_UPLOAD_MB: String(imageUploadMb),
+      FOCUS_MAX_DATA_MB: "350",
+      FOCUS_MIN_FREE_MB: "100",
       MODEL_API_KEY: "",
       META_API_KEY: "",
     },

@@ -24,6 +24,7 @@ import {
   hasAcceptedImageExtension,
 } from "../../shared/flipbook";
 import { characterUrls, type Character } from "../../shared/characters";
+import { formatBytes } from "../../shared/media";
 import { characterApi } from "./character-client";
 import styles from "./characters.module.css";
 
@@ -171,7 +172,7 @@ export function CharacterEditor({
   };
   const upload = async (file: File) => {
     if (!hasAcceptedImageExtension(file.name) || file.size > MAX_IMAGE_BYTES) {
-      setError("Choose a PNG, JPEG or WebP image up to 15 MB.");
+      setError(`Choose a PNG, JPEG or WebP image up to ${formatBytes(MAX_IMAGE_BYTES)}.`);
       return;
     }
     await run(() => characterApi.reference(character.id, file, referenceRole));

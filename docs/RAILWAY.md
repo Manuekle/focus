@@ -14,7 +14,13 @@ Fuentes oficiales consultadas el 27 de octubre de 2026: [Vercel Functions](https
 
 ## Configuración de demo en el trial
 
-El perfil elegido es una demo para pruebas: **500 MB en `/data`, 1 vCPU, hasta 1 GiB de RAM y un trabajo activo a la vez**. Los videos admiten **15 segundos y 25 MB**. Las imágenes y exportaciones también ocupan el volumen; conservar una copia de los resultados importantes y evitar acumular proyectos. Los 5 GB de Hobby son una opción posterior con mayor margen, no un mínimo demostrado para Flipbook.
+El perfil elegido es una demo para pruebas: **500 MB en `/data`, 1 vCPU, hasta 1 GiB de RAM y un trabajo activo a la vez**. Los videos admiten **15 segundos y 10 MB**; las imágenes, **5 MB**. Los 5 GB de Hobby son una opción posterior con mayor margen, no un mínimo demostrado para Flipbook.
+
+La demo configura `FOCUS_MAX_DATA_MB=350` y `FOCUS_MIN_FREE_MB=100`. Se comprueba el volumen antes de aceptar uploads y trabajo de IA, y antes de escribir imágenes, fotogramas y archivos de exportación. Las escrituras binarias se serializan y los encoders se interrumpen si alcanzan el umbral. El margen protege los archivos temporales entre comprobaciones; es un control de la aplicación, no una cuota del sistema de archivos. Al alcanzarlo, la API responde `storage_full` (507) y mantiene los archivos existentes. No se borran automáticamente personajes ni proyectos guardados. La limpieza normal de temporales expirados sigue vigente. `/api/health` muestra uso, límite y espacio disponible para nuevos medios.
+
+`FOCUS_PUBLIC_URL=https://focusmeta.up.railway.app` define también el origen permitido para modificar personajes. La comparación usa la URL pública HTTPS aunque Next reciba una URL HTTP interna. Esto no requiere habilitar `FOCUS_TRUST_PROXY` ni confiar en cabeceras de IP arbitrarias.
+
+El conteo de archivos omite `lost+found` en la raíz del volumen: es una carpeta de recuperación del sistema de archivos que Railway mantiene protegida. La reserva se calcula con el espacio libre real del volumen completo, incluido el que ocupe esa carpeta; no se cambian sus permisos.
 
 `railway.json` define:
 
@@ -99,7 +105,8 @@ docker build \
   --build-arg NEXT_PUBLIC_ENABLE_FLIPBOOK=true \
   --build-arg NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS=false \
   --build-arg FOCUS_MAX_VIDEO_DURATION_SECONDS=15 \
-  --build-arg FOCUS_MAX_UPLOAD_MB=25 \
+  --build-arg FOCUS_MAX_UPLOAD_MB=10 \
+  --build-arg FOCUS_MAX_IMAGE_UPLOAD_MB=5 \
   -t focus:railway .
 pnpm test:deployment
 ```

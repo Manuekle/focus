@@ -4,6 +4,7 @@ import { constants } from "node:fs";
 import { readMetaConfig } from "./ai/meta";
 import { guardConfig } from "./guard";
 import { dataRoot } from "./storage";
+import { storageBudgetStatus } from "./storage-budget";
 
 function toolVersion(bin: string): Promise<string | null> {
   return new Promise((resolve) => {
@@ -45,6 +46,7 @@ async function buildReport() {
     .then(() => access(dataRoot(), constants.W_OK))
     .then(() => true, () => false);
   const config = guardConfig();
+  const budget = await storageBudgetStatus().catch(() => null);
   const ok = Boolean(ffmpeg && ffprobe && storage);
   return {
     ok,
@@ -54,6 +56,7 @@ async function buildReport() {
       storageWritable: storage,
       metaConfigured: readMetaConfig() !== null,
       aiEnabled: !config.aiDisabled,
+      ...(budget ? { storage: { usedMb: Math.ceil(budget.usedBytes / 1024 / 1024), limitMb: budget.limitBytes / 1024 / 1024, reserveMb: budget.reserveBytes / 1024 / 1024, availableMb: Math.floor(budget.availableBytes / 1024 / 1024) } } : {}),
     },
   };
 }

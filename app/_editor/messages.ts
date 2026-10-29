@@ -13,6 +13,8 @@ const errors: Readonly<Record<string, string>> = {
   ai_disabled: "AI editing is temporarily paused. Please try again later.",
   busy: "Too many videos are processing right now. Try again in a minute.",
   budget_exhausted: "The daily AI processing limit has been reached. Try again tomorrow.",
+  storage_full: "The demo’s storage limit has been reached. Remove unused media, then try again.",
+  storage_unavailable: "Available storage couldn’t be checked. Try again shortly.",
   rate_limited: "You’ve reached the hourly limit. Please try again later.",
   invalid_edit: "Describe your change in at least 3 characters and choose an effect.",
   job_not_found: "This edit is no longer available. Start a new edit to continue.",

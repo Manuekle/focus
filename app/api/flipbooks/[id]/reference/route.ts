@@ -14,7 +14,7 @@ const noStore = { headers: { "Cache-Control": "no-store" } };
 export async function PUT(request: Request, { params }: Context) {
   try {
     assertFlipbookEnabled();
-    guardUpload(request);
+    await guardUpload(request);
     const { id } = await params;
     await requireFlipbookAccess(request, id);
     const upload = await readUpload(request.body, declaredLength(request));
@@ -29,7 +29,7 @@ export async function PUT(request: Request, { params }: Context) {
 export async function POST(request: Request, { params }: Context) {
   try {
     assertFlipbookEnabled();
-    guardUpload(request);
+    await guardUpload(request);
     const { id } = await params;
     await requireFlipbookAccess(request, id);
     let name = "";

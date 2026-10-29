@@ -15,6 +15,7 @@ import {
 import { flipbookEnabled } from "../../shared/features";
 import { AppError } from "../errors";
 import { dataRoot } from "../storage";
+import { withStorageWrite } from "../storage-budget";
 
 // Focus Flipbook storage. Same conventions as the video jobs: one JSON state
 // file per flipbook written with write-then-rename, read-modify-write under a
@@ -116,10 +117,20 @@ export function newVersionId(): string {
 // ── Atomic writes ──────────────────────────────────────────────────────────
 
 export async function writeAtomic(file: string, data: string | Buffer): Promise<void> {
-  await mkdir(path.dirname(file), { recursive: true });
-  const temp = `${file}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
-  await writeFile(temp, data);
-  await rename(temp, file);
+  const write = async () => {
+    await mkdir(path.dirname(file), { recursive: true });
+    const temp = `${file}.${process.pid}.${randomUUID().slice(0, 8)}.tmp`;
+    try {
+      await writeFile(temp, data);
+      await rename(temp, file);
+    } catch (error) {
+      await rm(temp, { force: true }).catch(() => undefined);
+      throw error;
+    }
+  };
+  // State/error JSON must remain writable when new media is refused.
+  if (Buffer.isBuffer(data)) await withStorageWrite(data.byteLength, write);
+  else await write();
 }
 
 export async function readJsonFile<T>(file: string, parse: (value: unknown) => T): Promise<T | null> {

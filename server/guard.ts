@@ -1,5 +1,6 @@
 import { AppError } from "./errors";
 import { samFramesSince } from "./ai/usage";
+import { assertStorageAvailable } from "./storage-budget";
 
 // Abuse and cost protection for a public deployment. Everything is in-process
 // (single container); limits are configured with environment variables.
@@ -66,9 +67,10 @@ function tooMany(waitSeconds: number, what: string): AppError {
   return new AppError("rate_limited", 429, `You’ve reached the hourly limit for ${what}. Try again in ${minutes} min.`);
 }
 
-export function guardUpload(request: Request): void {
+export async function guardUpload(request: Request): Promise<void> {
   const wait = takeSlot("upload", clientKey(request), guardConfig().uploadsPerHour);
   if (wait !== null) throw tooMany(wait, "uploads");
+  await assertStorageAvailable(32 * 1024 * 1024);
 }
 
 /**
@@ -80,6 +82,7 @@ export async function guardAiRequest(request: Request, input: { activeJobs: numb
   if (config.aiDisabled) {
     throw new AppError("ai_disabled", 503, "AI editing is temporarily paused. Try again later.");
   }
+  await assertStorageAvailable(32 * 1024 * 1024);
   if (config.maxActiveJobs > 0 && input.activeJobs >= config.maxActiveJobs) {
     throw new AppError("busy", 503, "Too many videos are processing right now. Try again in a minute.");
   }

@@ -15,7 +15,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     const user = await characterUser(request);
-    guardUpload(request);
+    await guardUpload(request);
     if (request.headers.get("content-type")?.includes("application/json")) {
       const parsed = z.object({ preset: z.literal("elf-chan"), name: z.string().trim().min(1).max(80).default("Elf-chan") }).strict().safeParse(await readJsonBody(request));
       if (!parsed.success) throw new AppError("invalid_character", 400, "Choose a reference and a character name.");

@@ -27,7 +27,7 @@ export async function POST(request: Request, { params }: Context) {
 export async function PUT(request: Request, { params }: Context) {
   try {
     assertFlipbookEnabled();
-    guardUpload(request);
+    await guardUpload(request);
     const { id, frame } = await params;
     await requireFlipbookAccess(request, id);
     const flipbook = await replaceFrame(id, parseFrame(frame), request.body, declaredLength(request), paidGate(request));

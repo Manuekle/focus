@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { z } from "zod";
+import { assertStorageAvailable, watchStorageBudget } from "./storage-budget";
 
 // FFmpeg/FFprobe are always spawned with an argument array — never a shell —
 // so a file name or any other value can never become part of a command.
@@ -15,11 +16,13 @@ export class MediaToolError extends Error {
   }
 }
 
-function run(bin: string, args: readonly string[], timeoutMs = DEFAULT_TIMEOUT_MS): Promise<string> {
+function run(bin: string, args: readonly string[], timeoutMs = DEFAULT_TIMEOUT_MS, writesMedia = false): Promise<string> {
   return new Promise((resolve, reject) => {
     const child = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
     let stdout = "";
     let stderr = "";
+    let storageError: Error | null = null;
+    const stopWatching = writesMedia ? watchStorageBudget((error) => { storageError = error; child.kill("SIGKILL"); }) : () => undefined;
     const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMs);
     child.stdout.on("data", (chunk: Buffer) => (stdout += chunk.toString()));
     child.stderr.on("data", (chunk: Buffer) => {
@@ -28,11 +31,14 @@ function run(bin: string, args: readonly string[], timeoutMs = DEFAULT_TIMEOUT_M
     });
     child.on("error", (error) => {
       clearTimeout(timer);
+      stopWatching();
       reject(new MediaToolError(`${bin} could not start: ${error.message}`, stderr));
     });
     child.on("close", (code, signal) => {
       clearTimeout(timer);
-      if (code === 0) resolve(stdout);
+      stopWatching();
+      if (storageError) reject(storageError);
+      else if (code === 0) resolve(stdout);
       else reject(new MediaToolError(`${bin} exited with ${signal ?? code}`, stderr));
     });
   });
@@ -76,6 +82,7 @@ export async function probe(path: string, localOnly = false): Promise<Probe> {
   return ProbeSchema.parse(JSON.parse(out));
 }
 
-export function ffmpeg(args: readonly string[], timeoutMs?: number): Promise<string> {
-  return run(FFMPEG, ["-hide_banner", "-nostdin", "-loglevel", "error", "-y", ...args], timeoutMs);
+export async function ffmpeg(args: readonly string[], timeoutMs?: number): Promise<string> {
+  await assertStorageAvailable();
+  return run(FFMPEG, ["-hide_banner", "-nostdin", "-loglevel", "error", "-y", ...args], timeoutMs, true);
 }
