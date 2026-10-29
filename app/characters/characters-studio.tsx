@@ -26,7 +26,7 @@ import { AccountButton } from "../_auth/account-button";
 import { LoginDialog } from "../_auth/login-dialog";
 import { useSession } from "../_auth/session-client";
 import { ModeSwitch } from "../_editor/mode-switch";
-import { SidebarResizer, useSidebar } from "../_editor/sidebar-resizer";
+import { SidebarResizer, SidebarToggle, useSidebar } from "../_editor/sidebar-resizer";
 import { CharacterApiError, characterApi } from "./character-client";
 import { CharacterEditor } from "./character-editor";
 import shell from "../editor/studio.module.css";
@@ -169,6 +169,7 @@ export function CharactersStudio({
       </a>
       <header className={shell.header}>
         <div className={shell.headerStart}>
+          <SidebarToggle sidebar={sidebar} ariaControls="characters-sidebar" />
           <Link href="/" className={shell.brand} aria-label="Focus — Home">
             <Image src="/brand/focus-cat.webp" alt="" width={30} height={30} />
             <span>
@@ -185,6 +186,7 @@ export function CharactersStudio({
       <div className={shell.body} {...sidebar.bodyProps}>
         <SidebarResizer sidebar={sidebar} />
         <aside
+          id="characters-sidebar"
           className={`${shell.sidebar} ${styles.librarySidebar}`}
           aria-label="Character library"
         >

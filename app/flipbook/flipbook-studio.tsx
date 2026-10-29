@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Add01Icon, Delete02Icon, PanelLeftCloseIcon, PanelLeftOpenIcon, UserGroupIcon, UserMultiple02Icon } from "@hugeicons/core-free-icons";
+import { Add01Icon, Delete02Icon, UserGroupIcon, UserMultiple02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { confirmAction } from "../../components/ui/confirm-dialog";
@@ -18,7 +18,7 @@ import { LoginDialog } from "../_auth/login-dialog";
 import { refreshSession, useSession } from "../_auth/session-client";
 import { ago } from "../_editor/ago";
 import { ModeSwitch } from "../_editor/mode-switch";
-import { SidebarResizer, useSidebar } from "../_editor/sidebar-resizer";
+import { SidebarResizer, SidebarToggle, useSidebar } from "../_editor/sidebar-resizer";
 import { SidebarListSkeleton } from "../_editor/studio-skeletons";
 import { EnsembleCreate } from "./ensemble-create";
 import { FlipbookCreate, type CreateOptions } from "./flipbook-create";
@@ -156,9 +156,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
     <div className={cn(shell.studio, styles.studio)}>
       <header className={cn(shell.header, styles.header)}>
         <div className={shell.headerStart}>
-          <Button variant="ghost" size="icon-sm" className={styles.sidebarToggle} aria-label={sidebar.collapsed ? "Show sidebar" : "Hide sidebar"} aria-expanded={!sidebar.collapsed} aria-controls="flipbook-library" data-static onClick={() => sidebar.commitCollapsed(!sidebar.collapsed)}>
-            <HugeiconsIcon icon={sidebar.collapsed ? PanelLeftOpenIcon : PanelLeftCloseIcon} size={18} strokeWidth={1.75} />
-          </Button>
+          <SidebarToggle sidebar={sidebar} ariaControls="flipbook-library" className={styles.sidebarToggle} />
           <Link href="/" className={shell.brand} aria-label="Focus — Home">
             <Image src="/brand/focus-cat.webp" alt="" width={30} height={30} />
             <span>focus<span className={shell.brandDot}>.</span></span>
@@ -248,7 +246,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
           ) : null}
         </aside>
 
-        <ScrollArea as="main" className={cn(shell.main, styles.main)} viewportClassName={styles.mainViewport} contentClassName={styles.mainContent}>
+        <ScrollArea as="main" className={cn(shell.main, styles.main)} viewportClassName={styles.mainViewport} contentClassName={cn(styles.mainContent, "pt-4")}>
           {pollError ? <p className={styles.hint} data-invalid="" role="status">{pollError}</p> : null}
           {!together && characterSource && !flipbook && importError ? <p className={styles.hint} role="alert">{importError} <Link href="/characters">Open my characters</Link></p> : !together && characterSource && !flipbook && !imported ? <FlipbookSkeleton /> : flipbookId && !flipbook && !loadError ? (
             <FlipbookSkeleton />

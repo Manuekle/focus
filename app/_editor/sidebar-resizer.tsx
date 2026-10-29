@@ -1,8 +1,10 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
-import { ArrowLeft01Icon } from "@hugeicons/core-free-icons";
+import { PanelLeftCloseIcon, PanelLeftOpenIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
+import { Button } from "../../components/ui/button";
+import { cn } from "../../lib/utils";
 import shell from "../editor/studio.module.css";
 
 export const SIDEBAR_DEFAULT = 248;
@@ -75,11 +77,43 @@ export function useSidebar() {
 type Sidebar = ReturnType<typeof useSidebar>;
 
 /**
- * The edge between the sidebar and the page: drag it to resize (far enough
- * folds the sidebar), arrow keys resize it, double click resets. A button on
- * the edge folds and unfolds the sidebar.
+ * Header button to collapse or expand the studio sidebar, placed beside the app logo.
  */
-export function SidebarResizer({ sidebar, showToggle = true }: { readonly sidebar: Sidebar; readonly showToggle?: boolean }) {
+export function SidebarToggle({
+  sidebar,
+  ariaControls,
+  className,
+}: {
+  readonly sidebar: Sidebar;
+  readonly ariaControls?: string;
+  readonly className?: string;
+}) {
+  const { collapsed, commitCollapsed } = sidebar;
+  return (
+    <Button
+      variant="ghost"
+      size="icon-sm"
+      className={cn(shell.sidebarToggle, className)}
+      aria-label={collapsed ? "Show sidebar" : "Hide sidebar"}
+      aria-expanded={!collapsed}
+      aria-controls={ariaControls}
+      data-static
+      onClick={() => commitCollapsed(!collapsed)}
+    >
+      <HugeiconsIcon
+        icon={collapsed ? PanelLeftOpenIcon : PanelLeftCloseIcon}
+        size={18}
+        strokeWidth={1.75}
+      />
+    </Button>
+  );
+}
+
+/**
+ * The edge between the sidebar and the page: drag it to resize (far enough
+ * folds the sidebar), arrow keys resize it, double click resets.
+ */
+export function SidebarResizer({ sidebar }: { readonly sidebar: Sidebar; readonly showToggle?: boolean }) {
   const { width, collapsed, dragging, setDragging, previewWidth, previewCollapsed, commitWidth, commitCollapsed } = sidebar;
   const start = useRef<{ x: number; width: number } | null>(null);
 
@@ -110,38 +144,23 @@ export function SidebarResizer({ sidebar, showToggle = true }: { readonly sideba
     commitWidth(next);
   };
 
-  return (
-    <>
-      {collapsed ? null : (
-        <div
-          role="separator"
-          aria-orientation="vertical"
-          aria-label="Resize sidebar"
-          aria-valuemin={SIDEBAR_MIN}
-          aria-valuemax={SIDEBAR_MAX}
-          aria-valuenow={width}
-          tabIndex={0}
-          className={shell.resizer}
-          data-dragging={dragging || undefined}
-          onPointerDown={onPointerDown}
-          onPointerMove={onPointerMove}
-          onPointerUp={end}
-          onPointerCancel={end}
-          onKeyDown={onKeyDown}
-          onDoubleClick={() => commitWidth(SIDEBAR_DEFAULT)}
-        />
-      )}
-      {showToggle ? <button
-        type="button"
-        className={shell.sidebarToggle}
-        data-collapsed={collapsed || undefined}
-        aria-label={collapsed ? "Show sidebar" : "Hide sidebar"}
-        aria-expanded={!collapsed}
-        title={collapsed ? "Show sidebar" : "Hide sidebar"}
-        onClick={() => commitCollapsed(!collapsed)}
-      >
-        <HugeiconsIcon icon={ArrowLeft01Icon} size={12} strokeWidth={2} />
-      </button> : null}
-    </>
+  return collapsed ? null : (
+    <div
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Resize sidebar"
+      aria-valuemin={SIDEBAR_MIN}
+      aria-valuemax={SIDEBAR_MAX}
+      aria-valuenow={width}
+      tabIndex={0}
+      className={shell.resizer}
+      data-dragging={dragging || undefined}
+      onPointerDown={onPointerDown}
+      onPointerMove={onPointerMove}
+      onPointerUp={end}
+      onPointerCancel={end}
+      onKeyDown={onKeyDown}
+      onDoubleClick={() => commitWidth(SIDEBAR_DEFAULT)}
+    />
   );
 }

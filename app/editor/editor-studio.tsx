@@ -24,7 +24,7 @@ import { EditorNotice } from "../_editor/editor-notice";
 import { EditorView } from "../_editor/editor-view";
 import { ModeSwitch } from "../_editor/mode-switch";
 import { PLAN_EFFECT_LABEL } from "../_editor/job-panel";
-import { SidebarResizer, useSidebar } from "../_editor/sidebar-resizer";
+import { SidebarResizer, SidebarToggle, useSidebar } from "../_editor/sidebar-resizer";
 import { EditorSkeleton, SidebarListSkeleton } from "../_editor/studio-skeletons";
 import { StudioUpload } from "../_editor/studio-upload";
 import { useClipUpload } from "../_editor/use-clip-upload";
@@ -192,6 +192,7 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
     <div className={styles.studio}>
       <header className={styles.header}>
         <div className={styles.headerStart}>
+          <SidebarToggle sidebar={sidebar} ariaControls="editor-sidebar" />
           <Link href="/" className={styles.brand} aria-label="Focus — Home">
             <Image src="/brand/focus-cat.webp" alt="" width={30} height={30} />
             <span>focus<span className={styles.brandDot}>.</span></span>
@@ -217,7 +218,7 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
 
       <div className={styles.body} {...sidebar.bodyProps}>
         <SidebarResizer sidebar={sidebar} />
-        <aside className={styles.sidebar} aria-label={user ? "Your projects" : "Account"}>
+        <aside id="editor-sidebar" className={styles.sidebar} aria-label={user ? "Your projects" : "Account"}>
           <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => router.push("/editor")}>
             <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
             New clip
