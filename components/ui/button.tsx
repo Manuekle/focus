@@ -36,12 +36,12 @@ const buttonVariants = cva(
           "text-[var(--btn-chat-fg)] bg-[var(--btn-chat-bg)] shadow-[var(--btn-chat-shadow)]",
           "hover:bg-[var(--btn-chat-bg-hover)] active:shadow-[var(--btn-chat-shadow-pressed)]",
         ),
-        destructive:
-          "text-[var(--btn-destructive-fg)] bg-[var(--btn-destructive-bg)]"
-          + " shadow-[var(--btn-destructive-shadow)]"
-          + " hover:shadow-[var(--btn-destructive-shadow-hover)] hover:bg-[var(--btn-destructive-bg-hover)]"
-          + " active:shadow-[var(--btn-destructive-shadow-pressed)]"
-          + " focus-visible:outline-[color:var(--btn-destructive-focus-ring)]",
+        destructive: cn(
+          styles.highlight, styles.destructive,
+          "text-[var(--btn-destructive-fg)] bg-[var(--btn-destructive-bg)] shadow-[var(--btn-destructive-shadow)]",
+          "hover:shadow-[var(--btn-destructive-shadow-hover)] hover:bg-[var(--btn-destructive-bg-hover)]",
+          "active:shadow-[var(--btn-destructive-shadow-pressed)] focus-visible:outline-[color:var(--btn-destructive-focus-ring)]",
+        ),
         secondary:
           "text-[var(--btn-secondary-fg)] bg-[var(--btn-secondary-bg)]"
           + " shadow-[var(--btn-secondary-shadow)]"

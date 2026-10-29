@@ -6,6 +6,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { Add01Icon, Delete02Icon, PanelLeftCloseIcon, PanelLeftOpenIcon, UserGroupIcon, UserMultiple02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { confirmAction } from "../../components/ui/confirm-dialog";
 import { ProgressMeter } from "../../components/ui/progress-meter";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { useToast } from "../../components/toast-provider";
@@ -141,7 +142,11 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
   };
 
   const remove = async (entry: FlipbookSummary) => {
-    if (!window.confirm(`Delete “${entry.title}”? Its drawings and exports will expire within a day.`)) return;
+    const confirmed = await confirmAction({
+      title: `Delete “${entry.title}”?`,
+      description: "Its drawings and exports will expire within a day.",
+    });
+    if (!confirmed) return;
     await flipbookApi.unsave(entry.id).catch(() => undefined);
     if (entry.id === flipbook?.id) startOver();
     else void loadSaved();
@@ -180,7 +185,6 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
       <div className={cn(shell.body, styles.body)} {...sidebar.bodyProps}>
         <SidebarResizer sidebar={sidebar} showToggle={false} />
         <aside id="flipbook-library" className={cn(shell.sidebar, styles.sidebar)} aria-label={user ? "Your animations" : "Account"}>
-          <ScrollArea className={styles.sidebarScroll} contentClassName={styles.sidebarContent}>
           <Button variant="outline" size="sm" className="w-full justify-start" onClick={startOver}>
             <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
             New animation
@@ -242,7 +246,6 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
               <FacebookButton next={here} label="Sign in with Facebook" className="h-9 whitespace-nowrap px-3 text-[13px]" />
             </section>
           ) : null}
-          </ScrollArea>
         </aside>
 
         <ScrollArea as="main" className={cn(shell.main, styles.main)} viewportClassName={styles.mainViewport} contentClassName={styles.mainContent}>

@@ -9,9 +9,7 @@
 .studio { height: 100dvh; overflow: hidden; --studio-preview-top: 16px; }
 .header { flex-shrink: 0; }
 .body { min-height: 0; grid-template-rows: minmax(0, 1fr); }
-.sidebar { position: static; min-height: 0; height: auto; overflow: hidden; }
-.sidebarScroll { flex: 1; }
-.sidebarContent { display: flex; min-width: 0; flex-direction: column; gap: 18px; }
+.sidebar { position: static; min-height: 0; height: 100%; overflow-y: auto; }
 .sidebarToggle { flex-shrink: 0; color: var(--muted-foreground); }
 .main { min-height: 0; overflow: hidden; container-type: inline-size; }
 /* The workspace is the page: no gutter from the shared studio shell. */

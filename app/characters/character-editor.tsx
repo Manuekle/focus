@@ -14,6 +14,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { confirmAction } from "../../components/ui/confirm-dialog";
 import { SuggestionChip } from "../../components/ui/suggestion-chip";
 import { ToggleChip } from "../../components/ui/toggle-chip";
 import { Select } from "../../components/ui/select";
@@ -124,12 +125,12 @@ export function CharacterEditor({
     }
   };
   const removeCharacter = async () => {
-    if (
-      !window.confirm(
-        `Delete “${character.name}” and all ${character.versions.length} of its versions? Animations already made from it keep their own copy.`,
-      )
-    )
-      return;
+    const confirmed = await confirmAction({
+      title: `Delete “${character.name}” and all ${character.versions.length} of its versions?`,
+      description: "Animations already made from it keep their own copy.",
+      confirmLabel: "Delete character",
+    });
+    if (!confirmed) return;
     submitLock.current = true;
     setBusy(true);
     try {
@@ -475,12 +476,13 @@ export function CharacterEditor({
                 type="button"
                 className={styles.dangerLink}
                 disabled={locked}
-                onClick={() => {
-                  if (
-                    window.confirm(
-                      `Delete the version “${selected.name}”? This can’t be undone.`,
-                    )
-                  )
+                onClick={async () => {
+                  const confirmed = await confirmAction({
+                    title: `Delete the version “${selected.name}”?`,
+                    description: "This can’t be undone.",
+                    confirmLabel: "Delete version",
+                  });
+                  if (confirmed)
                     void run(() =>
                       characterApi.update(character.id, {
                         action: "delete_version",

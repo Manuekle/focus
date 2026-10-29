@@ -29,6 +29,10 @@
     --btn-surface-stroke: var(--btn-primary-stroke);
   }
 
+  .destructive {
+    --btn-surface-stroke: var(--btn-destructive-stroke, var(--btn-primary-stroke));
+  }
+
   @media (prefers-reduced-motion: no-preference) {
     .button:active:not(:disabled):not([data-static]) {
       scale: 0.96;

@@ -7,6 +7,7 @@ import { useRouter } from "next/navigation";
 import { Add01Icon, Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { confirmAction } from "../../components/ui/confirm-dialog";
 import { ProgressMeter } from "../../components/ui/progress-meter";
 import { cn } from "../../lib/utils";
 import { ProjectDetailSchema, ProjectSummarySchema, type ProjectDetail, type ProjectSummary } from "../../shared/account";
@@ -175,7 +176,11 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
   };
 
   const removeProject = async (project: ProjectSummary) => {
-    if (!window.confirm(`Delete “${project.title}”? Its clip and edits will expire within a day.`)) return;
+    const confirmed = await confirmAction({
+      title: `Delete “${project.title}”?`,
+      description: "Its clip and edits will expire within a day.",
+    });
+    if (!confirmed) return;
     await fetch(`/api/projects/${project.id}`, { method: "DELETE" });
     if (project.videoId === videoId) router.push("/editor");
     else void loadProjects();
