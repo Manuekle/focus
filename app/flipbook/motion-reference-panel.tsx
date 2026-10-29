@@ -6,6 +6,7 @@ import { Tick02Icon } from "@hugeicons/core-free-icons";
 import { Button } from "../../components/ui/button";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Input } from "../../components/ui/input";
+import { VideoPlayer } from "../../components/ui/video-player";
 import type { Flipbook } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
 
@@ -23,7 +24,7 @@ export function MotionReferencePanel({ flipbook, disabled, onUpload, onAttach }:
     <input ref={input} type="file" accept="video/mp4,video/quicktime,.mp4,.mov" className="sr-only" tabIndex={-1} aria-hidden onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) onUpload(file); }} />
     {reference ? <>
       <p className={styles.hint}>{reference.name} · {reference.sourceSeconds.toFixed(1)} s</p>
-      <video className="w-full rounded-lg" src={`/api/flipbooks/${flipbook.id}/motion?v=${reference.version}`} controls playsInline preload="metadata" aria-label="Movement reference preview" />
+      <VideoPlayer src={`/api/flipbooks/${flipbook.id}/motion?v=${reference.version}`} label="Movement reference preview" hasAudio={reference.hasAudio} segment={valid ? { start, durationSeconds: seconds } : undefined} />
       <label className={styles.controlField}><span className={styles.controlLabel}>Start in reference (seconds)</span><Input type="number" min={0} max={Math.max(0, reference.sourceSeconds - seconds)} step={0.05} value={start} disabled={disabled} onChange={(event) => setStart(Number(event.target.value))} /></label>
       <label className={styles.controlField}><span className={styles.controlLabel}>Segment length (whole seconds)</span><Input type="number" min={1} max={Math.min(20, Math.floor(reference.sourceSeconds))} value={seconds} disabled={disabled} onChange={(event) => setSeconds(Number(event.target.value))} /></label>
       {reference.hasAudio ? <label className={styles.inline} htmlFor="motion-use-audio"><Checkbox.Root className={styles.checkbox} checked={useAudio} disabled={disabled} onCheckedChange={(checked) => setUseAudio(checked === true)} id="motion-use-audio"><HugeiconsIcon icon={Tick02Icon} size={11} strokeWidth={2.5} /></Checkbox.Root>Use audio from this segment</label> : null}

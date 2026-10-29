@@ -8,19 +8,23 @@ import { DEFAULT_SEQUENCE, type SequenceSettings } from "../../shared/sequence";
 import type { Flipbook } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
 
-export function SequenceFields({ value, onChange, disabled = false }: { value: SequenceSettings; onChange: (value: SequenceSettings) => void; disabled?: boolean }) {
+export function SequenceFields({ value, onChange, disabled = false, compact = false, videoDuration }: { value: SequenceSettings; onChange: (value: SequenceSettings) => void; disabled?: boolean; compact?: boolean; videoDuration?: number }) {
   const lengthLabel = useId();
   const hint = useId();
   return <>
-    <div className={styles.controlField}>
+    {videoDuration === undefined ? <div className={styles.controlField}>
       <div className={styles.controlHeading}><span id={lengthLabel} className={styles.controlLabel}>Length</span><output className={styles.controlValue}>{value.durationSeconds} s</output></div>
       <Slider min={1} max={20} step={1} value={[value.durationSeconds]} disabled={disabled} onValueChange={([durationSeconds]) => { if (durationSeconds !== undefined) onChange({ ...value, durationSeconds }); }} aria-labelledby={lengthLabel} aria-describedby={hint} aria-valuetext={`${value.durationSeconds} seconds`} />
-    </div>
+    </div> : null}
     <fieldset disabled={disabled} className={styles.controlField} aria-describedby={hint}>
       <legend className={styles.controlLabel}>Drawings per second</legend>
       <div className={styles.chips}>{([8, 12, 24] as const).map((drawingFps) => <Button type="button" key={drawingFps} size="sm" className="flex-1" variant={value.drawingFps === drawingFps ? "default" : "outline"} aria-pressed={value.drawingFps === drawingFps} disabled={disabled} onClick={() => onChange({ ...value, drawingFps })}>{drawingFps}</Button>)}</div>
     </fieldset>
-    <p id={hint} className={styles.hint} role="status">{value.durationSeconds * value.drawingFps} drawings across {value.durationSeconds} s. Increasing density adds drawings and keeps the movement’s timing. A drawing can stay unchanged for up to 125 ms; longer holds are flagged for correction. MP4 plays at 60 fps.</p>
+    <p id={hint} className={styles.hint} role="status">{(videoDuration ?? value.durationSeconds) * value.drawingFps} drawings across {videoDuration ?? value.durationSeconds} s. {compact ? "MP4 plays at 60 fps." : "Increasing density adds drawings and keeps the movement’s timing. A drawing can stay unchanged for up to 125 ms; longer holds are flagged for correction. MP4 plays at 60 fps."}</p>
+    {compact ? <details className={styles.createDisclosure}>
+      <summary>About drawing density</summary>
+      <p className={styles.hint}>Increasing density adds drawings and keeps the movement’s timing. {videoDuration !== undefined ? "Pauses and changes of direction follow the selected video segment." : "A drawing can stay unchanged for up to 125 ms; longer holds are flagged for correction."}</p>
+    </details> : null}
   </>;
 }
 

@@ -8,6 +8,7 @@ import { Button } from "../../components/ui/button";
 import { ProgressMeter } from "../../components/ui/progress-meter";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { Spinner } from "../../components/ui/spinner";
+import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
 import { cn } from "../../lib/utils";
 import { dismissActivity, getActivities, getServerActivities, subscribeActivities, type Activity } from "./activity-store";
 import shell from "../editor/studio.module.css";
@@ -26,8 +27,13 @@ function ActivityContent({ activity }: { readonly activity: Activity }) {
         <span className={styles.title}>{activity.title}</span>
         {activity.state === "running" && percent !== null ? <span className={styles.percent}>{percent}%</span> : null}
       </div>
-      <p className={styles.state} data-state={activity.state}>{LABEL[activity.state]}</p>
-      {activity.detail !== LABEL[activity.state] && activity.detail !== "Completed" ? <p className={styles.detail}>{activity.detail}</p> : null}
+      <div className={styles.meta} data-state={activity.state}>
+        <span className={styles.state} data-state={activity.state}>{LABEL[activity.state]}</span>
+        {activity.detail !== LABEL[activity.state] && activity.detail !== "Completed" ? <>
+          <span className={styles.separator} aria-hidden="true">·</span>
+          <span className={styles.detail}>{activity.detail}</span>
+        </> : null}
+      </div>
       {activity.state === "running" && percent !== null ? <ProgressMeter size="sm" value={percent} aria-label={`${activity.title} progress`} aria-valuetext={`${percent}%`} /> : null}
     </div>
   </>;
@@ -45,13 +51,18 @@ export function SidebarActivity() {
       {running > 0 ? <span className={styles.count}>{running} running</span> : null}
     </div>
     <p role="status" aria-atomic="true" className="sr-only">{announcement}</p>
-    {activities.length === 0 ? <p className={styles.empty}>Your tasks and their progress appear here.</p> : <ScrollArea className={styles.list}>
+    {activities.length === 0 ? <p className={styles.empty}>Your tasks and their progress appear here.</p> : <ScrollArea className={styles.list} viewportClassName={styles.listViewport}>
       <ul className={styles.items}>
-        {activities.map((activity) => <li key={activity.id} className={styles.item}>
+        {activities.map((activity) => <li key={activity.id} className={styles.item} data-state={activity.state}>
           {activity.href ? <Link href={activity.href} prefetch={false} className={cn(styles.task, styles.link)} title={activity.detail}><ActivityContent activity={activity} /></Link> : <div className={styles.task}><ActivityContent activity={activity} /></div>}
-          {activity.state !== "running" ? <Button variant="ghost" size="icon-sm" className={styles.dismiss} aria-label={`Dismiss ${activity.title}`} onClick={() => dismissActivity(activity.id)}>
-            <HugeiconsIcon icon={Cancel01Icon} size={12} strokeWidth={1.75} />
-          </Button> : null}
+          {activity.state !== "running" ? <Tooltip>
+            <TooltipTrigger asChild>
+              <Button type="button" variant="ghost" size="icon-xs" className={styles.dismiss} aria-label={`Dismiss ${activity.title}`} onClick={() => dismissActivity(activity.id)}>
+                <HugeiconsIcon icon={Cancel01Icon} size={12} strokeWidth={1.75} />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="top">Dismiss notification</TooltipContent>
+          </Tooltip> : null}
         </li>)}
       </ul>
     </ScrollArea>}

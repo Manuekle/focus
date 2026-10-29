@@ -1,27 +1,27 @@
 import { z } from "zod";
 
-export const CharacterPresetSchema = z.enum(["denji", "reze"]);
+export const CharacterPresetSchema = z.enum(["ichika", "seita"]);
 export type CharacterPreset = z.infer<typeof CharacterPresetSchema>;
 export const CHARACTER_PRESETS = {
-  denji: {
-    name: "Denji",
-    label: "Male template",
-    fileName: "denji.jpg",
-    width: 754,
-    height: 1256,
-    alt: "Denji, with short blond hair, a white shirt, black tie, dark trousers and sneakers",
-    prompt:
-      "Keep Denji exactly as drawn: short tousled blond hair, face, white rolled-sleeve shirt, black tie, dark trousers and white sneakers with red details. Preserve his proportions, colors, anime line work and original front-facing view. Show the whole body on a plain background.",
-  },
-  reze: {
-    name: "Reze",
+  ichika: {
+    name: "Ichika",
     label: "Female template",
-    fileName: "reze.jpeg",
-    width: 736,
-    height: 1227,
-    alt: "Reze, with dark purple hair, green eyes, a white sleeveless shirt, black shorts and thigh-high socks",
+    fileName: "ichika.png",
+    width: 768,
+    height: 1536,
+    alt: "Ichika, with long blonde hair, golden eyes, a white sleeveless shirt, black ribbon, black shorts and thigh-high socks",
     prompt:
-      "Keep Reze exactly as drawn: dark purple hair tied back with long side bangs, green eyes, face, white sleeveless shirt, black neck ribbon, black shorts, black thigh-high socks and dark loafers. Preserve her proportions, colors, anime line work, pose and original three-quarter view. Show the whole body on a plain background.",
+      "Keep Ichika exactly as drawn: long straight blonde hair with bangs, golden eyes, face, white sleeveless button-up shirt, black neck ribbon, black shorts, black thigh-high socks and dark loafers. Preserve her proportions, colors, anime line work, pose and original front-facing view. Show the whole body on a plain background.",
+  },
+  seita: {
+    name: "Seita",
+    label: "Male template",
+    fileName: "seita.png",
+    width: 768,
+    height: 1536,
+    alt: "Seita, with short black hair, a white rolled-sleeve shirt, loose black tie, dark trousers and red-and-white high-top sneakers",
+    prompt:
+      "Keep Seita exactly as drawn: short tousled black hair, dark eyes, face, white rolled-sleeve shirt, loose black tie, dark belt and trousers, and red-and-white high-top sneakers. Preserve his proportions, colors, anime line work, pose and original front-facing view. Show the whole body on a plain background.",
   },
 } as const satisfies Record<CharacterPreset, {
   name: string;
@@ -73,8 +73,8 @@ export const CharacterSchema = z.object({
   id: CharacterIdSchema,
   ownerId: z.uuid(),
   name: z.string().trim().min(1).max(80),
-  // Keep saved characters readable after retiring the old starter.
-  preset: z.union([CharacterPresetSchema, z.literal("elf-chan").transform(() => null)]).nullable(),
+  // Retired templates remain readable without appearing in the starter list.
+  preset: z.union([CharacterPresetSchema, z.enum(["elf-chan", "denji", "reze"]).transform(() => null)]).nullable(),
   references: z
     .array(CharacterReferenceSchema)
     .min(1)

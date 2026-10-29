@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { execFileSync } from "node:child_process";
 import { expect, test, type Page } from "@playwright/test";
+import type { Flipbook } from "../shared/flipbook";
+import { videoAnimationPrompt } from "../shared/animation-prompt";
 
 const illustration = Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="512" height="768" viewBox="0 0 512 768"><rect width="512" height="768" fill="#202635"/><circle cx="256" cy="190" r="72" fill="#c2d2ff"/><path d="M190 300h132l28 210H162z" fill="#296ff0"/><path d="m194 510-16 170m140-170 16 170M180 320l-70 160m222-160 70 160" fill="none" stroke="#c2d2ff" stroke-width="34" stroke-linecap="round"/></svg>');
+// Zero-based timestamps keep exact keyboard-seek assertions independent of B-frame offsets.
+const motionVideo = execFileSync("ffmpeg", ["-hide_banner", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc2=size=160x240:rate=24:duration=2", "-c:v", "libx264", "-bf", "0", "-movflags", "frag_keyframe+empty_moov", "-f", "mp4", "pipe:1"]);
 
 async function studio(page: Page) {
   const id = randomUUID(), ownerId = randomUUID(), now = new Date().toISOString(), version = "v-000000000001";
@@ -47,6 +52,7 @@ test("sequence, audio and character controls use compact system components", asy
   await page.setViewportSize({ width: 1600, height: 900 });
   const fixture = await studio(page);
   await page.goto(`/flipbook?f=${fixture.book.id}`);
+  await expect(page.getByRole("heading", { name: "Layout test", exact: true })).toBeVisible();
   const sequence = page.getByRole("region", { name: "Continuous sequence", exact: true });
   await sequence.getByRole("slider", { name: "Length", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
@@ -79,6 +85,7 @@ test("sequence, audio and character controls use compact system components", asy
 });
 
 test("desktop panes scroll independently and narrower layouts keep every panel reachable", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
   await page.setViewportSize({ width: 1600, height: 900 });
   const { book } = await studio(page);
   await page.goto(`/flipbook?f=${book.id}`);
@@ -104,6 +111,16 @@ test("desktop panes scroll independently and narrower layouts keep every panel r
   await toggle.click();
   await expect(page.getByRole("button", { name: "Show sidebar", exact: true })).toBeInViewport();
   await page.getByRole("button", { name: "Show sidebar", exact: true }).click();
+
+  // The outer workspace and inner editor straddle the old anonymous query threshold here.
+  for (const width of [1368, 1384, 1400]) {
+    await page.setViewportSize({ width, height: 900 });
+    const outer = page.getByRole("main").locator('[data-slot="scroll-area-viewport"]').first();
+    await expect(outer).toHaveCSS("overflow-y", "hidden");
+    await expect(rightPane).toHaveCSS("overflow-y", "auto");
+    await rightPane.evaluate((el) => { el.scrollTop = el.scrollHeight; });
+    await expect(page.getByRole("heading", { name: "Export", exact: true })).toBeInViewport();
+  }
 
   await page.setViewportSize({ width: 1280, height: 800 });
   await expect.poll(() => rightPane.evaluate((el) => getComputedStyle(el).overflowY)).toBe("visible");
@@ -131,25 +148,198 @@ test("starting from a saved character uses the system upload and scrolls below t
   await page.goto(`/flipbook?character=${character.id}&version=${character.selectedVersionId}`);
   await expect(page.getByRole("slider", { name: "Length", exact: true })).toBeVisible();
   await expect(page.getByRole("img", { name: "Your character illustration", exact: true })).toBeVisible();
+  const setup = page.getByRole("region", { name: "Animation setup", exact: true });
+  const motion = page.getByRole("region", { name: "Motion & direction", exact: true });
+  const setupBounds = (await setup.boundingBox())!, motionBounds = (await motion.boundingBox())!;
+  expect(Math.abs(setupBounds.x - motionBounds.x)).toBeLessThan(2);
+  expect(motionBounds.y).toBeGreaterThan(setupBounds.y + setupBounds.height);
+  await motion.getByRole("button", { name: "Dance", exact: true }).click();
+  await expect(motion.getByRole("button", { name: "Dance", exact: true })).toHaveAttribute("aria-pressed", "true");
   const picker = page.getByRole("button", { name: "Choose reference video", exact: true });
+  await setup.getByRole("button", { name: "From a video", exact: true }).click();
   const chooser = page.waitForEvent("filechooser");
   await picker.click();
-  await (await chooser).setFiles({ name: "reference.mp4", mimeType: "video/mp4", buffer: Buffer.from("fixture") });
+  await (await chooser).setFiles({ name: "reference.mp4", mimeType: "video/mp4", buffer: motionVideo });
   await expect(page.getByText("reference.mp4", { exact: true })).toBeVisible();
   await page.getByRole("button", { name: "Remove video", exact: true }).click();
   await expect(picker).toBeVisible();
-  await page.getByRole("main").locator('[data-slot="scroll-area-viewport"]').first().evaluate((el) => { el.scrollTop = el.scrollHeight; });
+  await setup.getByRole("button", { name: "Describe motion", exact: true }).click();
+  await page.setViewportSize({ width: 1600, height: 650 });
+  const mainScroller = page.getByRole("main").locator('[data-slot="scroll-area-viewport"]').first();
+  await expect(mainScroller).toHaveCSS("overflow-y", "auto");
+  await mainScroller.hover();
+  await page.mouse.wheel(0, 1400);
+  await expect.poll(() => mainScroller.evaluate((el) => el.scrollTop)).toBeGreaterThan(0);
+  await expect(page.getByRole("button", { name: "Prepare continuous animation", exact: true })).toBeInViewport();
   const drawing = (await page.getByRole("region", { name: "Drawing", exact: true }).boundingBox())!;
   expect(drawing.y).toBeGreaterThanOrEqual(60);
   await expect(page.getByRole("button", { name: "Hide sidebar", exact: true })).toBeInViewport();
   await page.screenshot({ path: "/tmp/focus-flipbook-character-desktop.png" });
-  for (const width of [390, 320]) {
+  for (const width of [1280, 860, 390, 320]) {
     await page.setViewportSize({ width, height: 844 });
-    await picker.scrollIntoViewIfNeeded();
-    await expect(picker).toBeInViewport();
+    const instruction = page.getByRole("textbox", { name: "Describe the motion", exact: true });
+    await instruction.scrollIntoViewIfNeeded();
+    await expect(instruction).toBeInViewport();
+    const submit = page.getByRole("button", { name: "Prepare continuous animation", exact: true });
+    await instruction.focus();
+    await submit.focus();
+    await expect(submit).toBeInViewport();
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
   }
   await page.screenshot({ path: "/tmp/focus-flipbook-character-mobile.png" });
+});
+
+test("video movement replaces manual controls and uploads and applies the exact segment before planning", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const { book, character } = await studio(page);
+  const operations: string[] = [];
+  let created: Record<string, unknown> | undefined;
+  let attached: unknown;
+  const reference = { version: "aabbccddeeff", name: "performance.mp4", sourceSeconds: 2, start: 0, durationSeconds: 2, hasAudio: false };
+  let pending = { ...book, status: "awaiting_motion", motionSource: "video", analysis: null, plan: null, reference: null, alignment: null, frames: book.frames.slice(0, 12).map((frame, index) => ({ ...frame, id: `s${index * 2}`, poseIndex: index, phase: `sample_${index * 2}`, status: "pending", version: null, originalVersion: null, versions: [] })), order: Array.from({ length: 12 }, (_, index) => `s${index * 2}`), motionDraft: null as typeof reference | null };
+  await page.route("**/api/flipbooks", (route) => {
+    if (route.request().method() !== "POST") return route.fulfill({ json: [] });
+    operations.push("create");
+    created = route.request().postDataJSON();
+    pending = { ...pending, prompt: created!.prompt as string, sequence: created!.sequence as typeof book.sequence };
+    return route.fulfill({ status: 202, json: pending });
+  });
+  await page.route(`**/api/flipbooks/${book.id}/motion`, (route) => {
+    if (route.request().headers()["content-type"]?.includes("application/json")) {
+      operations.push("apply"); attached = route.request().postDataJSON();
+      return route.fulfill({ status: 202, json: { ...pending, status: "planning", motionDraft: null, motionReference: { ...reference, ...attached as object } } });
+    }
+    operations.push("upload");
+    pending = { ...pending, motionDraft: reference };
+    return route.fulfill({ json: pending });
+  });
+  await page.goto(`/flipbook?character=${character.id}&version=${character.selectedVersionId}`);
+  await page.getByRole("button", { name: "From a video", exact: true }).click();
+  await expect(page.getByRole("region", { name: "Motion & direction", exact: true })).toHaveCount(0);
+  await expect(page.getByRole("region", { name: "Video movement", exact: true })).toBeVisible();
+  const prepare = page.getByRole("button", { name: "Prepare continuous animation", exact: true });
+  await expect(prepare).toBeDisabled();
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Choose reference video", exact: true }).click();
+  await (await chooser).setFiles({ name: "performance.mp4", mimeType: "video/mp4", buffer: motionVideo });
+  const start = page.getByRole("spinbutton", { name: "Start in reference (seconds)", exact: true });
+  const length = page.getByRole("spinbutton", { name: "Segment length (whole seconds)", exact: true });
+  await expect(start).toBeVisible();
+  await length.fill("4");
+  await expect(prepare).toBeDisabled();
+  await length.fill("1");
+  await start.fill("1");
+  await page.getByRole("button", { name: "12", exact: true }).click();
+  await page.getByRole("switch", { name: "Use audio from the video if available", exact: true }).click();
+  await page.getByRole("textbox", { name: "Additional direction (optional)", exact: true }).fill("Make finger gestures clear.");
+  await page.getByText("Review animation instructions", { exact: true }).click();
+  await expect(page.getByText(/Animate the selected character by following the single performer's movement/)).toContainText("from 1.00 to 2.00 seconds");
+  await prepare.click();
+  await expect.poll(() => operations).toEqual(["create", "upload", "apply"]);
+  await expect(page.getByRole("heading", { name: "Layout test", exact: true })).toBeInViewport();
+  expect(await page.getByRole("main").locator('[data-slot="scroll-area-viewport"]').first().evaluate((el) => el.scrollTop)).toBe(0);
+  expect(created).toMatchObject({ motionSource: "video", sequence: { durationSeconds: 1, drawingFps: 12 } });
+  expect(created).not.toHaveProperty("action");
+  expect(created).not.toHaveProperty("view");
+  expect(created!.prompt).toContain("12 timed drawings");
+  expect(created!.prompt).toContain("Make finger gestures clear.");
+  expect(created!.prompt).not.toContain("Walk across the screen");
+  expect(attached).toEqual({ version: reference.version, start: 1, durationSeconds: 1, useAudio: true });
+});
+
+test("reference video uses system controls, keyboard seeking and bounded segment playback", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const { character } = await studio(page);
+  await page.goto(`/flipbook?character=${character.id}&version=${character.selectedVersionId}`);
+  await page.getByRole("button", { name: "From a video", exact: true }).click();
+  const chooser = page.waitForEvent("filechooser");
+  await page.getByRole("button", { name: "Choose reference video", exact: true }).click();
+  await (await chooser).setFiles({ name: "performance.mp4", mimeType: "video/mp4", buffer: motionVideo });
+  const player = page.getByRole("group", { name: "Movement reference preview player", exact: true });
+  const media = player.locator("video");
+  const play = player.getByRole("button", { name: "Play reference video", exact: true });
+  await expect(play).toBeEnabled();
+  expect(await media.evaluate((el: HTMLVideoElement) => el.controls)).toBe(false);
+  await play.click();
+  await expect(player.getByRole("button", { name: "Pause reference video", exact: true })).toBeVisible();
+  await expect.poll(() => media.evaluate((el: HTMLVideoElement) => el.currentTime)).toBeGreaterThan(0);
+  await player.getByRole("button", { name: "Pause reference video", exact: true }).click();
+  await expect(play).toBeVisible();
+  await expect.poll(() => media.evaluate((el: HTMLVideoElement) => el.paused)).toBe(true);
+  const seek = player.getByRole("slider", { name: "Video position", exact: true });
+  await seek.focus();
+  await page.keyboard.press("Home");
+  await expect(seek).toHaveAttribute("aria-valuenow", "0");
+  await expect.poll(() => media.evaluate((el: HTMLVideoElement) => el.currentTime)).toBe(0);
+  await page.keyboard.press("ArrowRight");
+  await expect.poll(() => media.evaluate((el: HTMLVideoElement) => el.currentTime)).toBeCloseTo(0.01, 2);
+  await player.getByRole("button", { name: "Unmute reference video", exact: true }).click();
+  expect(await media.evaluate((el: HTMLVideoElement) => el.muted)).toBe(false);
+  await player.getByRole("button", { name: "Mute reference video", exact: true }).click();
+  expect(await media.evaluate((el: HTMLVideoElement) => el.muted)).toBe(true);
+
+  await page.getByRole("spinbutton", { name: "Segment length (whole seconds)", exact: true }).fill("1");
+  await page.getByRole("spinbutton", { name: "Start in reference (seconds)", exact: true }).fill("0.5");
+  await expect.poll(() => media.evaluate((el: HTMLVideoElement) => el.currentTime)).toBeCloseTo(0.5, 2);
+  await seek.focus();
+  await page.keyboard.press("End");
+  await expect.poll(() => media.evaluate((el: HTMLVideoElement) => el.currentTime)).toBeCloseTo(1.5, 2);
+  await play.click();
+  await expect.poll(() => media.evaluate((el: HTMLVideoElement) => el.paused)).toBe(true);
+  expect(await media.evaluate((el: HTMLVideoElement) => el.currentTime)).toBeCloseTo(1.5, 2);
+  await player.getByRole("button", { name: "Enter fullscreen", exact: true }).click();
+  await expect.poll(() => player.evaluate((el) => document.fullscreenElement === el)).toBe(true);
+  await player.getByRole("button", { name: "Exit fullscreen", exact: true }).click();
+  await expect.poll(() => page.evaluate(() => document.fullscreenElement === null)).toBe(true);
+  await player.scrollIntoViewIfNeeded();
+  await player.screenshot({ path: "/tmp/focus-reference-video-controls.png" });
+
+  for (const width of [390, 320]) {
+    await page.setViewportSize({ width, height: 844 });
+    await player.scrollIntoViewIfNeeded();
+    await expect(play).toBeInViewport();
+    expect((await media.boundingBox())!.height).toBeLessThanOrEqual(321);
+    expect(await player.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  }
+});
+
+test("a rejected video keeps its media, offers recovery and blocks unavailable editing", async ({ page }) => {
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await page.setViewportSize({ width: 1600, height: 900 });
+  const { book } = await studio(page);
+  const base = book as unknown as Flipbook;
+  const prompt = videoAnimationPrompt({ settings: base.sequence!, start: 0 });
+  let current: Flipbook = {
+    ...base, title: prompt.slice(0, 80), prompt, status: "unsupported", plan: null, reference: null, alignment: null,
+    motionSource: "video", motionReference: { version: "aabbccddeeff", name: "performance.mp4", sourceSeconds: 4, start: 0, durationSeconds: 4, hasAudio: false },
+    analysis: { characterCount: 1, subject: "girl", facing: "front", view: "front", fullBodyVisible: true, feetVisible: true, background: "plain", style: "anime", hair: "blonde", clothing: "shirt", accessories: [], palette: ["#333333"], proportions: "human", requestedAction: "gesture" },
+    frames: base.frames.map((frame) => ({ ...frame, status: "pending", version: null, originalVersion: null, versions: [] })),
+    budget: { used: 0, limit: 16 }, error: { code: "unsupported_animation", message: "Ask your character for a supported preset." },
+  };
+  const retries: unknown[] = [];
+  await page.route(`**/api/flipbooks/${book.id}`, (route) => {
+    if (route.request().method() === "POST") {
+      const action = route.request().postDataJSON();
+      if (action.action === "retry") { retries.push(action); current = { ...current, status: "analyzing", error: null }; }
+    }
+    return route.fulfill({ json: current });
+  });
+  await page.route(`**/api/flipbooks/${book.id}/motion**`, (route) => route.fulfill({ body: motionVideo, contentType: "video/mp4" }));
+  await page.goto(`/flipbook?f=${book.id}`);
+  await expect(page.getByRole("heading", { name: "Video movement", exact: true })).toBeVisible();
+  await expect(page.getByText("Flipbook · video movement", { exact: true })).toBeVisible();
+  const frame = page.getByRole("region", { name: /^Correct this drawing/ });
+  await expect(frame.getByRole("button", { name: "Replace", exact: true })).toBeDisabled();
+  await expect(frame.getByRole("textbox", { name: "Correction note for the redraw", exact: true })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Generate background", exact: true })).toBeDisabled();
+  const video = page.getByRole("region", { name: "Video movement reference", exact: true });
+  await expect(video.getByRole("button", { name: "Replace reference video", exact: true })).toBeEnabled();
+  await expect(video.getByRole("button", { name: "Play reference video", exact: true })).toBeEnabled();
+  expect(await video.locator("video").evaluate((el: HTMLVideoElement) => el.controls)).toBe(false);
+  await page.getByRole("button", { name: "Retry preparation", exact: true }).click();
+  await expect.poll(() => retries).toEqual([{ action: "retry", confirmExtra: false }]);
+  await expect(page.getByText("This animation isn’t supported yet", { exact: true })).toHaveCount(0);
 });
 
 test("scroll edges blur during movement and clear at the start, end and idle", async ({ page }) => {

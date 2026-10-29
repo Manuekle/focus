@@ -735,6 +735,7 @@ export const FrameWarningCodeSchema = z.enum([
   "background_not_plain",
   "near_duplicate",
   "overlong_hold",
+  "reference_hold_review",
   "exposure_too_long",
   "stride_unclear",
   "body_offset",
@@ -927,6 +928,7 @@ export type ExportRecord = z.infer<typeof ExportRecordSchema>;
 // ── The flipbook ───────────────────────────────────────────────────────────
 
 export const FlipbookStatusSchema = z.enum([
+  "awaiting_motion",
   "analyzing",
   "planning",
   "referencing",
@@ -953,12 +955,18 @@ export const CastMemberSchema = CharacterSourceSchema.extend({
 export type CastMember = z.infer<typeof CastMemberSchema>;
 
 export const FlipbookSchema = z.object({
+  motionSource: z.literal("video").optional(),
+  motionNote: z.string().max(400).optional(),
+  requestedKeepScene: z.boolean().optional(),
   queuedDrawings: z.array(FrameIdSchema).max(MAX_SEQUENCE_FRAMES).optional(),
   sequence: SequenceSettingsSchema.optional(),
   audio: FlipbookAudioSchema.nullable().optional(),
   motionReference: MotionReferenceSchema.nullable().optional(),
   motionDraft: MotionReferenceSchema.nullable().optional(),
   revisions: z.array(z.object({
+    prompt: z.string().max(3000).optional(),
+    motionNote: z.string().max(400).optional(),
+    requestedView: ViewPreferenceSchema.optional(),
     id: VersionIdSchema,
     createdAt: z.iso.datetime(),
     plan: FlipbookPlanSchema,
@@ -976,7 +984,7 @@ export const FlipbookSchema = z.object({
   cast: z.array(CastMemberSchema).max(MAX_CAST).default([]),
   requestedView: ViewPreferenceSchema.optional(),
   title: z.string().max(FLIPBOOK_TITLE_MAX).default(""),
-  prompt: z.string().max(500),
+  prompt: z.string().max(3000),
   poseId: PoseIdSchema.optional(),
   status: FlipbookStatusSchema,
   /** The real step running now. */
@@ -1027,17 +1035,19 @@ export const CreateEnsembleRequestSchema = z.object({
 export type CreateEnsembleRequest = z.infer<typeof CreateEnsembleRequestSchema>;
 
 export const CreateFlipbookRequestSchema = z.object({
+  motionSource: z.literal("video").optional(),
+  motionNote: z.string().max(400).optional(),
   sequence: SequenceSettingsSchema.optional(),
   imageId: FlipbookImageIdSchema.optional(),
   characterSource: CharacterSourceSchema.optional(),
   view: ViewPreferenceSchema.optional(),
-  prompt: z.string().trim().min(3).max(500),
+  prompt: z.string().trim().min(3).max(3000),
   /** The motion picked from the reading; with it, the reading's character facts are reused. */
   action: CycleActionSchema.optional(),
   poseId: PoseIdSchema.optional(),
   /** Separate the uploaded scene from the character and use it as the background (one drawing). */
   keepScene: z.boolean().optional(),
-}).refine((input) => Boolean(input.imageId) !== Boolean(input.characterSource), { path: ["imageId"], message: "Choose an upload or a character version." }).refine((input) => !input.poseId || !input.action || input.action === "idle", {
+}).refine((input) => !input.motionSource || Boolean(input.sequence && !input.action && !input.poseId && !input.view), { path: ["motionSource"], message: "Video movement needs a continuous sequence without a preset action or camera override." }).refine((input) => Boolean(input.imageId) !== Boolean(input.characterSource), { path: ["imageId"], message: "Choose an upload or a character version." }).refine((input) => !input.poseId || !input.action || input.action === "idle", {
   path: ["poseId"], message: "A selected pose uses an idle cycle.",
 });
 
@@ -1084,7 +1094,7 @@ export function frameNeedsAttention(frame: FlipbookFrame): boolean {
 
 export function repairableFrames(flipbook: Pick<Flipbook, "frames">): FlipbookFrame[] {
   return flipbook.frames.filter((frame) => frame.status === "ready" && frame.version && !frame.approved && (
-    frame.warnings.some((warning) => warning.code !== "exposure_too_long") || Boolean(frame.review && (!frame.review.ok || frame.review.issues.length)) || Boolean(frame.error)
+    frame.warnings.some((warning) => warning.code !== "exposure_too_long" && warning.code !== "reference_hold_review") || Boolean(frame.review && (!frame.review.ok || frame.review.issues.length)) || Boolean(frame.error)
   ));
 }
 
@@ -1128,6 +1138,7 @@ export const FlipbookSummarySchema = z.object({
 export type FlipbookSummary = z.infer<typeof FlipbookSummarySchema>;
 
 export function flipbookTitle(flipbook: Pick<Flipbook, "title" | "prompt">): string {
+  if ((!flipbook.title || flipbook.title === flipbook.prompt.slice(0, FLIPBOOK_TITLE_MAX)) && flipbook.prompt.startsWith("Animate the selected character by following the single performer's movement in the supplied video segment")) return "Video movement";
   return flipbook.title || flipbook.prompt.slice(0, FLIPBOOK_TITLE_MAX) || "Untitled animation";
 }
 

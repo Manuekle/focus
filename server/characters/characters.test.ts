@@ -40,7 +40,7 @@ import {
 import { POST as generate } from "../../app/api/characters/[id]/generate/route";
 import { POST as create } from "../../app/api/characters/route";
 
-// Tests have no provider calls and always use the supplied Reze reference.
+// Tests have no provider calls and always use the supplied Ichika reference.
 vi.mock("../auth/users", () => ({
   currentUser: async (request: Request) => {
     const id = request.headers.get("x-test-user");
@@ -51,7 +51,7 @@ vi.mock("../auth/users", () => ({
 }));
 
 let root: string;
-let reze: Buffer;
+let ichika: Buffer;
 let owner: string;
 let character: Character;
 let calls: Parameters<typeof characterServices.generate>[0][];
@@ -84,8 +84,8 @@ beforeAll(async () => {
   root = await mkdtemp(path.join(tmpdir(), "focus-characters-"));
   process.env.FOCUS_DATA_DIR = root;
   process.env.NEXT_PUBLIC_ENABLE_FLIPBOOK = "true";
-  reze = await readFile(
-    path.join(process.cwd(), "public/characters/reze.jpeg"),
+  ichika = await readFile(
+    path.join(process.cwd(), "public/characters/ichika.png"),
   );
 });
 beforeEach(async () => {
@@ -93,13 +93,13 @@ beforeEach(async () => {
   calls = [];
   characterServices.generate = async (input) => {
     calls.push(input);
-    return { png: reze, width: 736, height: 1227 };
+    return { png: ichika, width: 768, height: 1536 };
   };
   character = await createCharacter(owner, {
-    name: "Reze",
-    png: reze,
-    fileName: "reze.jpeg",
-    preset: "reze",
+    name: "Ichika",
+    png: ichika,
+    fileName: "ichika.png",
+    preset: "ichika",
   });
 });
 afterAll(async () => {
@@ -112,7 +112,7 @@ afterAll(async () => {
 });
 
 describe("character versions", () => {
-  it("stores Reze’s immutable original and scopes the library to its owner", async () => {
+  it("stores Ichika’s immutable original and scopes the library to its owner", async () => {
     expect(character.versions).toHaveLength(0);
     expect(
       (await readFile(characterAsset(character.id, character.references[0].id)))
@@ -189,7 +189,7 @@ describe("character versions", () => {
     characterServices.generate = async (input) => {
       calls.push(input);
       await wait;
-      return { png: reze, width: 736, height: 1227 };
+      return { png: ichika, width: 768, height: 1536 };
     };
     const change = request();
     const gate = vi.fn(async () => undefined);
@@ -272,12 +272,12 @@ describe("character versions", () => {
   it("limits supporting references and never replaces the primary reference", async () => {
     const primary = character.references[0];
     await addCharacterReference(character.id, owner, {
-      bytes: reze,
+      bytes: ichika,
       name: "outfit.png",
       role: "outfit",
     });
     const full = await addCharacterReference(character.id, owner, {
-      bytes: reze,
+      bytes: ichika,
       name: "style.png",
       role: "style",
     });
@@ -285,7 +285,7 @@ describe("character versions", () => {
     expect(full.references).toHaveLength(3);
     await expect(
       addCharacterReference(character.id, owner, {
-        bytes: reze,
+        bytes: ichika,
         name: "extra.png",
         role: "style",
       }),
@@ -318,7 +318,7 @@ describe("character versions", () => {
   });
 
   it("removes a supporting reference but never the original", async () => {
-    const withOutfit = await addCharacterReference(character.id, owner, { bytes: reze, name: "outfit.png", role: "outfit" });
+    const withOutfit = await addCharacterReference(character.id, owner, { bytes: ichika, name: "outfit.png", role: "outfit" });
     const outfit = withOutfit.references[1];
     const removed = await updateCharacter(character.id, owner, { action: "remove_reference", referenceId: outfit.id });
     expect(removed.references).toEqual([character.references[0]]);
@@ -335,7 +335,7 @@ describe("character versions", () => {
     expect(await listCharacters(owner)).toEqual([]);
   });
 
-  it("loads exactly the chosen version for Flipbook and retains the immutable Reze reference", async () => {
+  it("loads exactly the chosen version for Flipbook and retains the immutable Ichika reference", async () => {
     await generateCharacterVersion(character.id, owner, request());
     const base = await settled(character.id);
     const source = { characterId: base.id, versionId: base.selectedVersionId! };
@@ -354,9 +354,9 @@ describe("character versions", () => {
     const copy = Buffer.from(snapshot.png);
     await updateCharacter(base.id, owner, {
       action: "rename",
-      name: "Reze winter",
+      name: "Ichika winter",
     });
-    expect(snapshot.origin.name).toBe("Reze");
+    expect(snapshot.origin.name).toBe("Ichika");
     expect(snapshot.png.equals(copy)).toBe(true);
   });
 });
@@ -381,11 +381,11 @@ describe("private character HTTP routes", () => {
     expect((await readFile(characterAsset(saved.id, saved.references[0].id))).equals(original.png)).toBe(true);
     expect(calls).toHaveLength(0);
   });
-  it("rejects the retired starter while keeping saved characters readable", async () => {
-    const response = await create(http(owner, "POST", { preset: "elf-chan" }));
+  it.each(["elf-chan", "denji", "reze"])("rejects the retired %s starter while keeping saved characters readable", async (preset) => {
+    const response = await create(http(owner, "POST", { preset }));
     expect(response.status).toBe(400);
     expect((await response.json()).error.code).toBe("invalid_character");
-    const legacy = CharacterSchema.parse({ ...character, preset: "elf-chan" });
+    const legacy = CharacterSchema.parse({ ...character, preset });
     expect(legacy.preset).toBeNull();
     expect(legacy.references).toEqual(character.references);
     expect(calls).toHaveLength(0);
@@ -428,7 +428,7 @@ describe("private character HTTP routes", () => {
   });
   it("blocks cross-origin writes and permits the browser’s host behind an internal URL", async () => {
     const context = { params: Promise.resolve({ id: character.id }) };
-    const body = JSON.stringify({ action: "rename", name: "Reze" });
+    const body = JSON.stringify({ action: "rename", name: "Ichika" });
     const headers = {
       "Content-Type": "application/json",
       "x-test-user": owner,

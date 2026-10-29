@@ -11,7 +11,7 @@
 .body { min-height: 0; grid-template-rows: minmax(0, 1fr); }
 .sidebar { position: static; min-height: 0; height: 100%; }
 .sidebarToggle { flex-shrink: 0; color: var(--muted-foreground); }
-.main { min-height: 0; overflow: hidden; container-type: inline-size; }
+.main { min-height: 0; overflow: hidden; container: flipbook-workspace / inline-size; }
 /* The workspace is the page: no gutter from the shared studio shell. */
 .studio .main { padding: 0 16px; }
 .studio .body[data-collapsed] .main { padding-left: 16px; }
@@ -124,12 +124,12 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 
 /* Three columns only when each has room. Each panel scrolls within the
    workspace instead of stretching the page and leaving empty columns. */
-@container (min-width: 1081px) {
+@container flipbook-workspace (min-width: 1081px) {
   .mainContent:has(> .editor) { height: 100%; min-height: 0; }
   .editor { flex: 1; min-height: 0; }
   .editor > :not(.grid) { flex-shrink: 0; }
   .grid { flex: 1; min-height: 0; align-items: stretch; }
-  .mainViewport { overflow: hidden; }
+  .main:has(.mainContent > .editor) .mainViewport { overflow: hidden; }
   .columnViewport { overflow-y: auto; scrollbar-gutter: stable; }
   .columnContent { padding: 2px 4px 16px; }
 }
@@ -234,7 +234,7 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .exportView:hover { color: var(--primary); }
 .exportView:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
 
-@container (max-width: 1080px) {
+@container flipbook-workspace (max-width: 1080px) {
   .grid { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); }
   .grid > .columnSide:first-child { grid-column: 2; grid-row: 1; }
   .grid > .columnSide:last-child { grid-column: 2; grid-row: 2; }
@@ -242,7 +242,7 @@ fieldset.controlField > legend { margin-bottom: 8px; }
   .columnMain .columnViewport { overflow-y: auto; scrollbar-gutter: stable; }
   .referencePair, .extras { max-width: 440px; }
 }
-@container (max-width: 760px) {
+@container flipbook-workspace (max-width: 760px) {
   .grid { grid-template-columns: 1fr; }
   .grid > .columnSide:first-child, .grid > .columnSide:last-child { grid-column: auto; grid-row: auto; }
   .columnMain { grid-column: auto; grid-row: auto; position: static; max-height: none; }
@@ -342,3 +342,41 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 
 .referenceRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .referenceThumb { height: 48px; width: auto; max-width: 96px; border-radius: 6px; object-fit: cover; box-shadow: inset 0 0 0 1px #ffffff0f; }
+
+/* A wide preview and one controls column share the page scroller. */
+.createWorkspace[data-variant="page"] {
+  width: 100%;
+  max-width: none;
+  grid-template-columns: minmax(0, 1.35fr) minmax(360px, 1fr);
+  gap: 24px;
+  padding-bottom: 24px;
+}
+.createWorkspace[data-variant="page"] .createPreview { position: sticky; top: 16px; gap: 12px; }
+.createPreview .drawingStage img { max-height: min(66dvh, 680px); }
+.createPreview .reading { gap: 6px; padding: 14px 0 0; border-top: 1px solid var(--border); border-bottom: 0; }
+.createWorkspace[data-variant="page"] .createControls { padding: 0; border: 0; border-radius: 0; background: transparent; }
+.createForm { display: flex; min-width: 0; flex-direction: column; gap: 16px; }
+.createCard { display: flex; min-width: 0; flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--card) 70%, transparent); }
+.createCard > h2 { margin-bottom: 2px; }
+.createFooter { display: flex; flex-direction: column; gap: 10px; padding: 0 2px; }
+.createFooter > p { min-width: 0; }
+.createSubmit { display: flex; flex-shrink: 0; flex-direction: column; gap: 8px; }
+.createTiming, .createFraming { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; }
+.createFraming > :only-child { grid-column: 1 / -1; }
+.createTiming > p, .createTiming > details { grid-column: 1 / -1; }
+.createDisclosure { min-width: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
+.createDisclosure > summary { cursor: pointer; }
+.createDisclosure > summary:hover { color: var(--foreground); }
+.createDisclosure > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; border-radius: 4px; }
+.createDisclosure[open] > summary { margin-bottom: 10px; }
+.promptPreview { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted-foreground); font-family: inherit; font-size: 12px; line-height: 1.6; }
+@container flipbook-workspace (max-width: 760px) {
+  .createWorkspace[data-variant="page"] { grid-template-columns: minmax(0, 1fr); max-width: 640px; gap: 20px; }
+  .createWorkspace[data-variant="page"] .createPreview { position: static; }
+}
+@media (max-width: 860px) {
+  .createWorkspace[data-variant="page"] .createPreview { top: 76px; }
+}
+@media (max-width: 420px) {
+  .createTiming, .createFraming { grid-template-columns: minmax(0, 1fr); }
+}

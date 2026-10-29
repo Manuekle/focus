@@ -15,7 +15,7 @@ import { recordUsage } from "../ai/usage";
 import type { Measure } from "./frame-alignment";
 import { stationaryColorsDiffer, type BodyColors } from "./appearance-consistency";
 import { overlongDrawingHolds } from "./drawing-holds";
-import { MOTION_CONTINUITY_RULES } from "./motion-continuity";
+import { motionContinuityRules } from "./motion-continuity";
 import { MAX_DRAWING_HOLD_SECONDS } from "../../shared/sequence";
 
 // Frame quality control. The automatic checks measure things pixels can
@@ -74,7 +74,7 @@ const median = (values: readonly number[]) => {
 };
 
 /** Checks every ready frame, in playback order (the loop's wrap counts as a neighbor). */
-export async function checkFrames(entries: readonly QcEntry[], referenceHistogram: readonly number[] | null, action: AnimationAction = "walk", view: string = "side", finite = false, stationaryReference?: BodyColors): Promise<Map<string, QcResult>> {
+export async function checkFrames(entries: readonly QcEntry[], referenceHistogram: readonly number[] | null, action: AnimationAction = "walk", view: string = "side", finite = false, stationaryReference?: BodyColors, fromVideo = false): Promise<Map<string, QcResult>> {
   const spec = actionSpec(action);
   const stride = !finite && view === "side" ? spec.stride : null;
   // A scene has several figures that move about a fixed frame: neither a second figure nor a shifting center of mass is a fault.
@@ -109,7 +109,9 @@ export async function checkFrames(entries: readonly QcEntry[], referenceHistogra
     if (!finite && !spec.subtle && entries.length > 1 && previous !== index && iou(shapes[index].mask, shapes[previous].mask) > 0.95) {
       warnings.push({ code: "near_duplicate", message: `Almost identical to the frame before it (“${entries[previous].label}”). The pose may not have changed.` });
     }
-    if (held.has(entry.frameId)) warnings.push(entry.timing && entry.timing.holdSeconds > MAX_DRAWING_HOLD_SECONDS + 1e-6
+    if (held.has(entry.frameId)) warnings.push(fromVideo
+      ? { code: "reference_hold_review", message: "This pose stays nearly unchanged. Compare it with the reference video: a recorded pause is intentional. Review its timing before requesting a redraw." }
+      : entry.timing && entry.timing.holdSeconds > MAX_DRAWING_HOLD_SECONDS + 1e-6
       ? { code: "exposure_too_long", message: "This drawing is held for more than 125 ms. Add in-between drawings or use a continuous sequence at 8 or more drawings/s. Redrawing this pose alone cannot change its timing." }
       : { code: "overlong_hold", message: "This pose stays practically unchanged for more than 125 ms. Advance the planned movement along its joint arcs while preserving the character design and support contacts." });
     if (stride?.contact.includes(entry.phase as Phase) && passingSpan !== null && measure.lowerSpan * entry.scale < passingSpan * 1.25) {
@@ -186,17 +188,19 @@ export async function reviewFrames(input: {
   readonly action?: AnimationAction;
   readonly flipbookId: string;
   readonly finite?: boolean;
+  readonly fromVideo?: boolean;
 }): Promise<ReviewResult> {
   const spec = actionSpec(input.action);
   const config = requireMetaConfig();
   const client = metaClient(config);
   const started = Date.now();
-  const instructions = `You review the drawings of a hand-drawn ${spec.label} for Focus Flipbook. Image 1 is the character reference. Image 2 is a contact sheet of ${input.labels.length} drawings in playback order, read left to right, top to bottom; frame 1 is at the top left. ${input.finite ? "This is a time window of one finite continuous action. Its last drawing does NOT loop to its first; do not expect a complete cycle in this window. Small differences at 24 drawings/s are intentional and do not indicate duplicates. Judge visible anatomy, identity and local motion continuity." : "The cycle loops from the last frame back to frame 1."}
-Continuity requirements: ${MOTION_CONTINUITY_RULES}
+  const instructions = `You review the drawings of a hand-drawn ${input.fromVideo ? "video-guided performance" : spec.label} for Focus Flipbook. Image 1 is the character reference. Image 2 is a contact sheet of ${input.labels.length} drawings in playback order, read left to right, top to bottom; frame 1 is at the top left. ${input.finite ? "This is a time window of one finite continuous action. Its last drawing does NOT loop to its first; do not expect a complete cycle in this window. Small differences at 24 drawings/s are intentional and do not indicate duplicates. Judge visible anatomy, identity and local motion continuity." : "The cycle loops from the last frame back to frame 1."}
+Continuity requirements: ${motionContinuityRules(input.fromVideo)}
 Judge support-foot sliding, disconnected joint trajectories, swapped moving limbs, inconsistent body volume, unplanned contour jitter and character design drift. Distinguish intentional occlusion from a missing limb. Do not invent an issue in hidden anatomy, and do not label subtle but visible planned movement as a duplicate. Report an extended hold only when the supplied timestamps support it.
-Frames: ${input.labels.map((label, index) => `${index + 1} = ${label}`).join(", ")}. Camera and heading in every frame: ${input.direction}.
+${input.fromVideo ? "The source video is not supplied. Recorded pauses and body turns may be intentional. Do not flag same_as_neighbor merely because adjacent drawings match or a hold exceeds 125 ms; do not infer wrong_pose or wrong_facing from a preset label or a body turn. Review visible anatomy, identity and continuity, and never claim that these pictures reproduce the video faithfully without seeing it." : ""}
+Frames: ${input.labels.map((label, index) => `${index + 1} = ${label}`).join(", ")}. ${input.fromVideo ? `Camera setup: ${input.direction}. Body orientation may change throughout the performance.` : `Camera and heading in every frame: ${input.direction}.`}
 For each frame, report only problems you can actually see: wrong_facing, identity_change (outfit, hair, colors or accessories differ from the reference), missing_limb, extra_limb, wrong_pose (does not match its phase), cropped, style_change, same_as_neighbor (pose barely differs from an adjacent frame), other. Write every note and the summary in English. Keep each note under 20 words. ok=true when a frame has no visible problem.
-recognizableWalk: true when playing the frames in order would read as a ${spec.label}. summary: one or two sentences for the animator. Be honest; do not praise.`;
+recognizableWalk: true when ${input.fromVideo ? "the drawings show anatomically coherent motion; do not require any particular preset action" : `playing the frames in order would read as a ${spec.label}`}. summary: one or two sentences for the animator. Be honest; do not praise.`;
   try {
     const response = await plannerLimiter.run(() =>
       withRetry(() =>

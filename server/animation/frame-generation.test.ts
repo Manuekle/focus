@@ -92,6 +92,16 @@ it("guides whole-body sequence intermediates with both keys and the video's exac
   expect(request.prompt).not.toContain("Only the specified waving arm moves");
 });
 
+it("follows video body movement and genuine pauses even when its action label is wave", async () => {
+  const sequence = planWaveSequence({ durationSeconds: 1, drawingFps: 24 }, "front", "wave");
+  await drawPose({ reference: anchor, neighbor: anchor, analysis, plan: sequence, index: 2, motionGuide: Buffer.from("video posture"), flipbookId: "test" });
+  const request = vi.mocked(generateImage).mock.lastCall![0];
+  expect(request.prompt).toContain("Do not freeze the torso or feet");
+  expect(request.prompt).toContain("Preserve recorded holds at their actual times");
+  expect(request.prompt).not.toContain("only advance the waving arm");
+  expect(request.prompt).not.toContain("held for at most 125 ms");
+});
+
 describe("pose reference roles", () => {
   it("keeps the original identity portrait beside the selected outfit when animating a saved character", async () => {
     const original = Buffer.from("elf-chan original");

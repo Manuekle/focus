@@ -122,4 +122,5 @@ No open-source license is granted at this time: **all rights reserved** unless s
 - **Inter** (`public/fonts/inter/`) is © The Inter Project Authors and distributed under the included SIL Open Font License 1.1 (`LICENSE.txt`).
 - Meta models are used through the Meta Model API under Meta's terms; `@meta-sam/parser` is distributed under the SAM License.
 - Dependencies keep their licenses: Next.js, React, Zod, Motion and Hugeicons free icons (MIT); OpenAI SDK and Sharp (Apache-2.0). FFmpeg (LGPL/GPL, including libx264) is invoked as an external program.
-- No sample videos are included. Use media you have the rights to.
+- Character templates **Ichika** and **Seita** were supplied by the user, who states they generated them with Muse. See `public/demo/flipbook/README.md`. The landing currently shows static illustrations while a new animation is prepared.
+- The video-effect demos in `public/demo/` use the user-supplied `270507.mp4`, processed with actual SAM 3.1 masks and the Focus compositor. See `public/demo/README.md` for provenance and render parameters.

@@ -1,10 +1,8 @@
-# Reze illustration and motion reference
+# Character illustrations
 
-The user supplied both assets for the landing on 2026-10-29:
+The user supplied two illustrations on 2026-10-29 and stated that they generated them with Muse:
 
-- `Reze Anime Icon _ Chainsaw Man PFP _ Manga.jpeg`: resized to `reze-illustration.webp`.
-- `ScreenRecording_12-12-2025 10-03-04_1.mov`: converted to H.264 `reze-dance.mp4`, 414×736 at 30 fps, with the original audio retained as AAC. Only the recording's black letterbox bars were cropped (source crop: 828×1472 at 0,160). Original metadata was removed.
+- `public/characters/ichika.png`: copied unchanged from `personaje_chica_anime.png` (768×1536). Ichika is the main character on the landing and the first character template.
+- `public/characters/seita.png`: copied unchanged from `personaje_chico_anime.png` (768×1536).
 
-`reze-frame-1.jpg` through `reze-frame-8.jpg` are thumbnails at 1, 3, 5, 7, 9, 11, 13 and 15 seconds of that same video. These are supplied reference assets, not a verified Focus generation. No models or private-media routes are called, and no new AI generation was used.
-
-Muted autoplay respects browser policy. The visible sound control enables the original audio after a user gesture. Manual playback also enables audio. The pause control appears on hover or keyboard focus, and stays available on touch devices.
+The landing retains its original layout and copy, with Ichika replacing the previous character illustration. The original animation frame remains empty until the user supplies a new animation. Seita is available in the character templates. The previous Reze illustration, dance recording and extracted frames have been removed. The user will supply their own animation separately; no animation is claimed for the current illustrations.

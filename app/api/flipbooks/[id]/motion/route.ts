@@ -25,9 +25,9 @@ export async function POST(request: Request, { params }: Context) {
     if (request.headers.get("Content-Type")?.includes("application/json")) {
       const input = AttachMotionSchema.safeParse(await readJsonBody(request));
       if (!input.success) throw new AppError("invalid_motion_trim", 400, "Choose a valid start and a duration of 1–20 whole seconds.");
-      return Response.json(await attachMotionReference(book.id, input.data, paidGate(request)), { status: 202 });
+      return Response.json(await attachMotionReference(book.id, input.data, paidGate(request, { continuation: book.motionSource === "video" && !book.plan })), { status: 202 });
     }
-    guardUpload(request);
+    await guardUpload(request);
     let name = "Movement reference";
     try { name = decodeURIComponent(request.headers.get("X-Focus-Filename") ?? name); } catch { /* Display name only. */ }
     return Response.json(await uploadMotionReference(book.id, request.body, declaredLength(request), name));

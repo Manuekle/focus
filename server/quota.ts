@@ -9,6 +9,11 @@ import { dataRoot } from "./storage";
 import { anonymousId, ANON_COOKIE, readCookie } from "./auth/session";
 import { currentUser } from "./auth/users";
 
+/** Local `next dev` is unlimited. Request headers cannot disable production quotas. */
+function generationLimitsEnabled(): boolean {
+  return process.env.NODE_ENV !== "development";
+}
+
 /** Lifetime allowance, shared by all generation routes. */
 export function freeEditLimit(): number {
   const raw = process.env.FOCUS_FREE_EDITS?.trim();
@@ -75,11 +80,13 @@ function counter(keys: readonly string[], consume: boolean, inherit?: string, mi
 
 const anonymousKeys = (request: Request, anonId: string) => [`anon:${anonId}`, `ip:${clientKey(request)}`];
 
-export async function anonymousQuota(request: Request, anonId: string): Promise<Quota> {
+export async function anonymousQuota(request: Request, anonId: string): Promise<Quota | null> {
+  if (!generationLimitsEnabled()) return null;
   return counter(anonymousKeys(request, anonId), false);
 }
 
-export async function consumeFreeEdit(request: Request, anonId: string): Promise<Quota> {
+export async function consumeFreeEdit(request: Request, anonId: string): Promise<Quota | null> {
+  if (!generationLimitsEnabled()) return null;
   return counter(anonymousKeys(request, anonId), true);
 }
 
@@ -93,17 +100,19 @@ async function requestIdentity(request: Request) {
   return { keys: [`user:${user.id}`], inherit: validAnon ? `anon:${validAnon}` : undefined, mirrors: validAnon ? anonymousKeys(request, validAnon) : [] };
 }
 
-export async function generationQuota(request: Request): Promise<Quota> {
+export async function generationQuota(request: Request): Promise<Quota | null> {
+  if (!generationLimitsEnabled()) return null;
   const { keys, inherit } = await requestIdentity(request);
   return counter(keys, false, inherit);
 }
 
 export async function assertGenerationAvailable(request: Request): Promise<void> {
   const quota = await generationQuota(request);
-  if (quota.remaining === 0) throw generationLimitError(quota.limit);
+  if (quota?.remaining === 0) throw generationLimitError(quota.limit);
 }
 
-export async function consumeGeneration(request: Request): Promise<Quota> {
+export async function consumeGeneration(request: Request): Promise<Quota | null> {
+  if (!generationLimitsEnabled()) return null;
   const { keys, inherit, mirrors } = await requestIdentity(request);
   return counter(keys, true, inherit, mirrors);
 }

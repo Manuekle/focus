@@ -1,0 +1,14 @@
+.player { display: flex; min-width: 0; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
+.video { display: block; width: 100%; max-height: min(38dvh, 320px); object-fit: contain; background: var(--editor-stage); }
+.toolbar { flex-shrink: 0; padding: 4px 10px 8px; border-top: 1px solid var(--border); }
+.row { display: flex; align-items: center; gap: 8px; }
+.control:hover { color: var(--primary); background: var(--accent); }
+.time { color: var(--muted-foreground); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.separator { padding: 0 5px; opacity: 0.6; }
+.actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
+.error { margin: 0; padding: 0 12px; color: var(--muted-foreground); font-size: 12px; }
+.error:not(:empty) { padding-bottom: 10px; }
+.player:fullscreen { width: 100%; height: 100%; border: 0; border-radius: 0; }
+.player:fullscreen .video { flex: 1; min-height: 0; height: 0; max-height: none; }
+.player:fullscreen .toolbar { padding: 8px 20px 12px; }
+@media (pointer: coarse) { .control { width: 40px; height: 40px; } }

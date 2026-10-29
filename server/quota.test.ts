@@ -31,6 +31,36 @@ async function signedRequest(ip = "198.51.100.1", cookie = "", providerId = rand
 }
 
 describe("lifetime generation allowance", () => {
+  it("allows unlimited local development without showing or changing an exhausted allowance", async () => {
+    const request = await signedRequest();
+    const anonymous = new Request("http://localhost/api", { headers: { cookie: `focus_anon=${randomUUID()}` } });
+    for (let i = 0; i < 3; i++) await consumeGeneration(request);
+    vi.stubEnv("NODE_ENV", "development");
+    vi.stubEnv("FOCUS_FREE_EDITS", "0");
+    for (let i = 0; i < 5; i++) {
+      expect(await consumeGeneration(request)).toBeNull();
+      expect(await consumeGeneration(anonymous)).toBeNull();
+      await guardAiRequest(request, { activeJobs: 0, estimatedFrames: 1 });
+      await guardChatRequest(request);
+    }
+    expect(await consumeFreeEdit(anonymous, anonymousId(anonymous).id)).toBeNull();
+    expect(await generationQuota(request)).toBeNull();
+    expect((await sessionInfo(request)).info.quota).toBeNull();
+    expect((await sessionInfo(anonymous)).info.quota).toBeNull();
+    vi.stubEnv("NODE_ENV", "test");
+    vi.stubEnv("FOCUS_FREE_EDITS", "3");
+    expect((await generationQuota(request))?.used).toBe(3);
+    await expect(consumeGeneration(request)).rejects.toMatchObject({ code: "generation_limit_reached" });
+  });
+
+  it("keeps the production limit when request headers claim localhost", async () => {
+    vi.stubEnv("NODE_ENV", "production");
+    const request = new Request("http://localhost/api", { headers: { host: "localhost:3200", "x-forwarded-host": "localhost", "x-real-ip": "127.0.0.1", cookie: `focus_anon=${randomUUID()}` } });
+    for (let i = 0; i < 3; i++) await consumeGeneration(request);
+    expect((await sessionInfo(request)).info.quota).toEqual({ limit: 3, used: 3, remaining: 0 });
+    await expect(consumeGeneration(request)).rejects.toMatchObject({ code: "generation_limit_reached" });
+  });
+
   it("gives signed-in users exactly three uses across concurrent requests", async () => {
     const request = await signedRequest();
     const results = await Promise.allSettled(Array.from({ length: 12 }, () => consumeGeneration(request)));
@@ -67,7 +97,7 @@ describe("lifetime generation allowance", () => {
     `;
     const results = await Promise.all(Array.from({ length: 4 }, () => promisify(execFile)(process.execPath, ["--input-type=module", "-e", script], { cwd: path.resolve(import.meta.dirname, ".."), env: { ...process.env, FOCUS_TEST_ANON_ID: anon } })));
     expect(results.map((result) => result.stdout.trim()).sort()).toEqual(["accepted", "generation_limit_reached", "generation_limit_reached", "generation_limit_reached"]);
-    expect((await anonymousQuota(request, anon)).used).toBe(3);
+    expect((await anonymousQuota(request, anon))?.used).toBe(3);
   });
 
   it("persists across login, new sessions and IP changes without penalizing another account on the same network", async () => {
@@ -77,16 +107,16 @@ describe("lifetime generation allowance", () => {
     resetSessionKey();
     const returned = await signedRequest("203.0.113.4", "", providerId);
     await expect(consumeGeneration(returned)).rejects.toMatchObject({ code: "generation_limit_reached", status: 403 });
-    expect((await generationQuota(await signedRequest("198.51.100.2"))).remaining).toBe(3);
+    expect((await generationQuota(await signedRequest("198.51.100.2")))?.remaining).toBe(3);
   });
 
   it("carries anonymous browser use into the account once", async () => {
     const anonId = randomUUID();
     await consumeFreeEdit(new Request("http://localhost"), anonId);
     const request = await signedRequest("198.51.100.3", `focus_anon=${anonId}`);
-    expect((await generationQuota(request)).used).toBe(1);
+    expect((await generationQuota(request))?.used).toBe(1);
     await consumeGeneration(request);
-    expect((await generationQuota(request)).used).toBe(2);
+    expect((await generationQuota(request))?.used).toBe(2);
   });
 
   it("counts a first request without a cookie against the cookie it returns", async () => {
@@ -95,7 +125,7 @@ describe("lifetime generation allowance", () => {
     await consumeGeneration(request);
     expect(anonymousId(request)).toEqual(anon);
     const signed = await signedRequest("203.0.113.99", `focus_anon=${anon.id}`);
-    expect((await generationQuota(signed)).used).toBe(1);
+    expect((await generationQuota(signed))?.used).toBe(1);
   });
 
   it("does not restore anonymous generations when an exhausted user signs out", async () => {
@@ -112,7 +142,7 @@ describe("lifetime generation allowance", () => {
     await mkdir(path.join(work, "quota"));
     await writeFile(path.join(work, "quota", `${hash}.json`), JSON.stringify({ used: 3 }));
     const request = new Request("http://localhost", { headers: { "x-real-ip": "203.0.113.8" } });
-    expect((await anonymousQuota(request, id)).remaining).toBe(0);
+    expect((await anonymousQuota(request, id))?.remaining).toBe(0);
     await expect(consumeFreeEdit(request, id)).rejects.toMatchObject({ code: "generation_limit_reached" });
   });
 
@@ -130,14 +160,14 @@ describe("lifetime generation allowance", () => {
     await expect(guardAiRequest(request, { activeJobs: 0, estimatedFrames: 1 })).rejects.toMatchObject({ code: "generation_limit_reached" });
     await expect(guardChatRequest(request)).rejects.toMatchObject({ code: "generation_limit_reached" });
     await guardAiRequest(request, { activeJobs: 0, estimatedFrames: 8 }, { continuation: true });
-    expect((await generationQuota(request)).used).toBe(3);
+    expect((await generationQuota(request))?.used).toBe(3);
   });
 
   it("does not spend a use for a preview or rejected busy request", async () => {
     const request = await signedRequest();
     await guardAiRequest(request, { activeJobs: 0, estimatedFrames: 1 }, { charge: false });
     await expect(guardAiRequest(request, { activeJobs: 100, estimatedFrames: 1 })).rejects.toMatchObject({ code: "busy" });
-    expect((await generationQuota(request)).used).toBe(0);
+    expect((await generationQuota(request))?.used).toBe(0);
   });
 
   it("treats empty config as the default and preserves an explicit zero limit", () => {

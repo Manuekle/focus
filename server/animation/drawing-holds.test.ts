@@ -49,5 +49,13 @@ describe("125 ms drawing exposure limit", () => {
     expect(slow.get("s0")!.warnings.map((warning) => warning.code)).toContain("exposure_too_long");
     const base: FlipbookFrame = { id: "s0", poseIndex: 0, phase: "sample_0", label: "Pose", status: "ready", approved: false, version: "v-0123456789ab", originalVersion: "v-0123456789ab", versions: [], metrics: null, warnings: slow.get("s0")!.warnings, review: null, error: null };
     expect(repairableFrames({ frames: [base, { ...base, id: "s1", warnings: repeated.get("s1")!.warnings }] }).map((frame) => frame.id)).toEqual(["s1"]);
+
+    const videoPause = await checkFrames(entries, null, "dance", "front", true, undefined, true);
+    const warnings = videoPause.get("s1")!.warnings;
+    expect(warnings.map((warning) => warning.code)).toEqual(["reference_hold_review"]);
+    expect(warnings[0].message).toContain("a recorded pause is intentional");
+    expect(repairableFrames({ frames: [{ ...base, id: "s1", warnings }] })).toEqual([]);
+    // Other real defects still qualify for repair on the same drawing.
+    expect(repairableFrames({ frames: [{ ...base, warnings: [...warnings, { code: "color_shift", message: "Wrong shirt color." }] }] })).toHaveLength(1);
   });
 });

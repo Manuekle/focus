@@ -63,6 +63,16 @@ describe("character analysis", () => {
     expect(risky.warnings.every((warning) => warning.length <= 240)).toBe(true);
   });
 
+  it("lets video samples define unclassified movement without bypassing character validation", () => {
+    for (const requestedAction of ["other", "gesture"] as const) {
+      const seen = { ...analysis, requestedAction };
+      expect(assessInput(seen).supported).toBe(false);
+      expect(assessInput(seen, { fromVideo: true }).supported).toBe(true);
+      expect(assessInput({ ...seen, characterCount: 0 }, { fromVideo: true }).supported).toBe(false);
+      expect(assessInput({ ...seen, feetVisible: false }, { fromVideo: true }).warnings).toContain("The full body isn’t visible. Unseen parts (like legs or feet) will be invented, so they may not match your design.");
+    }
+  });
+
   it("keeps a usable original camera view and redraws only when needed", () => {
     expect(decideReference(analysis).kind).toBe("original");
     expect(decideReference({ ...analysis, view: "three_quarter" }).kind).toBe("original");

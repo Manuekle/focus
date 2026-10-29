@@ -3,10 +3,10 @@ import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
 import sharp from "sharp";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { type CharacterAnalysis, type Flipbook, FlipbookPlanSchema } from "../../shared/flipbook";
 import { sequenceSkeleton, parseSequenceWindow } from "./sequence-planning";
-import { applyFrameAction, cancelFlipbook, createFlipbook, enhanceFlagged, generateMissing, retryPreparation, reviseSequence, restoreSequenceRevision, services } from "./flipbooks";
+import { applyFrameAction, cancelFlipbook, createFlipbook, enhanceFlagged, generateBackground, generateMissing, retryPreparation, reviseSequence, restoreSequenceRevision, services } from "./flipbooks";
 import { AppError } from "../errors";
 import { getFlipbook, isRunning, flipbookDir, flipbookFiles, updateFlipbook } from "./store";
 import { segmentation } from "./frame-alignment";
@@ -66,6 +66,64 @@ beforeAll(async () => {
 afterAll(async () => { await rm(work, { recursive: true, force: true }); });
 
 describe("complete continuous workflow", () => {
+  it("waits for video upload and trim before its first and only movement plan", async () => {
+    const originalPlan = services.planSequence;
+    const planner = vi.spyOn(services, "planSequence").mockImplementation(async (input) => ({ ...await originalPlan(input), view: "front" }));
+    const analyzer = vi.spyOn(services, "analyze").mockResolvedValue({ ...analysis, requestedAction: "other" });
+    try {
+      const book = await createFlipbook({ imageId, prompt: "Follow the selected video; preserve this character's appearance.", motionSource: "video", sequence: { durationSeconds: 1, drawingFps: 8 } });
+      expect(book.status).toBe("awaiting_motion");
+      expect(book.plan).toBeNull();
+      expect(isRunning(book.id)).toBe(false);
+      expect(planner).not.toHaveBeenCalled();
+      expect(analyzer).not.toHaveBeenCalled();
+      const source = path.join(work, "initial-motion.mp4");
+      await ffmpeg(["-f", "lavfi", "-i", "testsrc2=size=160x240:rate=24:duration=2", "-c:v", "libx264", source]);
+      const uploaded = await uploadMotionReference(book.id, body(await readFile(source)), undefined, "motion.mp4");
+      expect(uploaded.status).toBe("awaiting_motion");
+      expect(planner).not.toHaveBeenCalled();
+      const before = drawings;
+      await attachMotionReference(book.id, { version: uploaded.motionDraft!.version, start: 0.5, durationSeconds: 1, useAudio: false });
+      const prepared = await settled(book.id);
+      expect(prepared.error).toBeNull();
+      expect(prepared.status).toBe("reference_ready");
+      expect(prepared.motionReference?.start).toBe(0.5);
+      expect(prepared.motionDraft).toBeNull();
+      expect(prepared.plan?.view).toBe("front");
+      expect(prepared.plan?.poses).toHaveLength(8);
+      expect(planner).toHaveBeenCalledTimes(1);
+      expect(planner.mock.calls[0][0]).toMatchObject({ action: undefined, view: undefined, guide: expect.any(Function) });
+      expect(drawings).toBe(before);
+      expect(prepared.analysis?.requestedAction).toBe("other");
+
+      // Recover the persisted shape left behind by the old preset-only gate.
+      await updateFlipbook(book.id, (current) => ({ ...current, status: "unsupported", plan: null, reference: null, error: { code: "unsupported_animation", message: "Choose a preset action." } }));
+      const backdropGate = vi.fn();
+      await expect(generateBackground(book.id, { confirmExtra: false }, backdropGate)).rejects.toMatchObject({ code: "flipbook_not_ready" });
+      expect(backdropGate).not.toHaveBeenCalled();
+      const retryGate = vi.fn();
+      await retryPreparation(book.id, false, retryGate);
+      const retried = await settled(book.id);
+      expect(retried.status).toBe("reference_ready");
+      expect(retried.error).toBeNull();
+      expect(retried.id).toBe(book.id);
+      expect(retried.motionReference).toEqual(prepared.motionReference);
+      expect(retryGate).toHaveBeenCalledTimes(1);
+      expect(analyzer).toHaveBeenCalledTimes(1);
+      expect(planner).toHaveBeenCalledTimes(2);
+      expect(drawings).toBe(before);
+
+      // Recovery may also select a longer segment of the same saved video.
+      await updateFlipbook(book.id, (current) => ({ ...current, status: "unsupported", plan: null, reference: null, error: { code: "unsupported_animation", message: "Old rejected movement." } }));
+      await attachMotionReference(book.id, { version: retried.motionReference!.version, start: 0, durationSeconds: 2, useAudio: false });
+      const recropped = await settled(book.id);
+      expect(recropped.error).toBeNull();
+      expect(recropped.frames).toHaveLength(16);
+      expect(recropped.plan?.poses).toHaveLength(16);
+      expect(recropped.order).toEqual(recropped.frames.map((frame) => frame.id));
+      expect(analyzer).toHaveBeenCalledTimes(1);
+    } finally { planner.mockRestore(); analyzer.mockRestore(); }
+  });
   it("draws bounding key poses before dance intermediates and checks extended holds", async () => {
     const source = await make(1, 8);
     const before = drawInputs.length;

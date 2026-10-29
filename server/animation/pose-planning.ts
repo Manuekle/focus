@@ -318,6 +318,7 @@ export function inbetweenPrompt(input: {
   readonly toIndex: number;
   readonly position?: number;
   readonly extraCount?: number;
+  readonly hasMotionReference?: boolean;
 }): string {
   const spec = actionSpec(input.plan.action);
   const from = input.plan.poses[input.fromIndex];
@@ -326,15 +327,15 @@ export function inbetweenPrompt(input: {
   const fraction = input.position ?? 0.5;
   const progress = fraction === 0.5 ? "halfway" : `${Math.round(fraction * 1000) / 10}% of the way`;
   return [
-    `Images 2 and 3 are two consecutive key drawings of the character from Image 1 in a hand-drawn ${spec.label}: "${from.label}", then "${to.label}". Draw the in-between: the one pose exactly ${progress} from Image 2 to Image 3.`,
+    `Images 2 and 3 are two consecutive key drawings of the character from Image 1 in a hand-drawn ${input.hasMotionReference ? "video-guided performance" : spec.label}: "${from.label}", then "${to.label}". Draw the in-between: the one pose exactly ${progress} from Image 2 to Image 3.`,
     `Moving parts of the body travel ${progress} along their paths: arms and legs swing along arcs from their joints and keep their length (never shrinking, never cutting straight across); the torso and head turn ${progress} only when their poses differ; hair, clothing and accessories trail only where the movement requires it. Where the two keys agree on pose and position, keep those parts stationary; their appearance always comes from Image 1.`,
     identityLock(input.analysis),
     APPEARANCE_LOCK,
     "Keep identical to Images 2 and 3: the character's size in the image, proportions, the camera distance and angle, and the ground line under the feet. Face, hairstyle, outfit, colors, shading and accessories exactly as in Image 1 (never mirror asymmetric details). Never blend or interpolate garment colors between the keys.",
-    "Never copy either key pose. No motion blur, speed lines, smears, after-images or effects: one clean drawing at the requested point along the movement.",
+    input.hasMotionReference ? "Follow the video's exact-time posture. During an observed pause, preserve the matching key pose instead of inventing motion. During movement, advance along the observed joint paths. No motion blur, ghosting or blended anatomy." : "Never copy either key pose. No motion blur, speed lines, smears, after-images or effects: one clean drawing at the requested point along the movement.",
     extrasLine(input.extraCount ?? 0, 4),
-    `View: ${cameraDescription(input.plan.view ?? "side", input.plan.direction)}. Camera stays fixed. ${input.plan.action === "fight" ? "Only one character: no opponent or impact effects." : ""}`,
-    FRAMING(`${key.name} (${key.hex})`, Boolean(input.plan.poseId)),
+    input.hasMotionReference ? "Keep the established camera, distance and scale. Body orientation and location follow the video at this timestamp, including turns and backs to the camera; do not lock the character into a front-facing pose." : `View: ${cameraDescription(input.plan.view ?? "side", input.plan.direction)}. Camera stays fixed. ${input.plan.action === "fight" ? "Only one character: no opponent or impact effects." : ""}`,
+    input.hasMotionReference ? FRAMING(`${key.name} (${key.hex})`).replace("centered,", "at the planned screen-relative position,") : FRAMING(`${key.name} (${key.hex})`, Boolean(input.plan.poseId)),
   ].filter(Boolean).join("\n");
 }
 

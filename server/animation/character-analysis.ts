@@ -148,9 +148,9 @@ export async function analyzeCharacter(input: { readonly imagePng: Buffer; reado
  * What may make the result unreliable, said before any drawing is paid for.
  * Returns the caveats and whether the request is supported at all.
  */
-export function assessInput(analysis: CharacterAnalysis): { supported: boolean; reason: string | null; warnings: string[] } {
+export function assessInput(analysis: CharacterAnalysis, options: { fromVideo?: boolean } = {}): { supported: boolean; reason: string | null; warnings: string[] } {
   if (analysis.characterCount === 0) return { supported: false, reason: "We couldn’t find a character in this image. Upload an illustration of one character.", warnings: [] };
-  if (![...ANIMATION_ACTIONS, "none"].includes(analysis.requestedAction as CycleAction)) {
+  if (!options.fromVideo && ![...ANIMATION_ACTIONS, "none"].includes(analysis.requestedAction as CycleAction)) {
     return { supported: false, reason: "Flipbook animates walks, runs, jumps, waves, idle loops, dance cycles and fighting combos. Ask your character for one of those.", warnings: [] };
   }
   const warnings: string[] = [];

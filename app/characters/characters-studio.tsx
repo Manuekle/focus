@@ -365,7 +365,7 @@ export function CharactersStudio({
                   <Badge size="sm">Character templates</Badge>
                   <h2 id="starter-title">Choose your starting character.</h2>
                   <p>
-                    Start with Denji or Reze. Keep the original reference,
+                    Start with Ichika or Seita. Keep the original reference,
                     create a full-body design, then try a new outfit.
                   </p>
                   <button

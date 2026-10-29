@@ -32,7 +32,7 @@ export type Quota = z.infer<typeof QuotaSchema>;
 
 export const SessionInfoSchema = z.object({
   user: PublicUserSchema.nullable(),
-  /** Null only when the allowance is unavailable (legacy session responses). */
+  /** Null for unlimited local development (or legacy session responses). */
   quota: QuotaSchema.nullable(),
   /** "simulated" locally until a Facebook app is configured. */
   authMode: z.enum(["facebook", "simulated"]),

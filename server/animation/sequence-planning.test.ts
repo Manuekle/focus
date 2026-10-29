@@ -1,8 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CharacterAnalysis } from "../../shared/flipbook";
-import { planSequence } from "./sequence-planning";
+import { planSequence, sequenceDrawingPrompt } from "./sequence-planning";
 import { AppError } from "../errors";
 import { requireMetaConfig } from "../ai/meta";
+import { reviewFrames } from "./quality-control";
 
 const provider = vi.hoisted(() => ({ complete: vi.fn() }));
 vi.mock("../ai/meta", async (importOriginal) => ({
@@ -24,6 +25,15 @@ beforeEach(() => {
 });
 
 describe("bounded sequence planning requests", () => {
+  it("does not ask contact-sheet review to repair genuine video pauses or enforce a preset", async () => {
+    provider.complete.mockResolvedValue({ status: "completed", output_text: JSON.stringify({ summary: "The character stays consistent.", recognizableWalk: true, frames: [{ frame: 1, ok: true, issues: [] }] }) });
+    await reviewFrames({ reference: Buffer.from("character"), sheet: Buffer.from("drawings"), labels: ["1 at 0.00 s"], analysis, direction: "front", action: "wave", finite: true, fromVideo: true, flipbookId: "test" });
+    const instructions = provider.complete.mock.calls[0][0].instructions;
+    expect(instructions).toContain("The source video is not supplied");
+    expect(instructions).toContain("do not require any particular preset action");
+    expect(instructions).toContain("Preserve recorded holds at their actual times");
+    expect(instructions).not.toContain("One drawing may be held for at most");
+  });
   it("plans all 480 ticks in ten absolute-time windows while retaining the global outline", async () => {
     const result = await planSequence({ analysis, prompt: "Dance throughout the clip", settings: { durationSeconds: 20, drawingFps: 24 }, flipbookId: "test" });
     expect(result.poses).toHaveLength(480);
@@ -81,5 +91,31 @@ describe("bounded sequence planning requests", () => {
     provider.complete.mockRejectedValue(new AppError("meta_model_not_found", 502, "Model not available."));
     await expect(planSequence({ analysis, prompt: "Dance", settings: { durationSeconds: 1, drawingFps: 8 }, flipbookId: "test" })).rejects.toMatchObject({ code: "meta_model_not_found" });
     expect(provider.complete).toHaveBeenCalledTimes(1);
+  });
+  it("samples video at eight observations per second even at the lowest drawing rate", async () => {
+    const guide = vi.fn(async (_tick: number) => Buffer.from("video posture"));
+    await planSequence({ analysis, prompt: "Follow the video", settings: { durationSeconds: 2, drawingFps: 8 }, flipbookId: "test", guide });
+    expect(guide.mock.calls.map((call) => call[0])).toEqual(Array.from({ length: 16 }, (_, index) => index * 3));
+    const request = provider.complete.mock.calls[0][0];
+    expect(context(request)).toMatchObject({ motionSource: "video", drawingFps: 8, totalDrawings: 16 });
+    expect(request.instructions).toContain("Do not substitute a named preset");
+    expect(request.instructions).toContain("weight-bearing leg");
+    expect(JSON.stringify(request.input)).not.toContain("One drawing may be held for at most");
+  });
+  it("fails before a model call when a required video sample is unavailable", async () => {
+    await expect(planSequence({ analysis, prompt: "Follow the video", settings: { durationSeconds: 1, drawingFps: 24 }, flipbookId: "test", guide: async () => null })).rejects.toMatchObject({ code: "motion_reference_incomplete" });
+    expect(provider.complete).not.toHaveBeenCalled();
+  });
+  it("takes the video camera and action from observations and extends its observed timeline", async () => {
+    provider.complete.mockImplementation(async (body) => ({ status: "completed", output_text: JSON.stringify({ cameraView: "front", direction: "left", action: "wave", visiblePeople: 1, overview: `Observed through tick ${context(body).absoluteTicks.at(-1)}`, poses: context(body).absoluteTicks.map((tick) => ({ tick, label: "Gesture", description: "Step while raising both arms." })) }) }));
+    const result = await planSequence({ analysis, prompt: "Follow the video", settings: { durationSeconds: 4, drawingFps: 8 }, flipbookId: "test", guide: async () => Buffer.from("pose") });
+    expect(result.view).toBe("front");
+    expect(result.action).toBe("wave");
+    expect(result.direction).toBe("left");
+    expect(result.motionOutline).toBe("Observed through tick 93");
+    expect(context(provider.complete.mock.calls[1][0])).toMatchObject({ cameraView: "front", motionOverview: "Observed through tick 45" });
+    const prompt = sequenceDrawingPrompt({ plan: result, index: 0, analysis, hasMotionReference: true });
+    expect(prompt).toContain("Do not freeze the torso or feet");
+    expect(prompt).not.toContain("only advance the waving arm");
   });
 });

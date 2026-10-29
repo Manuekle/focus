@@ -44,7 +44,7 @@ describe("provider availability before generation", () => {
     vi.stubGlobal("fetch", vi.fn(async () => Response.json({ data: [{ id: "sam-3.1" }] })));
     const request = new Request("http://localhost", { headers: { "x-real-ip": randomUUID(), cookie: `focus_anon=${randomUUID()}` } });
     await expect(guardAiRequest(request, { activeJobs: 0, estimatedFrames: 8 })).rejects.toMatchObject({ code: "meta_model_not_found" });
-    expect((await generationQuota(request)).used).toBe(0);
+    expect((await generationQuota(request))?.used).toBe(0);
   });
 
   it.each([[401, "meta_unauthorized"], [403, "meta_forbidden"], [500, "meta_unavailable"]])("refuses HTTP %i without exposing provider details", async (status, code) => {

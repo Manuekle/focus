@@ -17,6 +17,7 @@ import {
   backgroundMotion,
   type BackgroundMedia,
   flipbookUrls,
+  flipbookTitle,
   orderedFrames,
   frameNeedsAttention,
   repairableFrames,
@@ -110,6 +111,11 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   const finite = Boolean(flipbook.sequence);
   const total = flipbook.frames.length;
   const locked = busy || active;
+  const prepared = Boolean(flipbook.plan && flipbook.reference);
+  const editingLocked = locked || !prepared || flipbook.status === "unsupported";
+  const videoMotion = Boolean(flipbook.sequence && (flipbook.motionSource === "video" || flipbook.motionReference));
+  const title = flipbookTitle(flipbook);
+  const motionLabel = videoMotion ? "video movement" : finite ? "continuous sequence" : flipbook.plan ? spec.label : "animation";
 
   /** Runs one request; a budget refusal turns into an explicit confirmation. */
   const run = useCallback(async (request: (confirmExtra: boolean) => Promise<Flipbook>, confirmExtra = false): Promise<boolean> => {
@@ -182,7 +188,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   const lookKey = JSON.stringify({ settings, background });
   const savedLook = useRef(lookKey);
   useEffect(() => {
-    if (savedLook.current === lookKey) return;
+    if (!prepared || flipbook.status === "unsupported" || savedLook.current === lookKey) return;
     const timer = window.setTimeout(() => {
       savedLook.current = lookKey;
       void flipbookApi.action(flipbook.id, { action: "look", settings, background }).catch(() => undefined);
@@ -190,7 +196,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
     return () => window.clearTimeout(timer);
     // lookKey captures settings and background.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [lookKey, flipbook.id]);
+  }, [lookKey, flipbook.id, prepared, flipbook.status]);
 
   const notReady = frames.filter((entry) => !frameThumb(flipbook, entry));
   const exportable = notReady.length
@@ -295,14 +301,15 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   const flagged = frames.filter(frameNeedsAttention);
   const repairable = repairableFrames(flipbook);
   const approvedFlagged = flagged.filter((entry) => entry.approved).length;
-  const canRetryPreparation = !scene && !flipbook.reference && (flipbook.status === "failed" || flipbook.status === "canceled");
+  const rejectedVideo = flipbook.status === "unsupported" && videoMotion && flipbook.motionReference && flipbook.analysis && flipbook.analysis.characterCount > 0;
+  const canRetryPreparation = !scene && !flipbook.reference && (flipbook.status === "failed" || flipbook.status === "canceled" || rejectedVideo);
 
   return (
     <div className={styles.editor}>
       <div className={styles.editorHead}>
         <div className="min-w-0">
-          <p className={styles.sectionLabel}>Flipbook · {spec.label}</p>
-          <h1 className={styles.editorTitle} title={flipbook.prompt}>“{flipbook.prompt}”</h1>
+          <p className={styles.sectionLabel}>Flipbook · {motionLabel}</p>
+          <h1 className={styles.editorTitle} title={title}>{title}</h1>
           {scene ? <p className="mt-2 text-xs text-muted-foreground">{flipbook.cast.map((member, position) => <span key={`${member.characterId}:${member.versionId}`}>{position ? " · " : ""}<Link href={`/characters?c=${member.characterId}`} className="text-primary hover:underline">{member.name}</Link></span>)}<span className="ml-2">{flipbook.plan?.durationSeconds ?? "—"} s · {total} drawings</span></p> : flipbook.characterSource ? <p className="mt-2 text-xs text-muted-foreground"><Link href={`/characters?c=${flipbook.characterSource.characterId}`} className="text-primary hover:underline">{flipbook.characterSource.name}</Link> · {flipbook.characterSource.versionName}<span className="ml-2">Saved character version</span></p> : null}
         </div>
         <div className={styles.headActions}>
@@ -366,7 +373,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
       ) : null}
 
       {flipbook.review && !active ? (
-        <Alert tone={flipbook.review.recognizableWalk ? "info" : "warning"} size="sm" title={`AI review: ${flipbook.review.recognizableWalk ? "reads as" : "may not read as"} a ${spec.label}`}>
+        <Alert tone={flipbook.review.recognizableWalk ? "info" : "warning"} size="sm" title={videoMotion ? `AI review: ${flipbook.review.recognizableWalk ? "movement looks coherent" : "movement needs review"}` : `AI review: ${flipbook.review.recognizableWalk ? "reads as" : "may not read as"} a ${spec.label}`}>
           {flipbook.review.summary} This is Muse Spark’s opinion; trust your eyes on the preview.
         </Alert>
       ) : null}
@@ -375,7 +382,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
         <ScrollArea className={styles.columnSide} viewportClassName={styles.columnViewport} contentClassName={styles.columnContent}>
           <ReferencePanel
             flipbook={flipbook}
-            busy={locked}
+            busy={editingLocked}
             onReference={(kind) => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "reference", kind, confirmExtra }))}
             onUploadReferences={(files, asAnchor) => void uploadReferences(files, asAnchor)}
             onRemoveReference={(version) => void run(() => flipbookApi.removeReference(flipbook.id, version))}
@@ -383,7 +390,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
           {flipbook.plan && flipbook.reference && missing > 0 && !active ? (
             <div className={styles.cta}>
               <p className="text-xs text-muted-foreground">{missing === total ? `The reference is ready. Next: ${total} drawings, one per ${scene ? "beat" : "pose"}.` : `${missing} of ${total} frames have no drawing.`}</p>
-              <Button className="w-full" variant="ai" disabled={locked} onClick={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "generate", confirmExtra }))}>
+              <Button className="w-full" variant="ai" disabled={editingLocked} onClick={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "generate", confirmExtra }))}>
                 {missing === total ? `Generate ${total} frames` : `Draw ${missing} missing ${missing === 1 ? "frame" : "frames"}`}
               </Button>
             </div>
@@ -392,7 +399,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             flipbook={flipbook}
             background={background}
             onBackgroundChange={setBackground}
-            busy={locked}
+            busy={editingLocked}
             generating={generatingBackground}
             onGenerate={generateBackground}
             creatingScene={creatingScene}
@@ -428,12 +435,12 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             finite={finite}
             audio={flipbook.audio ?? undefined}
             audioUrl={flipbook.audio ? `/api/flipbooks/${flipbook.id}/audio?v=${flipbook.audio.version}` : undefined}
-            strip={<FrameStrip flipbook={flipbook} frames={frames} selected={selectedIndex} onSelect={select} onMove={move} disabled={locked} scene={scene || finite} />}
+            strip={<FrameStrip flipbook={flipbook} frames={frames} selected={selectedIndex} onSelect={select} onMove={move} disabled={editingLocked} scene={scene || finite} />}
           />
           {scene ? null : <ChatPanel
             flipbook={flipbook}
             settings={settings}
-            busy={locked}
+            busy={editingLocked}
             onPlayback={applyPlayback}
             onApplyPoses={(changes, confirmExtra, proposalId) => run((extra) => flipbookApi.applyChat(flipbook.id, { ...(proposalId ? { proposalId } : { changes: changes.map((change) => ({ frame: change.frame as FrameId, description: change.description })) }), confirmExtra: extra }), confirmExtra)}
           />}
@@ -447,7 +454,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
               frame={frame}
               index={selectedIndex}
               count={frames.length}
-              busy={locked}
+              busy={editingLocked}
               onAction={onFrameAction}
               onReplace={(file) => void run(() => flipbookApi.replaceFrame(flipbook.id, frame.id, file))}
               onMove={(delta) => move(selectedIndex, selectedIndex + delta)}
@@ -459,13 +466,13 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             drawingFps={flipbook.plan?.drawingFps ?? settings.drawingFps}
             cycleSeconds={settings.cycleSeconds}
             keysReady={notReady.length === 0}
-            disabled={locked}
+            disabled={editingLocked}
             onDraw={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "inbetweens", drawingFps: flipbook.plan?.drawingFps ?? settings.drawingFps, confirmExtra }))}
           />}
-          {!scene ? <SequenceControls key={JSON.stringify(flipbook.sequence)} flipbook={flipbook} disabled={locked || !flipbook.reference || !flipbook.plan} onPlan={(settings) => void run(() => flipbookApi.action(flipbook.id, { action: "sequence", settings }))} onRestore={(id) => void run(() => flipbookApi.action(flipbook.id, { action: "revision", id }))} /> : null}
-          <AudioPanel key={flipbook.audio?.version ?? "no-audio"} flipbook={flipbook} disabled={locked} onUpload={(file) => void run(() => flipbookApi.uploadAudio(flipbook.id, file))} onSave={(settings) => void run(() => flipbookApi.audioSettings(flipbook.id, settings))} onRemove={() => void run(() => flipbookApi.removeAudio(flipbook.id))} />
-          {!scene ? <DuplicatePanel flipbook={flipbook} disabled={locked || !flipbook.plan} onCreated={(copy) => router.push(`/flipbook?f=${copy.id}`)} /> : null}
-          {!scene ? <MotionReferencePanel key={flipbook.motionDraft?.version ?? flipbook.motionReference?.version ?? "no-motion"} flipbook={flipbook} disabled={locked || !flipbook.reference} onUpload={(file) => void run(() => flipbookApi.uploadMotion(flipbook.id, file))} onAttach={(input) => void run(() => flipbookApi.attachMotion(flipbook.id, input))} /> : null}
+          {!scene ? <SequenceControls key={JSON.stringify(flipbook.sequence)} flipbook={flipbook} disabled={editingLocked} onPlan={(settings) => void run(() => flipbookApi.action(flipbook.id, { action: "sequence", settings }))} onRestore={(id) => void run(() => flipbookApi.action(flipbook.id, { action: "revision", id }))} /> : null}
+          <AudioPanel key={flipbook.audio?.version ?? "no-audio"} flipbook={flipbook} disabled={editingLocked} onUpload={(file) => void run(() => flipbookApi.uploadAudio(flipbook.id, file))} onSave={(settings) => void run(() => flipbookApi.audioSettings(flipbook.id, settings))} onRemove={() => void run(() => flipbookApi.removeAudio(flipbook.id))} />
+          {!scene ? <DuplicatePanel flipbook={flipbook} disabled={editingLocked} onCreated={(copy) => router.push(`/flipbook?f=${copy.id}`)} /> : null}
+          {!scene ? <MotionReferencePanel key={flipbook.motionDraft?.version ?? flipbook.motionReference?.version ?? "no-motion"} flipbook={flipbook} disabled={locked || (!prepared && !videoMotion)} onUpload={(file) => void run(() => flipbookApi.uploadMotion(flipbook.id, file))} onAttach={(input) => void run(() => flipbookApi.attachMotion(flipbook.id, input))} /> : null}
           <ExportPanel
             flipbook={flipbook}
             settings={settings}

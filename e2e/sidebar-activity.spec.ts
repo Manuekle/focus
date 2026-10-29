@@ -64,6 +64,12 @@ test("activity stays at the sidebar bottom, follows jobs across studios and rest
   await expect(activity.getByText("Completed", { exact: true })).toBeVisible({ timeout: 12_000 });
   await expect(activity.getByRole("meter")).toHaveCount(0);
   await expect(activity.getByRole("link")).toHaveAttribute("href", `/flipbook?f=${run.book.id}`);
+  const dismiss = activity.getByRole("button", { name: "Dismiss Dance animation", exact: true });
+  await expect(dismiss).toHaveCSS("opacity", "0");
+  await activity.getByRole("link").hover();
+  await expect(dismiss).toHaveCSS("opacity", "1");
+  await dismiss.hover();
+  await expect(page.getByRole("tooltip", { name: "Dismiss notification", exact: true })).toBeVisible();
   await page.screenshot({ path: "/tmp/focus-sidebar-activity-completed.png" });
   expect(errors).toEqual([]);
 });
@@ -83,8 +89,10 @@ test("connection loss stays in progress, errors remain reviewable and dismissal 
   await expect(activity.getByText("Failed", { exact: true })).toBeVisible({ timeout: 12_000 });
   await expect(activity.getByText("The drawing couldn’t be generated. Try again.", { exact: true })).toBeVisible();
   const dismiss = activity.getByRole("button", { name: "Dismiss Dance animation", exact: true });
+  const beforeDismiss = page.url();
   await dismiss.focus();
   await page.keyboard.press("Enter");
+  expect(page.url()).toBe(beforeDismiss);
   await expect(activity.getByText("Your tasks and their progress appear here.", { exact: true })).toBeVisible();
   await page.reload();
   await expect(activity.getByRole("link")).toHaveCount(0);

@@ -64,6 +64,7 @@ import { decodeImage, getCharacterImage, imageFiles, readUpload } from "./image-
 import { actionFor, planPoses } from "./pose-planning";
 import { planSequence, sequenceSkeleton } from "./sequence-planning";
 import { SequenceSettingsSchema, type SequenceSettings } from "../../shared/sequence";
+import { videoAnimationPrompt } from "../../shared/animation-prompt";
 import { prepareExportTrack } from "./flipbook-audio";
 import { motionGuide } from "./motion-reference";
 import { sequenceAnchorIndexes } from "./motion-continuity";
@@ -165,7 +166,7 @@ function ensembleSkeleton(count: number): FlipbookFrame[] {
   }));
 }
 
-const RESTING = new Set<Flipbook["status"]>(["reference_ready", "ready", "failed"]);
+const RESTING = new Set<Flipbook["status"]>(["awaiting_motion", "reference_ready", "ready", "failed", "unsupported", "canceled"]);
 
 function assertIdle(flipbook: Flipbook): void {
   if (isRunning(flipbook.id)) throw new AppError("flipbook_busy", 409, "This animation is still working. Wait for the current step to finish.");
@@ -247,11 +248,13 @@ function refundImages(id: string, count: number): Promise<unknown> {
 // ── Create and run ─────────────────────────────────────────────────────────
 
 export async function createFlipbook(
-  input: { readonly imageId?: string; readonly characterSource?: CharacterSource; readonly view?: ViewPreference; readonly prompt: string; readonly ownerId?: string | null; readonly action?: CycleAction; readonly poseId?: PoseId; readonly keepScene?: boolean; readonly sequence?: SequenceSettings },
+  input: { readonly imageId?: string; readonly characterSource?: CharacterSource; readonly view?: ViewPreference; readonly prompt: string; readonly ownerId?: string | null; readonly action?: CycleAction; readonly poseId?: PoseId; readonly keepScene?: boolean; readonly sequence?: SequenceSettings; readonly motionSource?: "video"; readonly motionNote?: string },
   gate?: PaidWorkGate,
 ): Promise<Flipbook> {
   assertFlipbookEnabled();
   const sequence = input.sequence ? SequenceSettingsSchema.parse(input.sequence) : undefined;
+  const fromVideo = input.motionSource === "video";
+  if (fromVideo && (!sequence || input.action || input.poseId || input.view)) throw new AppError("invalid_motion_source", 400, "Video movement needs a continuous sequence without preset motion or camera overrides.");
   if (input.poseId !== undefined && (!PoseIdSchema.safeParse(input.poseId).success || !CameraViewSchema.options.some((view) => compatiblePoseId(input.poseId, "idle", view) === input.poseId) || (input.action && input.action !== "idle"))) {
     throw new AppError("invalid_pose", 400, "This posture isn’t compatible with the animation. Try describing the movement again.");
   }
@@ -288,8 +291,9 @@ export async function createFlipbook(
     title: flipbookTitle({ title: "", prompt: input.prompt }),
     prompt: input.prompt,
     ...(input.poseId ? { poseId: input.poseId } : {}),
-    status: "analyzing",
-    detail: analysis ? "Planning the poses" : "Analyzing your character with Muse Spark",
+    status: fromVideo ? "awaiting_motion" : "analyzing",
+    detail: fromVideo ? "Add and apply your video segment to prepare its movement." : analysis ? "Planning the poses" : "Analyzing your character with Muse Spark",
+    ...(fromVideo ? { motionSource: "video" as const, motionNote: input.motionNote, requestedKeepScene: keepScene } : {}),
     progress: null,
     source: { width: image.width, height: image.height, hasAlpha: image.hasAlpha },
     analysis,
@@ -311,7 +315,7 @@ export async function createFlipbook(
     createdAt: now,
     updatedAt: now,
   });
-  startWorker(id, (signal) => runPipeline(id, signal, { keepScene, fromReading: Boolean(analysis), action }), failWith);
+  if (!fromVideo) startWorker(id, (signal) => runPipeline(id, signal, { keepScene, fromReading: Boolean(analysis), action }), failWith);
   return flipbook;
 }
 
@@ -426,25 +430,27 @@ async function runPipeline(id: string, signal: AbortSignal, options: { keepScene
   const sourceFlat = await readFile(flipbookFiles.sourceFlat(id));
 
   const analyzed = flipbook.analysis ?? await services.analyze({ imagePng: sourceFlat, prompt: flipbook.prompt, flipbookId: id, signal });
-  const action = flipbook.poseId ? "idle" : options.action;
+  const fromVideo = Boolean(flipbook.motionReference && flipbook.sequence);
+  const action = fromVideo ? undefined : flipbook.poseId ? "idle" : options.action;
   const analysis = action ? { ...analyzed, requestedAction: action } : analyzed;
   if (signal.aborted) return;
-  const assessed = assessInput(analysis);
+  const assessed = assessInput(analysis, { fromVideo });
   if (!assessed.supported) {
     await workerUpdate(id, signal, (current) => ({ ...current, analysis, status: "unsupported", error: { code: "unsupported_animation", message: assessed.reason! } }));
     return;
   }
-  await workerUpdate(id, signal, (current) => ({ ...current, analysis, warnings: assessed.warnings, status: "planning", detail: flipbook.sequence ? `Planning ${flipbook.frames.length} drawings across ${flipbook.sequence.durationSeconds} seconds` : `Planning eight ${actionSpec(actionFor(analysis)).label} poses with Muse Spark` }));
+  const initialFrames = flipbook.sequence && !flipbook.plan ? sequenceSkeleton(flipbook.sequence) : null;
+  await workerUpdate(id, signal, (current) => ({ ...current, analysis, ...(initialFrames ? { frames: initialFrames, order: initialFrames.map((frame) => frame.id) } : {}), warnings: assessed.warnings, status: "planning", detail: flipbook.sequence ? `Planning ${initialFrames?.length ?? flipbook.frames.length} drawings across ${flipbook.sequence.durationSeconds} seconds` : `Planning eight ${actionSpec(actionFor(analysis)).label} poses with Muse Spark` }));
 
   const proposedPlan = options.retry && flipbook.plan ? flipbook.plan : flipbook.sequence
-    ? await services.planSequence({ analysis, prompt: flipbook.prompt, flipbookId: id, settings: flipbook.sequence, view: flipbook.requestedView, action, signal })
+    ? await services.planSequence({ analysis, prompt: flipbook.prompt, flipbookId: id, settings: flipbook.sequence, view: fromVideo ? undefined : flipbook.requestedView, action, guide: fromVideo ? (tick) => motionGuide(id, flipbook.motionReference!, tick) : undefined, signal })
     : await services.plan({ analysis, prompt: flipbook.prompt, flipbookId: id, imagePng: sourceFlat, poseId: flipbook.poseId, view: flipbook.requestedView, signal });
-  // The camera is user intent, not a model suggestion. Keep it even if a
-  // provider or an older injected planner omits the new plan field.
-  const cameraView = resolveCameraView(flipbook.requestedView, analysis, flipbook.prompt);
+  // Manual motion keeps the chosen camera; video motion takes its observed
+  // camera from the plan instead of imposing the illustration's orientation.
+  const cameraView = fromVideo ? proposedPlan.view ?? resolveCameraView(undefined, analysis) : resolveCameraView(flipbook.requestedView, analysis, flipbook.prompt);
   const plan = { ...proposedPlan, ...(flipbook.sequence ? { motionId: proposedPlan.motionId ?? randomUUID() } : {}), view: cameraView,
     poseId: compatiblePoseId(proposedPlan.poseId, proposedPlan.action, cameraView),
-    poses: proposedPlan.poses.map((pose) => ({ ...pose, referenceId: compatiblePoseId(pose.referenceId, proposedPlan.action, cameraView), description: phaseForView(pose.description, cameraView) })),
+    poses: proposedPlan.poses.map((pose) => ({ ...pose, referenceId: compatiblePoseId(pose.referenceId, proposedPlan.action, cameraView), description: fromVideo ? pose.description : phaseForView(pose.description, cameraView) })),
   };
   if (signal.aborted) return;
   await workerUpdate(id, signal, (current) => ({
@@ -692,6 +698,7 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
       const guideId = compatiblePoseId(flipbook.plan.poseId ?? flipbook.plan.poses[frame.poseIndex].referenceId, flipbook.plan.action, flipbook.plan.view ?? "side");
       const tick = flipbook.sequence ? Number(frame.phase.slice(7)) : -1;
       const guide = flipbook.motionReference ? await motionGuide(id, flipbook.motionReference, tick) : null;
+      if (flipbook.motionReference && !guide) throw new AppError("motion_reference_incomplete", 422, "The video sample for this drawing is missing. Apply the reference segment again.");
       const image = await services.draw({ reference: reference.png, neighbor, extras, identityReference, repair, temporalPair, motionGuide: guide ?? undefined, poseReference: guideId ? poseReferences.get(guideId) : undefined, requirePoseReference: Boolean(flipbook.poseId), analysis: flipbook.analysis, plan: flipbook.plan, index: frame.poseIndex, note: options.note, flipbookId: id, signal });
       if (signal.aborted) return;
       const version = newVersionId();
@@ -971,7 +978,7 @@ async function finalize(id: string, signal?: AbortSignal): Promise<Flipbook> {
       sprite: sprites.get(frame.id)!,
       stationaryColors: bodyColors.get(frame.id),
       timing: keyTiming.get(frame.id),
-    })), reference?.measure?.histogram ?? null, plan?.action, plan?.view, Boolean(flipbook.sequence), stationaryReference)
+    })), reference?.measure?.histogram ?? null, plan?.action, plan?.view, Boolean(flipbook.sequence), stationaryReference, Boolean(flipbook.motionReference))
     : new Map();
   const update = (current: Flipbook): Flipbook => ({
     ...current,
@@ -1041,12 +1048,13 @@ export async function retryPreparation(id: string, confirmExtra: boolean, gate?:
   assertFlipbookEnabled();
   const source = await getFlipbook(id);
   assertIdle(source);
-  if (source.cast.length || source.reference || !["failed", "canceled"].includes(source.status)) throw new AppError("nothing_to_retry", 409, "Generate missing drawings or correct a drawing to continue this animation.");
+  const rejectedVideo = source.status === "unsupported" && source.sequence && source.motionReference && source.analysis && source.analysis.characterCount > 0;
+  if (source.cast.length || source.reference || (!rejectedVideo && !["failed", "canceled"].includes(source.status))) throw new AppError("nothing_to_retry", 409, "Generate missing drawings or correct a drawing to continue this animation.");
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 });
   // Report a known allowance refusal before the worker starts so the UI can confirm it.
   const needsClean = source.analysis && decideReference(source.analysis, source.plan?.view).kind === "clean";
   if (needsClean && source.budget.used >= source.budget.limit && !confirmExtra) throw new AppError("budget_reached", 402, "Preparing this reference needs one more drawing. Confirm to continue.");
-  return startVisible(id, (current) => ({ ...current, status: "analyzing", detail: "Retrying animation preparation", error: null }), (signal) => runPipeline(id, signal, { keepScene: false, fromReading: false, retry: true, confirmExtra }));
+  return startVisible(id, (current) => ({ ...current, status: "analyzing", detail: "Retrying animation preparation", error: null }), (signal) => runPipeline(id, signal, { keepScene: source.requestedKeepScene ?? false, fromReading: false, retry: true, confirmExtra }));
 }
 
 /** Repair every flagged, finished drawing in one budgeted, cancelable run. */
@@ -1087,25 +1095,35 @@ export async function generateMissing(id: string, confirmExtra: boolean, gate?: 
 }
 
 function revisionOf(current: Flipbook) {
-  return { id: newVersionId(), createdAt: new Date().toISOString(), plan: current.plan!, frames: current.frames, order: current.order, alignment: current.alignment, motionReference: current.motionReference };
+  return { id: newVersionId(), createdAt: new Date().toISOString(), prompt: current.prompt, motionNote: current.motionNote, requestedView: current.requestedView, plan: current.plan!, frames: current.frames, order: current.order, alignment: current.alignment, motionReference: current.motionReference };
 }
 
 export async function reviseSequence(id: string, settings: SequenceSettings, gate?: PaidWorkGate, motion?: { reference: NonNullable<Flipbook["motionReference"]>; guide: (tick: number) => Promise<Buffer | null>; audio?: NonNullable<Flipbook["audio"]> }): Promise<Flipbook> {
   const source = await getFlipbook(id);
   assertIdle(source);
+  const parsed = SequenceSettingsSchema.parse(settings);
+  if (motion && source.motionSource === "video" && !source.plan) {
+    await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 });
+    const prepare = (current: Flipbook): Flipbook => ({ ...current, sequence: parsed, prompt: videoAnimationPrompt({ settings: parsed, start: motion.reference.start, note: source.motionNote }), motionReference: motion.reference, motionDraft: null, ...(motion.audio ? { audio: motion.audio } : {}), status: "analyzing", detail: "Preparing the character and the selected video movement", error: null });
+    return startVisible(id, prepare, async (signal) => {
+      await workerUpdate(id, signal, prepare);
+      await runPipeline(id, signal, { keepScene: source.requestedKeepScene ?? false, fromReading: false });
+    });
+  }
   assertDrawable(source);
   if (source.cast.length || !source.analysis) throw new AppError("sequence_not_supported", 409, "Choose a single character with a prepared reference.");
-  const parsed = SequenceSettingsSchema.parse(settings);
   if (!motion && source.motionReference && parsed.durationSeconds > source.motionReference.durationSeconds) throw new AppError("invalid_motion_trim", 400, "Choose a longer segment in Video movement reference before extending this sequence.");
   const retainTiming = !motion && source.sequence?.durationSeconds === parsed.durationSeconds;
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 0 });
   return startVisible(id, (current) => ({ ...current, status: "planning", detail: `Planning ${parsed.durationSeconds * parsed.drawingFps} timed drawings`, error: null }), async (signal) => {
+    const fromVideo = Boolean(motion || source.motionReference);
+    const prompt = fromVideo ? videoAnimationPrompt({ settings: parsed, start: (motion?.reference ?? source.motionReference!).start, note: source.motionNote }) : source.prompt;
     const eligible = retainTiming ? (source.revisions ?? []).filter((entry) => source.plan?.motionId && entry.plan.motionId === source.plan.motionId && entry.motionReference?.version === source.motionReference?.version) : [];
-    const planned = await services.planSequence({ analysis: source.analysis!, prompt: source.prompt, settings: parsed, flipbookId: id, view: source.requestedView, action: source.plan!.action === "ensemble" ? undefined : source.plan!.action, previous: retainTiming ? source.plan! : undefined, reusePoses: eligible.flatMap((entry) => entry.plan.poses), guide: motion?.guide ?? (source.motionReference ? (tick) => motionGuide(id, source.motionReference!, tick) : undefined), signal });
+    const planned = await services.planSequence({ analysis: source.analysis!, prompt, settings: parsed, flipbookId: id, view: fromVideo ? undefined : source.requestedView, action: fromVideo || source.plan!.action === "ensemble" ? undefined : source.plan!.action, previous: retainTiming ? source.plan! : undefined, reusePoses: eligible.flatMap((entry) => entry.plan.poses), guide: motion?.guide ?? (source.motionReference ? (tick) => motionGuide(id, source.motionReference!, tick) : undefined), signal });
     const plan = { ...planned, motionId: retainTiming ? source.plan?.motionId ?? randomUUID() : randomUUID() };
     const reusable = new Map(retainTiming ? [...eligible.flatMap((entry) => entry.frames), ...source.frames].map((frame) => [frame.id, frame] as const) : []);
     const frames = sequenceSkeleton(parsed).map((frame) => ({ ...(reusable.get(frame.id) ?? frame), poseIndex: frame.poseIndex, phase: frame.phase, label: plan.poses[frame.poseIndex].label }));
-    await workerUpdate(id, signal, (current) => ({ ...current, sequence: parsed, plan, frames, order: frames.map((frame) => frame.id), inbetweens: [], revisions: [...(current.revisions ?? []), revisionOf(source)].slice(-20), ...(motion ? { motionReference: motion.reference, ...(motion.audio ? { audio: motion.audio } : {}) } : {}), look: { settings: { ...(current.look?.settings ?? { aspect: "16:9", speed: 1 }), ...parsed, motion: "in_place", cycleSeconds: undefined, smoothing: 0 }, background: current.look?.background ?? { kind: "color", color: "#ffffff" } }, alignment: null, status: "reference_ready", detail: null, error: null }));
+    await workerUpdate(id, signal, (current) => ({ ...current, prompt, sequence: parsed, plan, frames, order: frames.map((frame) => frame.id), inbetweens: [], revisions: [...(current.revisions ?? []), revisionOf(source)].slice(-20), ...(motion ? { motionSource: "video" as const, requestedView: undefined, motionReference: motion.reference, motionDraft: null, ...(motion.audio ? { audio: motion.audio } : {}) } : {}), look: { settings: { ...(current.look?.settings ?? { aspect: "16:9", speed: 1 }), ...parsed, motion: "in_place", cycleSeconds: undefined, smoothing: 0 }, background: current.look?.background ?? { kind: "color", color: "#ffffff" } }, alignment: null, status: "reference_ready", detail: null, error: null }));
     await finalize(id, signal);
   });
 }
@@ -1115,7 +1133,7 @@ export async function restoreSequenceRevision(id: string, revisionId: string): P
   assertIdle(source);
   const selected = source.revisions?.find((entry) => entry.id === revisionId);
   if (!selected) throw new AppError("revision_not_found", 404, "That motion revision is no longer available.");
-  return updateFlipbook(id, (current) => ({ ...current, plan: selected.plan, sequence: selected.plan.mode === "sequence" ? SequenceSettingsSchema.parse(selected.plan) : undefined, frames: selected.frames, order: selected.order, alignment: selected.alignment, motionReference: selected.motionReference, inbetweens: [], look: current.look ? { ...current.look, settings: { ...current.look.settings, drawingFps: selected.plan.drawingFps, durationSeconds: selected.plan.durationSeconds, motion: selected.plan.motion } } : null, revisions: [...(current.revisions ?? []).filter((entry) => entry.id !== revisionId), revisionOf(current)].slice(-20), status: "ready", error: null }));
+  return updateFlipbook(id, (current) => ({ ...current, prompt: selected.prompt ?? current.prompt, motionNote: selected.motionNote, requestedView: selected.requestedView ?? (selected.motionReference ? undefined : selected.plan.view), motionSource: selected.motionReference ? "video" : undefined, plan: selected.plan, sequence: selected.plan.mode === "sequence" ? SequenceSettingsSchema.parse(selected.plan) : undefined, frames: selected.frames, order: selected.order, alignment: selected.alignment, motionReference: selected.motionReference, inbetweens: [], look: current.look ? { ...current.look, settings: { ...current.look.settings, drawingFps: selected.plan.drawingFps, durationSeconds: selected.plan.durationSeconds, motion: selected.plan.motion } } : null, revisions: [...(current.revisions ?? []).filter((entry) => entry.id !== revisionId), revisionOf(current)].slice(-20), status: "ready", error: null }));
 }
 
 export async function applyFrameAction(id: string, frameId: FrameId, action: FrameAction, gate?: PaidWorkGate): Promise<Flipbook> {
@@ -1436,6 +1454,8 @@ export async function removeBackgroundReference(id: string): Promise<Flipbook> {
 export async function generateBackground(id: string, input: { prompt?: string; confirmExtra: boolean }, gate?: PaidWorkGate): Promise<Flipbook> {
   assertFlipbookEnabled();
   const flipbook = await getFlipbook(id);
+  assertIdle(flipbook);
+  assertDrawable(flipbook);
   // The drawing, then SAM on its strip for the depth layers.
   assertImageAllowance(await getFlipbook(id), 1, input.confirmExtra);
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 + FAR_CONCEPTS.length });
@@ -1597,7 +1617,7 @@ export async function reviewFlipbook(id: string): Promise<Flipbook> {
     const page = frames.slice(start, start + pageSize);
     const sprites = await Promise.all(page.map((frame) => readFile(flipbookFiles.sprite(id, frame.id, alignment.transforms[frame.id]!.key))));
     const sheet = await contactSheet(sprites, { width: alignment.cellWidth, height: alignment.cellHeight });
-    const result = await services.review({ reference: reference.png, sheet, labels: page.map((frame) => flipbook.sequence ? `${frame.poseIndex + 1} at ${Number(frame.phase.slice(7)) / 24} s: ${frame.label}` : frame.label), analysis: flipbook.analysis, direction: cameraDescription(flipbook.plan?.view ?? "side", flipbook.plan?.direction ?? "right"), action: flipbook.plan?.action, flipbookId: id, finite: Boolean(flipbook.sequence) });
+    const result = await services.review({ reference: reference.png, sheet, labels: page.map((frame) => flipbook.sequence ? `${frame.poseIndex + 1} at ${Number(frame.phase.slice(7)) / 24} s: ${frame.label}` : frame.label), analysis: flipbook.analysis, direction: cameraDescription(flipbook.plan?.view ?? "side", flipbook.plan?.direction ?? "right"), action: flipbook.plan?.action, flipbookId: id, finite: Boolean(flipbook.sequence), fromVideo: Boolean(flipbook.motionReference) });
     results.push(result);
     page.forEach((frame, index) => reviewed.set(frame.id, { version: frame.version, review: result.frames.get(index) ?? null }));
   }

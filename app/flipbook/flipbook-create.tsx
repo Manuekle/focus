@@ -33,6 +33,8 @@ import { FlipbookApiError, flipbookApi, uploadCharacter, type UploadHandle } fro
 import { Select } from "../../components/ui/select";
 import { CharacterPicker } from "./character-picker";
 import { SequenceFields } from "./sequence-controls";
+import { MotionVideoInput, validMotionVideo, type MotionVideoSelection } from "./motion-video-input";
+import { descriptionAnimationPrompt, videoAnimationPrompt } from "../../shared/animation-prompt";
 import { DEFAULT_SEQUENCE, type SequenceSettings } from "../../shared/sequence";
 import { LivingPanel, type LivingPreview } from "./living-panel";
 import shell from "../editor/studio.module.css";
@@ -53,13 +55,13 @@ const MODES: readonly { id: Mode; label: string; note: string }[] = [
 ];
 
 const ACTIONS: readonly { action: CycleAction; label: string; note: string }[] = [
-  { action: "walk", label: "Walk", note: "A relaxed stride in eight drawings, with the classic up-and-down bob." },
+  { action: "walk", label: "Walk", note: "A relaxed stride with a natural up-and-down bob." },
   { action: "run", label: "Run", note: "Fast and leaning forward; both feet leave the ground mid-stride." },
   { action: "jump", label: "Jump", note: "Crouch, push off, tuck at the top, land and recover, on the spot." },
   { action: "fight", label: "Fight", note: "Shadowboxing in place: guard, a jab, a cross, back to guard." },
   { action: "wave", label: "Wave", note: "Raises a hand and waves hello, then lowers it again." },
   { action: "idle", label: "Idle", note: "Breathes, blinks and gently sways. Describe a posture, or keep the one in your drawing." },
-  { action: "dance", label: "Dance", note: "A two-second dance cycle with side steps, arm swings and a rhythmic bounce. Add in-betweens for smoother movement; exports can repeat it for 20 seconds." },
+  { action: "dance", label: "Dance", note: "Side steps, arm swings and a rhythmic bounce. Describe the style below." },
 ];
 
 /** Walks and runs can travel; the other motions stay on the spot. */
@@ -73,7 +75,7 @@ const DIRECTIONS: readonly { id: Direction; label: string }[] = [
 
 const DETAIL_MAX = 400;
 
-export type CreateOptions = { readonly motionFile?: File; readonly sequence?: SequenceSettings; readonly action?: CycleAction; readonly keepScene?: boolean; readonly characterSource?: CharacterSource; readonly view?: ViewPreference };
+export type CreateOptions = { readonly motionFile?: File; readonly motionTrim?: { start: number; durationSeconds: number; useAudio: boolean }; readonly motionSource?: "video"; readonly motionNote?: string; readonly sequence?: SequenceSettings; readonly action?: CycleAction; readonly keepScene?: boolean; readonly characterSource?: CharacterSource; readonly view?: ViewPreference };
 
 const VIEW_LABEL: Record<ImageLook["analysis"]["view"], string> = { side: "Side view", three_quarter: "Three-quarter view", front: "Front view", back: "Back view", high: "View from above", low: "View from below", unclear: "View unclear" };
 
@@ -92,7 +94,7 @@ const PLACEHOLDER: Record<CycleAction, string> = {
   fight: "How does it fight? e.g. “quick and light on its feet”",
   wave: "How does it wave? e.g. “shy, a small wave”",
   idle: "How does it rest? e.g. “sitting calmly, slow breathing”",
-  dance: "How does it dance? e.g. “side steps, arm swings and a gentle bounce, 20 seconds”",
+  dance: "How does it dance? e.g. “side steps, arm swings and a gentle bounce”",
 };
 
 const IDEAS: Record<CycleAction, readonly string[]> = {
@@ -102,7 +104,7 @@ const IDEAS: Record<CycleAction, readonly string[]> = {
   fight: ["quick and light on its feet", "heavy, powerful punches", "a confident boxer"],
   wave: ["an excited, big wave", "shy, a small wave", "waving goodbye"],
   idle: ["sitting calmly, slow breathing", "crouching, looking around", "proud, chest out"],
-  dance: ["side steps and flowing arm swings, 20 seconds", "playful hip sways and a gentle bounce", "a relaxed two-second dance cycle"],
+  dance: ["side steps and flowing arm swings", "playful hip sways and a gentle bounce", "a relaxed, graceful dance"],
 };
 
 /** The instruction the pickers stand for; the analysis reads it like typed text. */
@@ -152,10 +154,11 @@ export function FlipbookCreate({
   const [layer, setLayer] = useState<"original" | "character" | "scene">("original");
   const [mode, setMode] = useState<Mode>("sequence");
   const [sequence, setSequence] = useState<SequenceSettings>(DEFAULT_SEQUENCE);
-  const [motionFile, setMotionFile] = useState<File | undefined>();
+  const [motionSource, setMotionSource] = useState<"description" | "video">("description");
+  const [motionVideo, setMotionVideo] = useState<MotionVideoSelection>();
+  const [videoDetail, setVideoDetail] = useState("");
   const [living, setLiving] = useState<LivingPreview>({ video: null, busy: false, highlight: null });
   const touched = useRef(false);
-  const motionInput = useRef<HTMLInputElement>(null);
   const handle = useRef<UploadHandle | null>(null);
 
   useEffect(() => () => handle.current?.abort(), []);
@@ -224,20 +227,23 @@ export function FlipbookCreate({
   /** The side to face when a motion stays on the spot: the drawing's own, when it has one. */
   const facing = look?.analysis.facing === "left" ? "left" : "right";
   const lateralView = cameraView === "side" || cameraView === "three_quarter" || (cameraView === "original" && Boolean(look && ["side", "three_quarter"].includes(look.analysis.view)));
-  const prompt = instruction(action, direction, detail, facing, cameraView, lateralView);
-  const canSubmit = Boolean(image) && !creating && !blockedReason;
+  const fromVideo = mode === "sequence" && motionSource === "video";
+  const sequenceSettings = { ...sequence, ...(fromVideo && motionVideo ? { durationSeconds: motionVideo.durationSeconds } : {}) };
+  const motionInstruction = instruction(action, direction, detail, facing, cameraView, lateralView);
+  const prompt = fromVideo ? videoAnimationPrompt({ settings: sequenceSettings, start: motionVideo?.start ?? 0, note: videoDetail }) : descriptionAnimationPrompt(motionInstruction, mode === "sequence" ? sequence : undefined);
+  const canSubmit = Boolean(image) && !creating && !blockedReason && (!fromVideo || validMotionVideo(motionVideo));
   const submit = () => {
     if (!image || !canSubmit || mode === "living") return;
     // With a reading, the picked motion says which action it is, and its character facts are reused.
-    onCreate(image, prompt, { action, view: cameraView, ...(mode === "sequence" ? { sequence, motionFile } : {}), keepScene: Boolean(look?.layers.scene && keepScene), ...(fromCharacter ? { characterSource: initialCharacter!.source } : {}) });
+    onCreate(image, prompt, { ...(fromVideo ? { motionSource: "video", motionNote: videoDetail, motionFile: motionVideo!.file, motionTrim: { start: motionVideo!.start, durationSeconds: motionVideo!.durationSeconds, useAudio: motionVideo!.useAudio } } : { action, view: cameraView }), ...(mode === "sequence" ? { sequence: sequenceSettings } : {}), keepScene: Boolean(look?.layers.scene && keepScene), ...(fromCharacter ? { characterSource: initialCharacter!.source } : {}) });
   };
   const layerSrc = image && layer !== "original" && mode === "cycle" ? imageUrls.layer(image.id, layer) : image?.url;
   const shown = mode === "cycle" ? layer : "original";
 
   if (image) return (
-    <div className={view.editor} data-variant="page">
+    <div className={cn(view.editor, styles.createWorkspace)} data-variant="page">
       <h1 id="flipbook-title" className="sr-only">Make your drawing move</h1>
-      <section aria-label="Drawing" className={view.preview}>
+      <section aria-label="Drawing" className={cn(view.preview, styles.createPreview)}>
         <figure className={styles.drawingFigure}>
           <div className={styles.drawingStage} data-transparent={image.hasAlpha || shown !== "original" || undefined}>
             <div className={styles.mediaBox}>
@@ -290,147 +296,169 @@ export function FlipbookCreate({
             <HugeiconsIcon icon={ArrowLeftRightIcon} size={14} strokeWidth={1.5} />New drawing
           </Button>
         </div>
+        <section className={styles.reading} aria-live="polite" aria-busy={!look && !lookFailed}>
+          <span className={composer.groupLabel}><HugeiconsIcon icon={AiSearch02Icon} size={12} strokeWidth={1.75} />{fromCharacter ? "From your characters" : look ? "In this drawing" : lookFailed ? "Pick a motion" : "Reading your drawing…"}</span>
+          {fromCharacter ? <p className={styles.hint}>This version stays with the animation. Later designs won’t change it. <Link href={`/characters?c=${initialCharacter!.source.characterId}`} className="text-primary hover:underline">Back to {initialCharacter!.name}</Link></p> : look ? (
+            <>
+              {look.summary ? <p className={styles.readingSummary}>{look.summary}</p> : null}
+              <div className={composer.chips}>
+                <Badge size="sm">{look.analysis.subject}</Badge>
+                {look.analysis.characterCount > 1 ? <Badge size="sm">{look.analysis.characterCount} characters · animates one</Badge> : null}
+                <Badge size="sm">{VIEW_LABEL[look.analysis.view]}</Badge>
+                <Badge size="sm">{look.setting || "No background"}</Badge>
+              </div>
+              {/* The caveats are about redrawing; animating as is redraws nothing. */}
+              {look.warnings.length && mode !== "living" ? (
+                <ul className={styles.readingNotes}>
+                  {look.warnings.map((warning) => <li key={warning}>{warning}</li>)}
+                </ul>
+              ) : null}
+            </>
+          ) : lookFailed ? (
+            <p className={styles.hint}>Focus couldn’t read this drawing right now. Pick a motion; it will look at the drawing when you create.</p>
+          ) : (
+            <div className={styles.readingSkeleton}>
+              <Skeleton shape="text" style={{ width: "92%" }} />
+              <Skeleton shape="text" style={{ width: "64%" }} delay={60} />
+              <div className={composer.chips}>
+                {[72, 96, 132].map((width, index) => <Skeleton key={width} shape="round" style={{ width, height: 24 }} delay={120 + index * 50} />)}
+              </div>
+            </div>
+          )}
+        </section>
       </section>
 
-      <aside className={view.controls}>
-        <form className={composer.composer} onSubmit={(event) => { event.preventDefault(); submit(); }}>
-          <section className={styles.reading} aria-live="polite" aria-busy={!look && !lookFailed}>
-            <span className={composer.groupLabel}><HugeiconsIcon icon={AiSearch02Icon} size={12} strokeWidth={1.75} />{fromCharacter ? "From your characters" : look ? "In this drawing" : lookFailed ? "Pick a motion" : "Reading your drawing…"}</span>
-            {fromCharacter ? <><p className={styles.readingSummary}>{image.originalName}</p><p className={styles.hint}>This version is kept with the animation. New character designs won’t change it. <Link href={`/characters?c=${initialCharacter!.source.characterId}`} className="text-primary hover:underline">Back to {initialCharacter!.name}</Link></p></> : look ? (
-              <>
-                {look.summary ? <p className={styles.readingSummary}>{look.summary}</p> : null}
-                <div className={composer.chips}>
-                  <Badge size="sm">{look.analysis.subject}</Badge>
-                  {look.analysis.characterCount > 1 ? <Badge size="sm">{look.analysis.characterCount} characters · animates one</Badge> : null}
-                  <Badge size="sm">{VIEW_LABEL[look.analysis.view]}</Badge>
-                  <Badge size="sm">{look.setting || "No background"}</Badge>
-                </div>
-                {/* The caveats are about redrawing; animating as is redraws nothing. */}
-                {look.warnings.length && mode !== "living" ? (
-                  <ul className={styles.readingNotes}>
-                    {look.warnings.map((warning) => <li key={warning}>{warning}</li>)}
-                  </ul>
-                ) : null}
-              </>
-            ) : lookFailed ? (
-              <p className={styles.hint}>Focus couldn’t read this drawing right now. Pick a motion; it will look at the drawing when you create.</p>
-            ) : (
-              <div className={styles.readingSkeleton}>
-                <Skeleton shape="text" style={{ width: "92%" }} />
-                <Skeleton shape="text" style={{ width: "64%" }} delay={60} />
-                <div className={composer.chips}>
-                  {[72, 96, 132].map((width, index) => <Skeleton key={width} shape="round" style={{ width, height: 24 }} delay={120 + index * 50} />)}
-                </div>
-              </div>
-            )}
+      <aside className={cn(view.controls, styles.createControls)}>
+        <form className={styles.createForm} onSubmit={(event) => { event.preventDefault(); submit(); }}>
+          <section className={styles.createCard} aria-labelledby="animation-setup-title">
+            <h2 id="animation-setup-title" className={styles.panelTitle}>Animation setup</h2>
+            <fieldset className={composer.effects}>
+              <legend className="sr-only">How it moves</legend>
+              <SlidingTabs className={composer.tabs} tabs={MODES.filter((entry) => !fromCharacter || entry.id !== "living").map((entry) => ({ id: entry.id, label: entry.label }))} value={mode} onValueChange={(id) => { touched.current = true; setMode(id as Mode); }} />
+              <p className={composer.summary} aria-live="polite">{MODES.find((entry) => entry.id === mode)!.note}</p>
+            </fieldset>
+
+            {mode === "sequence" ? <>
+              <fieldset className={composer.effects}>
+                <legend className={composer.label}>Movement source</legend>
+                <SlidingTabs className={composer.tabs} tabs={[{ id: "description", label: "Describe motion" }, { id: "video", label: "From a video" }]} value={motionSource} onValueChange={(id) => setMotionSource(id as typeof motionSource)} />
+              </fieldset>
+              {fromVideo ? <MotionVideoInput value={motionVideo} disabled={creating} onChange={setMotionVideo} /> : null}
+              <div className={fromVideo ? styles.controlField : styles.createTiming}><SequenceFields value={sequence} onChange={setSequence} disabled={creating} compact videoDuration={fromVideo ? motionVideo?.durationSeconds ?? sequence.durationSeconds : undefined} /></div>
+            </> : null}
           </section>
 
-          {<fieldset className={composer.effects}>
-            <legend className="sr-only">How it moves</legend>
-            <SlidingTabs className={composer.tabs} tabs={MODES.filter((entry) => !fromCharacter || entry.id !== "living").map((entry) => ({ id: entry.id, label: entry.label }))} value={mode} onValueChange={(id) => { touched.current = true; setMode(id as Mode); }} />
-            <p className={composer.summary} aria-live="polite">{MODES.find((entry) => entry.id === mode)!.note}</p>
-          </fieldset>}
-
-          {mode === "living" ? <LivingPanel image={image} onPreview={setLiving} /> : <>
-          {mode === "sequence" ? <SequenceFields value={sequence} onChange={setSequence} disabled={creating} /> : null}
-          {mode === "sequence" ? <div className={styles.controlField}>
-            <span className={composer.label}>Movement reference video (optional)</span>
-            <input ref={motionInput} type="file" accept="video/mp4,video/quicktime,.mp4,.mov" disabled={creating} className="sr-only" tabIndex={-1} aria-hidden onChange={(event) => { setMotionFile(event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} />
-            <div className={styles.buttonRow}>
-              <Button type="button" size="sm" variant="outline" disabled={creating} onClick={() => motionInput.current?.click()}>{motionFile ? "Replace reference video" : "Choose reference video"}</Button>
-              {motionFile ? <Button type="button" size="sm" variant="ghost" disabled={creating} onClick={() => setMotionFile(undefined)}>Remove video</Button> : null}
+          {mode === "living" ? <section className={styles.createCard} aria-label="Picture motion"><LivingPanel image={image} onPreview={setLiving} /></section> : <>
+          {fromVideo ? <section className={styles.createCard} aria-labelledby="video-movement-title">
+            <h2 id="video-movement-title" className={styles.panelTitle}>Video movement</h2>
+            <p className={styles.hint}>Poses, rhythm, orientation and movement across the frame follow your video. Your illustration’s face, outfit, colors and drawing style stay the same.</p>
+            <div className={composer.instruction}>
+              <label htmlFor="flipbook-video-detail" className={composer.label}>Additional direction (optional)</label>
+              <div className={composer.field}>
+                <textarea id="flipbook-video-detail" className={cn(composer.textarea, styles.detailInput)} rows={3} maxLength={DETAIL_MAX} placeholder="e.g. Keep the hand gestures especially clear" value={videoDetail} onChange={(event) => setVideoDetail(event.target.value)} />
+              </div>
+              <p className={styles.hint}>These notes refine the animation; they do not replace the video’s action or timing.</p>
             </div>
-            {motionFile ? <p className={styles.uploadName}>{motionFile.name}</p> : null}
-            <p className={styles.hint}>You can trim and apply the video in the animation editor. The first motion plan uses your written instruction.</p>
-          </div> : null}
-          <div className={composer.group}>
-            <label htmlFor="flipbook-camera-view" className={composer.label}>Camera view</label>
-            <Select id="flipbook-camera-view" value={cameraView} options={VIEW_OPTIONS} onValueChange={(value) => { touched.current = true; const next = value as ViewPreference; setCameraView(next); if (["front", "back", "high", "low"].includes(next) && travels(action)) setDirection("in_place"); }} />
-            <p className={styles.hint}>{cameraView === "original" ? "Keeps your character’s view. It won’t automatically turn into a side profile." : "The selected view stays fixed through every drawing. New angles may reveal details absent from the reference."}</p>
-          </div>
-          <fieldset className={composer.effects}>
-            <legend className="sr-only">Choose a motion</legend>
-            <SlidingTabs
-              className={composer.tabs}
-              tabs={ACTIONS.map((entry) => ({ id: entry.action, label: entry.label }))}
-              value={action}
-              onValueChange={(id) => { touched.current = true; setAction(id as CycleAction); if (!travels(id as CycleAction) && direction === "in_place") setDirection(facing); }}
-            />
-            <p className={composer.summary} aria-live="polite">{ACTIONS.find((entry) => entry.action === action)!.note}</p>
-          </fieldset>
-
-          {(travels(action) || lateralView) && <fieldset className={composer.effects}>
-            <legend className={composer.label}>{travels(action) ? "Screen movement" : "Facing"}</legend>
-            <SlidingTabs
-              key={travels(action) ? "direction" : "facing"}
-              className={composer.tabs}
-              tabs={(travels(action) ? DIRECTIONS : DIRECTIONS.filter((entry) => entry.id !== "in_place")).map((entry) => ({ id: entry.id, label: entry.label }))}
-              value={direction}
-              onValueChange={(id) => { touched.current = true; setDirection(id as Direction); }}
-            />
-          </fieldset>}
-
-          <div className={composer.instruction}>
-            <label htmlFor="flipbook-detail" className={composer.label}>Describe the motion</label>
-            <div className={composer.field} data-filled={detail ? "" : undefined}>
-              <textarea
-                id="flipbook-detail"
-                className={cn(composer.textarea, styles.detailInput)}
-                rows={3}
-                maxLength={DETAIL_MAX}
-                placeholder={PLACEHOLDER[action]}
-                value={detail}
-                onChange={(event) => { touched.current = true; setDetail(event.target.value); }}
-                onKeyDown={(event) => {
-                  if (event.nativeEvent.isComposing) return;
-                  if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
-                }}
+          </section> : <section className={styles.createCard} aria-labelledby="motion-direction-title">
+            <h2 id="motion-direction-title" className={styles.panelTitle}>Motion & direction</h2>
+            <fieldset className={composer.effects}>
+              <legend className="sr-only">Choose a motion</legend>
+              <SlidingTabs
+                className={composer.tabs}
+                tabs={ACTIONS.map((entry) => ({ id: entry.action, label: entry.label }))}
+                value={action}
+                onValueChange={(id) => { touched.current = true; setAction(id as CycleAction); if (!travels(id as CycleAction) && direction === "in_place") setDirection(facing); }}
               />
-              <div className={composer.hint}>
-                <span className={composer.hintKeys}><kbd>Enter</kbd> to create · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line</span>
-                <span className="tabular-nums">{detail.length}/{DETAIL_MAX}</span>
+              <p className={composer.summary} aria-live="polite">{ACTIONS.find((entry) => entry.action === action)!.note}</p>
+            </fieldset>
+
+            <div className={styles.createFraming}>
+              <div className={composer.group}>
+                <label htmlFor="flipbook-camera-view" className={composer.label}>Camera view</label>
+                <Select id="flipbook-camera-view" value={cameraView} options={VIEW_OPTIONS} onValueChange={(value) => { touched.current = true; const next = value as ViewPreference; setCameraView(next); if (["front", "back", "high", "low"].includes(next) && travels(action)) setDirection("in_place"); }} />
+              </div>
+              {(travels(action) || lateralView) && <div className={composer.group} role="group" aria-labelledby="flipbook-direction-label">
+                <span id="flipbook-direction-label" className={composer.label}>{travels(action) ? "Screen movement" : "Facing"}</span>
+                <SlidingTabs
+                  key={travels(action) ? "direction" : "facing"}
+                  className={composer.tabs}
+                  tabs={(travels(action) ? DIRECTIONS : DIRECTIONS.filter((entry) => entry.id !== "in_place")).map((entry) => ({ id: entry.id, label: entry.label }))}
+                  value={direction}
+                  onValueChange={(id) => { touched.current = true; setDirection(id as Direction); }}
+                />
+              </div>}
+            </div>
+            <p className={styles.hint}>{cameraView === "original" ? "Keeps your character’s view. It won’t automatically turn into a side profile." : "The selected view stays fixed through every drawing. New angles may reveal details absent from the reference."}</p>
+
+            <div className={composer.instruction}>
+              <label htmlFor="flipbook-detail" className={composer.label}>Describe the motion</label>
+              <div className={composer.field} data-filled={detail ? "" : undefined}>
+                <textarea
+                  id="flipbook-detail"
+                  className={cn(composer.textarea, styles.detailInput)}
+                  rows={3}
+                  maxLength={DETAIL_MAX}
+                  placeholder={PLACEHOLDER[action]}
+                  value={detail}
+                  onChange={(event) => { touched.current = true; setDetail(event.target.value); }}
+                  onKeyDown={(event) => {
+                    if (event.nativeEvent.isComposing) return;
+                    if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); }
+                  }}
+                />
+                <div className={composer.hint}>
+                  <span className={composer.hintKeys}><kbd>Enter</kbd> to create · <kbd>Shift</kbd>+<kbd>Enter</kbd> for a new line</span>
+                  <span className="tabular-nums">{detail.length}/{DETAIL_MAX}</span>
+                </div>
               </div>
             </div>
-          </div>
 
-          <div className={composer.ideas}>
-            {look?.ideas.length ? (
-              <div className={composer.group} role="group" aria-label="Ideas for this drawing">
-                <span className={composer.groupLabel}><HugeiconsIcon icon={AiSearch02Icon} size={12} strokeWidth={1.75} />Ideas for this drawing</span>
-                <div className={composer.chips}>
-                  {look.ideas.map((idea) => (
-                    <SuggestionChip size="xs" key={`${idea.action}-${idea.direction}-${idea.detail}`} onClick={() => pickIdea(idea)} className={composer.chip}>{ideaLabel(idea)}</SuggestionChip>
-                  ))}
+            <div className={composer.ideas}>
+              {look?.ideas.length ? (
+                <div className={composer.group} role="group" aria-label="Ideas for this drawing">
+                  <span className={composer.groupLabel}><HugeiconsIcon icon={AiSearch02Icon} size={12} strokeWidth={1.75} />Ideas for this drawing</span>
+                  <div className={composer.chips}>
+                    {look.ideas.map((idea) => (
+                      <SuggestionChip size="xs" key={`${idea.action}-${idea.direction}-${idea.detail}`} onClick={() => pickIdea(idea)} className={composer.chip}>{ideaLabel(idea)}</SuggestionChip>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            ) : (
-              <div className={composer.group} role="group" aria-label="Ideas for this motion">
-                <span className={composer.groupLabel}><HugeiconsIcon icon={AiSearch02Icon} size={12} strokeWidth={1.75} />Try</span>
-                <div className={composer.chips}>
-                  {IDEAS[action].map((idea) => (
-                    <SuggestionChip size="xs" key={idea} onClick={() => { touched.current = true; setDetail(idea); }} className={composer.chip}>{idea}</SuggestionChip>
-                  ))}
+              ) : (
+                <div className={composer.group} role="group" aria-label="Ideas for this motion">
+                  <span className={composer.groupLabel}><HugeiconsIcon icon={AiSearch02Icon} size={12} strokeWidth={1.75} />Try</span>
+                  <div className={composer.chips}>
+                    {IDEAS[action].map((idea) => (
+                      <SuggestionChip size="xs" key={idea} onClick={() => { touched.current = true; setDetail(idea); }} className={composer.chip}>{idea}</SuggestionChip>
+                    ))}
+                  </div>
                 </div>
-              </div>
-            )}
-            {look?.layers.scene ? (
-              <label className={styles.keepScene}>
-                <span className="min-w-0">
-                  <span className="block text-xs font-medium text-foreground">Keep the scene as the background</span>
-                  <span className="block text-[11px] leading-4 text-muted-foreground">Focus redraws it without the character (1 drawing), so it can stay still or move behind the animation.</span>
-                </span>
-                <Switch checked={keepScene} onCheckedChange={setKeepScene} label="Keep the scene as the background" />
-              </label>
-            ) : null}
-            <p className={composer.groupLabel}>Focus will animate “{prompt}”</p>
-          </div>
+              )}
+              {look?.layers.scene ? (
+                <label className={styles.keepScene}>
+                  <span className="min-w-0">
+                    <span className="block text-xs font-medium text-foreground">Keep the scene as the background</span>
+                    <span className="block text-[11px] leading-4 text-muted-foreground">Focus redraws it without the character (1 drawing), so it can stay still or move behind the animation.</span>
+                  </span>
+                  <Switch checked={keepScene} onCheckedChange={setKeepScene} label="Keep the scene as the background" />
+                </label>
+              ) : null}
+            </div>
 
-          <div className={composer.submit}>
-            <Button className={composer.generate} type="submit" variant="ai" size="lg" disabled={!canSubmit} aria-busy={creating || undefined}>
-              {creating ? <Spinner /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={16} strokeWidth={1.75} />}
-              {mode === "sequence" ? "Prepare continuous animation" : "Create animation"}
-            </Button>
-            {blockedReason ? <p className={composer.blocked}>{blockedReason}</p> : null}
+          </section>}
+
+          <div className={styles.createFooter}>
+            <p className={styles.hint}>{fromVideo ? "The selected video segment will guide this animation." : `Focus will animate “${motionInstruction}”`}</p>
+            <details className={styles.createDisclosure}>
+              <summary>Review animation instructions</summary>
+              <p className={styles.promptPreview}>{prompt}</p>
+            </details>
+            <div className={styles.createSubmit}>
+              <Button className={composer.generate} type="submit" variant="ai" size="lg" disabled={!canSubmit} aria-busy={creating || undefined}>
+                {creating ? <Spinner /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={16} strokeWidth={1.75} />}
+                {mode === "sequence" ? "Prepare continuous animation" : "Create animation"}
+              </Button>
+              {blockedReason ? <p className={composer.blocked}>{blockedReason}</p> : null}
+            </div>
           </div>
           </>}
         </form>

@@ -102,12 +102,17 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
     if (outOfFreeEdits) return setLogin("quota");
     setCreating(true);
     try {
-      const { motionFile, ...requestOptions } = options;
+      const { motionFile, motionTrim, ...requestOptions } = options;
       const next: Flipbook = await flipbookApi.create(image.id, prompt, requestOptions);
       setFlipbook(next);
       if (motionFile) {
-        try { setFlipbook(await flipbookApi.uploadMotion(next.id, motionFile)); }
-        catch (error) { toast({ title: "Animation prepared; video upload failed", description: error instanceof Error ? error.message : "Upload the reference again in the editor.", status: "error" }); }
+        try {
+          const uploaded = await flipbookApi.uploadMotion(next.id, motionFile);
+          setFlipbook(uploaded);
+          if (!uploaded.motionDraft || !motionTrim) throw new Error("Choose and apply the video segment in Video movement reference.");
+          setFlipbook(await flipbookApi.attachMotion(next.id, { version: uploaded.motionDraft.version, ...motionTrim }));
+        }
+        catch (error) { toast({ title: "Video movement could not be prepared", description: error instanceof Error ? error.message : "Upload and apply the reference again in the editor.", status: "error" }); }
       }
       void refreshSession();
     } catch (error) {
@@ -252,7 +257,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
           <SidebarActivity />
         </aside>
 
-        <ScrollArea as="main" className={cn(shell.main, styles.main)} viewportClassName={styles.mainViewport} contentClassName={cn(styles.mainContent, "pt-4")}>
+        <ScrollArea key={flipbook?.id ?? "create"} as="main" className={cn(shell.main, styles.main)} viewportClassName={styles.mainViewport} contentClassName={cn(styles.mainContent, "pt-4")}>
           {pollError ? <p className={styles.hint} data-invalid="" role="status">{pollError}</p> : null}
           {!together && characterSource && !flipbook && importError ? <p className={styles.hint} role="alert">{importError} <Link href="/characters">Open my characters</Link></p> : !together && characterSource && !flipbook && !imported ? <FlipbookSkeleton /> : flipbookId && !flipbook && !loadError ? (
             <FlipbookSkeleton />

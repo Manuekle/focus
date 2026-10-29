@@ -11,15 +11,20 @@ export const MOTION_CONTINUITY_RULES = [
   "One drawing may be held for at most 125 ms (three 24-fps ticks). Advance the intended movement before that limit; a subtle blink or breathing change is valid only when requested. Never duplicate a pose for longer to fill time, and never add random noise or color changes to disguise a duplicate.",
 ].join("\n");
 
-export function drawingContinuityPrompt(plan: FlipbookPlan, index: number): string {
+export function motionContinuityRules(fromVideo = false): string {
+  if (!fromVideo) return MOTION_CONTINUITY_RULES;
+  return MOTION_CONTINUITY_RULES.split("\n").filter((line) => !line.startsWith("One drawing may be held")).map((line) => line.replace("Plan anticipation, action, follow-through and settling as one continuous performance.", "Follow the recorded performance, including its genuine pauses; do not add anticipation, recovery or gestures absent from the video.")).concat("Preserve recorded holds at their actual times; do not add blinks, breathing, jitter or unrelated movement to disguise a pause.").join("\n");
+}
+
+export function drawingContinuityPrompt(plan: FlipbookPlan, index: number, fromVideo = false): string {
   const previous = plan.poses[index - 1];
   const current = plan.poses[index];
   const next = plan.poses[index + 1];
   return [
     "Animation continuity contract:",
-    MOTION_CONTINUITY_RULES,
+    motionContinuityRules(fromVideo),
     "Keep each character's identity, outfit, palette, markings, line weight and shading fixed to its own immutable character reference. Generated neighbors establish motion, never new design details. A clean intermediate drawing is required, without crossfades, ghosting or blended anatomy.",
-    "During repair, retain the parts of the current pose that match the plan. If an overlong hold was flagged, the duplicated pose is itself the error: advance to this timestamp's planned pose along the established path instead of preserving that duplicate or inventing a different gesture.",
+    fromVideo ? "During repair, match the planned video posture at this timestamp. A genuine pause is intentional; do not change it merely because neighboring drawings are similar." : "During repair, retain the parts of the current pose that match the plan. If an overlong hold was flagged, the duplicated pose is itself the error: advance to this timestamp's planned pose along the established path instead of preserving that duplicate or inventing a different gesture.",
     plan.motionOutline ? `Full action: ${plan.motionOutline}` : "",
     previous ? `Previous planned pose (${previous.phase}): ${previous.description}` : "This is the first pose: establish the camera, proportions and support for the entire action.",
     `Draw this planned pose (${current.phase}): ${current.description}`,

@@ -13,8 +13,8 @@ test("signed-in character uploads enforce origins, file limits and the storage b
   await writeFile(path.join(DATA, "users", `${id}.json`), JSON.stringify({ id, provider: "facebook", providerId: `test-${id}`, name: "Upload check", avatarUrl: null, email: null, simulated: true, createdAt: new Date().toISOString() }));
   const body = `${id}.${Date.now() + 60_000}`;
   const token = `${body}.${createHmac("sha256", SECRET).update(body).digest("base64url")}`;
-  const headers = { origin: baseURL!, cookie: `focus_session=${token}`, "Content-Type": "image/jpeg", "x-focus-filename": "upload-check.jpeg" };
-  const png = await readFile(path.join(import.meta.dirname, "..", "public", "characters", "reze.jpeg"));
+  const headers = { origin: baseURL!, cookie: `focus_session=${token}`, "Content-Type": "image/png", "x-focus-filename": "upload-check.png" };
+  const png = await readFile(path.join(import.meta.dirname, "..", "public", "characters", "ichika.png"));
   const uploaded = await request.post("/api/characters", { headers, data: png });
   expect(uploaded.status()).toBe(201);
   const character = await uploaded.json();

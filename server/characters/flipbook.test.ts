@@ -48,24 +48,24 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-it("copies the selected Reze design and her original into Flipbook, independent of later changes and upload expiry", async () => {
-  const reze = await readFile(
-    path.join(process.cwd(), "public/characters/reze.jpeg"),
+it("copies the selected Ichika design and her original into Flipbook, independent of later changes and upload expiry", async () => {
+  const ichika = await readFile(
+    path.join(process.cwd(), "public/characters/ichika.png"),
   );
   const character = await createCharacter(ownerId, {
-    name: "Reze",
-    png: reze,
-    fileName: "reze.jpeg",
-    preset: "reze",
+    name: "Ichika",
+    png: ichika,
+    fileName: "ichika.png",
+    preset: "ichika",
   });
   characterServices.generate = async () => ({
-    png: reze,
-    width: 736,
-    height: 1227,
+    png: ichika,
+    width: 768,
+    height: 1536,
   });
   await generateCharacterVersion(character.id, ownerId, {
     operationId: randomUUID(),
-    prompt: "Prepare Reze",
+    prompt: "Prepare Ichika",
     fromVersionId: null,
   });
   let generated = await getCharacter(character.id, ownerId);
@@ -90,7 +90,7 @@ it("copies the selected Reze design and her original into Flipbook, independent 
     feetVisible: false,
     background: "plain",
     style: "anime illustration",
-    hair: "dark purple hair tied back",
+    hair: "long straight blonde hair",
     clothing: "white sleeveless shirt and black shorts",
     accessories: ["black neck ribbon"],
     palette: ["#d8c682", "#557449"],
@@ -116,7 +116,7 @@ it("copies the selected Reze design and her original into Flipbook, independent 
     originalReachedCleanReference = Boolean(
       input.identityReference?.equals(originalIdentity),
     );
-    return { png: reze, width: 736, height: 1227 };
+    return { png: ichika, width: 768, height: 1536 };
   };
   const flipbook = await createFlipbook({
     characterSource: { characterId: character.id, versionId: selectedId },
@@ -141,7 +141,7 @@ it("copies the selected Reze design and her original into Flipbook, independent 
   expect(saved.characterSource).toMatchObject({
     characterId: character.id,
     versionId: selectedId,
-    name: "Reze",
+    name: "Ichika",
   });
   expect(
     (await readFile(flipbookFiles.source(saved.id))).equals(selectedImage),
@@ -169,23 +169,23 @@ it("copies the selected Reze design and her original into Flipbook, independent 
 });
 
 it("keeps a requested frontal camera through all eight drawings even if a planner defaults to side view", async () => {
-  const reze = await readFile(
-    path.join(process.cwd(), "public/characters/reze.jpeg"),
+  const ichika = await readFile(
+    path.join(process.cwd(), "public/characters/ichika.png"),
   );
   const character = await createCharacter(ownerId, {
-    name: "Reze frontal",
-    png: reze,
-    fileName: "reze.jpeg",
-    preset: "reze",
+    name: "Ichika frontal",
+    png: ichika,
+    fileName: "ichika.png",
+    preset: "ichika",
   });
   characterServices.generate = async () => ({
-    png: reze,
-    width: 736,
-    height: 1227,
+    png: ichika,
+    width: 768,
+    height: 1536,
   });
   await generateCharacterVersion(character.id, ownerId, {
     operationId: randomUUID(),
-    prompt: "Full-body Reze",
+    prompt: "Full-body Ichika",
     fromVersionId: null,
   });
   let source = await getCharacter(character.id, ownerId);
@@ -229,7 +229,7 @@ it("keeps a requested frontal camera through all eight drawings even if a planne
   services.draw = async (input) => {
     views.push(input.plan.view);
     expect(input.identityReference).toBeDefined();
-    return { png: reze, width: 736, height: 1227 };
+    return { png: ichika, width: 768, height: 1536 };
   };
   const created = await createFlipbook({
     characterSource: {

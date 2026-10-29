@@ -136,7 +136,7 @@ export const flipbookApi = {
   uploadAudio: (id: string, file: File) => call(`/api/flipbooks/${id}/audio`, upload(file, "POST"), parseFlipbook),
   audioSettings: (id: string, settings: Pick<FlipbookAudio, "offset" | "startsAt" | "volume">) => call(`/api/flipbooks/${id}/audio`, json(settings, "PATCH"), parseFlipbook),
   removeAudio: (id: string) => call(`/api/flipbooks/${id}/audio`, { method: "DELETE" }, parseFlipbook),
-  create: (imageId: string, prompt: string, options: { action?: CycleAction; keepScene?: boolean; characterSource?: CharacterSource; view?: ViewPreference; sequence?: SequenceSettings } = {}) =>
+  create: (imageId: string, prompt: string, options: { action?: CycleAction; keepScene?: boolean; characterSource?: CharacterSource; view?: ViewPreference; sequence?: SequenceSettings; motionSource?: "video"; motionNote?: string } = {}) =>
     trackFlipbook("Preparing animation", () => call("/api/flipbooks", json({ ...(options.characterSource ? {} : { imageId }), prompt, ...options }), parseFlipbook)),
   /** Several saved characters in one scene, as long as `seconds`. */
   createEnsemble: (request: CreateEnsembleRequest) => trackFlipbook("Preparing scene", () => call("/api/flipbooks", json(request), parseFlipbook)),
