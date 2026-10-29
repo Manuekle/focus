@@ -23,6 +23,7 @@ export async function drawPose(input: {
   /** The gallery mannequin controls posture only; the character remains Image 1. */
   readonly poseReference?: Buffer;
   readonly motionGuide?: Buffer;
+  readonly temporalPair?: { readonly from: Buffer; readonly to: Buffer; readonly fromIndex: number; readonly toIndex: number; readonly position: number };
   /** Only older explicit selections require a download; automatic guides can fall back to text. */
   readonly requirePoseReference?: boolean;
   /** The current drawing, when it is being repaired rather than drawn from scratch. */
@@ -35,9 +36,17 @@ export async function drawPose(input: {
   readonly signal?: AbortSignal;
 }): Promise<GeneratedImage> {
   const extras = input.extras ?? [];
+  if (input.temporalPair && !input.repair) {
+    const pair = input.temporalPair;
+    return generateImage({
+      prompt: `${inbetweenPrompt({ analysis: input.analysis, plan: input.plan, fromIndex: pair.fromIndex, toIndex: pair.toIndex, position: pair.position, extraCount: extras.length })}\nExact time: ${Number(input.plan.poses[input.index].phase.slice(7)) / 24} s. ${input.plan.poses[input.index].description}\nThe torso, face, head, clothes, feet and non-waving arm must keep the positions established by the key drawings and the exact appearance of Image 1. Only the specified waving arm moves. Keep the EXACT same waving arm and image side as Images 2 and 3; this visual continuity takes priority over any ambiguous left/right wording. Never swap arms. Do not introduce a new whole-body pose.${input.note ? `\nAnimator's correction for this intermediate: ${input.note}` : ""}`,
+      references: [{ png: input.reference, role: "immutable character identity, exact garment colors and shading; overrides appearance errors in generated keys" }, { png: pair.from, role: "preceding key pose, exact framing and stationary body positions only; never a color authority" }, { png: pair.to, role: "following key pose, exact framing and stationary body positions only; never a color authority" }, ...extras.map((png) => ({ png, role: "same-character identity details only" })), ...(input.identityReference ? [{ png: input.identityReference, role: "original identity only, not the pose or outfit" }] : [])],
+      size: FRAME_SIZE, flipbookId: input.flipbookId, signal: input.signal,
+    });
+  }
   const references: ImageReference[] = [{ png: input.reference, role: "the character reference. Its design is the identity to keep." }];
   if (input.repair) references.push({ png: input.repair.png, role: "the drawing to repair: keep its pose, fix its mistakes." });
-  if (input.neighbor) references.push({ png: input.neighbor, role: `the neighboring drawing of this ${actionSpec(input.plan.action).label} (size, line weight and color only).` });
+  if (input.neighbor) references.push({ png: input.neighbor, role: `the neighboring drawing of this ${actionSpec(input.plan.action).label} (size and registration only; Image 1 controls colors, shading and design).` });
   for (const extra of extras) references.push({ png: extra, role: "an extra reference of the same character (design details only, never the pose)." });
   if (input.identityReference) references.push({ png: input.identityReference, role: "the immutable ORIGINAL character identity. Match its face, eyes, ears, hair and illustration style when visible in the selected view. Never turn a rear view around to show the face. Ignore its clothing and pose: Image 1 defines the selected outfit and the phase instructions define the pose." });
   const guideId = input.plan.poseId ?? input.plan.poses[input.index]?.referenceId;
@@ -114,7 +123,7 @@ export async function drawEnsembleFrame(input: {
 }): Promise<GeneratedImage> {
   const references: ImageReference[] = input.cast.map((entry, index) => ({ png: entry.png, role: `${castLabel(entry, index)}. Its design is that character’s identity to keep.` }));
   if (input.repair) references.push({ png: input.repair.png, role: "the drawing to repair: keep its pose and staging, fix its mistakes." });
-  if (input.neighbor) references.push({ png: input.neighbor, role: "the neighboring drawing of this scene (camera, size, ground line, line weight and color only)." });
+  if (input.neighbor) references.push({ png: input.neighbor, role: "the neighboring drawing of this scene (camera, size and ground line only; each character's reference controls its colors and shading)." });
   return generateImage({
     prompt: ensemblePrompt({ cast: input.cast, analysis: input.analysis, plan: input.plan, index: input.index, scene: input.scene, note: input.note, hasNeighbor: Boolean(input.neighbor), repair: input.repair ?? null }),
     references,

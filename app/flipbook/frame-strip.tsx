@@ -45,7 +45,7 @@ export function FrameStrip({
   /** A scene's drawings are beats of one choreography: small thumbnails, and no reordering. */
   readonly scene?: boolean;
 }) {
-  const pageSize = 40;
+  const pageSize = 24;
   const start = Math.floor(Math.min(selected, frames.length - 1) / pageSize) * pageSize;
   const onKeyDown = (event: KeyboardEvent<HTMLOListElement>) => {
     const delta = event.key === "ArrowLeft" ? -1 : event.key === "ArrowRight" ? 1 : 0;
@@ -63,7 +63,7 @@ export function FrameStrip({
 
   return (
     <>
-    <ol className={styles.strip} data-dense={scene || undefined} aria-label={scene ? "Drawings in order" : "Frames in playback order. Alt plus arrow keys reorder."} onKeyDown={onKeyDown}>
+    <ol key={start} className={styles.strip} data-dense={scene || undefined} aria-label={scene ? "Drawings in order" : "Frames in playback order. Alt plus arrow keys reorder."} onKeyDown={onKeyDown}>
       {frames.slice(Math.max(0, start), start + pageSize).map((frame, offset) => {
         const index = start + offset;
         const thumb = frameThumb(flipbook, frame);
@@ -102,7 +102,7 @@ export function FrameStrip({
         );
       })}
     </ol>
-    {frames.length > pageSize ? <nav className={styles.buttonRow} aria-label="Drawing pages">
+    {frames.length > pageSize ? <nav className={styles.pager} aria-label="Drawing pages">
       <button type="button" disabled={start === 0} onClick={() => onSelect(Math.max(0, start - pageSize))}>Previous drawings</button>
       <span className={styles.hint}>{start + 1}–{Math.min(start + pageSize, frames.length)} of {frames.length}</span>
       <button type="button" disabled={start + pageSize >= frames.length} onClick={() => onSelect(start + pageSize)}>Next drawings</button>

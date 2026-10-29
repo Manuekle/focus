@@ -20,7 +20,7 @@
 
 /* The full editor page: a larger stage, controls in their own column. */
 .editor[data-variant="page"] { grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); gap: 28px; }
-.editor[data-variant="page"] .preview { top: 76px; }
+.editor[data-variant="page"] .preview { top: var(--studio-preview-top, 76px); }
 .editor[data-variant="page"] .preview figure video,
 .editor[data-variant="page"] .preview figure canvas { max-height: min(62vh, 620px); }
 .editor[data-variant="page"] .controls { padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--card) 70%, transparent); }

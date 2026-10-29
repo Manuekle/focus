@@ -79,7 +79,7 @@ type Sidebar = ReturnType<typeof useSidebar>;
  * folds the sidebar), arrow keys resize it, double click resets. A button on
  * the edge folds and unfolds the sidebar.
  */
-export function SidebarResizer({ sidebar }: { readonly sidebar: Sidebar }) {
+export function SidebarResizer({ sidebar, showToggle = true }: { readonly sidebar: Sidebar; readonly showToggle?: boolean }) {
   const { width, collapsed, dragging, setDragging, previewWidth, previewCollapsed, commitWidth, commitCollapsed } = sidebar;
   const start = useRef<{ x: number; width: number } | null>(null);
 
@@ -131,7 +131,7 @@ export function SidebarResizer({ sidebar }: { readonly sidebar: Sidebar }) {
           onDoubleClick={() => commitWidth(SIDEBAR_DEFAULT)}
         />
       )}
-      <button
+      {showToggle ? <button
         type="button"
         className={shell.sidebarToggle}
         data-collapsed={collapsed || undefined}
@@ -141,7 +141,7 @@ export function SidebarResizer({ sidebar }: { readonly sidebar: Sidebar }) {
         onClick={() => commitCollapsed(!collapsed)}
       >
         <HugeiconsIcon icon={ArrowLeft01Icon} size={12} strokeWidth={2} />
-      </button>
+      </button> : null}
     </>
   );
 }

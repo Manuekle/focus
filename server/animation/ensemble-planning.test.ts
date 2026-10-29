@@ -112,6 +112,8 @@ describe("a drawing of the scene", () => {
     expect(repair).toContain("Image 3 is the drawing to repair");
     expect(repair).toContain("Image 4 is the neighboring drawing");
     expect(repair).toContain("Problems found in Image 3: a missing arm");
+    expect(repair).toContain("Each character's own reference image is the sole authority");
+    expect(repair).toContain("Do NOT copy its pose or appearance errors");
     expect(ensemblePrompt({ ...base, note: "hit harder" })).toContain("Correction requested by the animator: hit harder");
   });
 });

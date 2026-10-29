@@ -238,6 +238,7 @@ export function keyColorFor(analysis: CharacterAnalysis | null): { hex: string; 
 export function identityLock(analysis: CharacterAnalysis | null): string {
   if (!analysis) return "Keep the character exactly as in the reference.";
   return [
+    "The character's visible design in its own reference image takes priority over this approximate text description.",
     `The character: ${analysis.subject}.`,
     `Hair: ${analysis.hair}.`,
     `Clothing: ${analysis.clothing}.`,
@@ -247,6 +248,8 @@ export function identityLock(analysis: CharacterAnalysis | null): string {
     analysis.palette.length ? `Palette: ${analysis.palette.join(", ")}.` : "",
   ].filter(Boolean).join(" ");
 }
+
+export const APPEARANCE_LOCK = "Image 1 is the sole authority for garment colors, face, hair, accessories, line weight and shading. Preserve its exact base colors, local shading and contrast; do not recolor, relight, brighten or darken any garment between drawings. Neighboring drawings and key poses guide movement, size and registration only. Any appearance difference in a generated drawing is an error to correct from Image 1, never a new design to propagate. Keep all stationary parts unchanged; edit only what the requested movement requires.";
 
 const FRAMING = (key: string, posed = false) =>
   `Framing: ${posed ? "the whole posed silhouette, including all hands and feet, is inside the image, centered, about 78% of the image height, its lowest support point near the bottom with a clear margin; preserve the selected posture" : "the whole body from the top of the head to the soles of both feet is inside the image, centered, about 78% of the image height, feet near the bottom with a clear margin"}; nothing is cropped. Background: one flat uniform ${key} color filling the whole image, no floor line, no cast shadow, no scenery, no motion lines, no text, no border, no frame number. Exactly one character.`;
@@ -286,8 +289,9 @@ export function posePrompt(input: {
   return [
     `Draw the character from Image 1 as one drawing of a hand-drawn ${spec.label}: drawing ${input.index + 1} of ${input.plan.poses.length}, the "${pose.label}" pose.`,
     identityLock(input.analysis),
+    APPEARANCE_LOCK,
     "Only the pose changes. Keep identical: face, hairstyle, outfit, accessories and their placement on the body (never mirror asymmetric details), colors, proportions, line weight, shading, and the same camera distance and angle as Image 1.",
-    input.hasNeighbor ? `Image 2 is the neighboring drawing of the same ${spec.label}: match its size, line weight and colors, but do NOT copy its pose.` : "",
+    input.hasNeighbor ? `Image 2 is the neighboring drawing of the same ${spec.label}: match its size and registration, but do NOT copy its pose or any appearance errors.` : "",
     extrasLine(input.extraCount ?? 0, input.hasNeighbor ? 3 : 2),
     mannequinLine(input.plan.poseId ?? pose.referenceId, input.poseImageNumber, Boolean(input.plan.poseId)),
     `View: ${cameraDescription(input.plan.view ?? "side", input.plan.direction)}. Camera stays fixed throughout the cycle; preserve the reference’s camera elevation and distance. ${input.plan.action === "fight" ? "Only one character: no opponent or impact effects." : ""}`,
@@ -320,9 +324,10 @@ export function inbetweenPrompt(input: {
   const progress = fraction === 0.5 ? "halfway" : `${Math.round(fraction * 1000) / 10}% of the way`;
   return [
     `Images 2 and 3 are two consecutive key drawings of the character from Image 1 in a hand-drawn ${spec.label}: "${from.label}", then "${to.label}". Draw the in-between: the one pose exactly ${progress} from Image 2 to Image 3.`,
-    `Every part of the body travels ${progress} along its path: arms and legs swing along arcs from their joints and keep their length (never shrinking, never cutting straight across); the torso and head turn ${progress}; hair, clothing and accessories trail slightly behind the movement. Where the two keys agree, copy them exactly.`,
+    `Moving parts of the body travel ${progress} along their paths: arms and legs swing along arcs from their joints and keep their length (never shrinking, never cutting straight across); the torso and head turn ${progress} only when their poses differ; hair, clothing and accessories trail only where the movement requires it. Where the two keys agree on pose and position, keep those parts stationary; their appearance always comes from Image 1.`,
     identityLock(input.analysis),
-    "Keep identical to Images 2 and 3: the character's size in the image, proportions, line weight, colors, shading, the camera distance and angle, and the ground line under the feet. Face, hairstyle, outfit and accessories exactly as in Image 1 (never mirror asymmetric details).",
+    APPEARANCE_LOCK,
+    "Keep identical to Images 2 and 3: the character's size in the image, proportions, the camera distance and angle, and the ground line under the feet. Face, hairstyle, outfit, colors, shading and accessories exactly as in Image 1 (never mirror asymmetric details). Never blend or interpolate garment colors between the keys.",
     "Never copy either key pose. No motion blur, speed lines, smears, after-images or effects: one clean drawing at the requested point along the movement.",
     extrasLine(input.extraCount ?? 0, 4),
     `View: ${cameraDescription(input.plan.view ?? "side", input.plan.direction)}. Camera stays fixed. ${input.plan.action === "fight" ? "Only one character: no opponent or impact effects." : ""}`,
@@ -358,9 +363,10 @@ export function repairPrompt(input: {
   return [
     `Image 2 is a drawing of the character from Image 1 as one drawing of a hand-drawn ${spec.label}: drawing ${input.index + 1} of ${input.plan.poses.length}, the "${pose.label}" pose. It has mistakes. Redraw it with the mistakes fixed.`,
     identityLock(input.analysis),
+    APPEARANCE_LOCK,
     "Keep the pose, the camera, the size and the framing of Image 2. Fix: anatomy (exactly two arms and two legs, correct joints and hands), identity (face, hairstyle, outfit, accessories and their placement, colors and proportions exactly as in Image 1), line weight and shading (as in Image 1), and any cropped or blurry part.",
     input.problems.length ? `Problems found in Image 2: ${input.problems.join(" ")}` : "No specific problem was flagged: look for anatomy and identity mistakes yourself and fix every one.",
-    input.hasNeighbor ? "Image 3 is the neighboring drawing of the same cycle: match its size, line weight and colors, but do NOT copy its pose." : "",
+    input.hasNeighbor ? "Image 3 is the neighboring drawing of the same cycle: match its size and registration, but do NOT copy its pose or any appearance errors." : "",
     extrasLine(input.extraCount ?? 0, input.hasNeighbor ? 4 : 3),
     mannequinLine(input.plan.poseId ?? pose.referenceId, input.poseImageNumber, Boolean(input.plan.poseId)),
     `The pose it should read as: ${pose.description}`,

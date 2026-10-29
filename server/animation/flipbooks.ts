@@ -51,6 +51,7 @@ import { Limiter } from "../ai/meta";
 import { activeWorkCount, type PaidWorkGate } from "../jobs";
 import { assessInput, analyzeCharacter, lookAtImage } from "./character-analysis";
 import { computeAlignment, computeEnsembleAlignment, extractSubject, MeasureSchema, renderSprite, type AlignInput, type Measure } from "./frame-alignment";
+import { stationaryBodyColors, type BodyColors } from "./appearance-consistency";
 import { renderExport } from "./export";
 import { drawEnsembleFrame, drawInbetween, drawPose } from "./frame-generation";
 import { ensembleView, groupConcepts, mergeAnalyses, planEnsemble, type CastEntry } from "./ensemble-planning";
@@ -62,6 +63,7 @@ import { planSequence, sequenceSkeleton } from "./sequence-planning";
 import { SequenceSettingsSchema, type SequenceSettings } from "../../shared/sequence";
 import { prepareExportTrack } from "./flipbook-audio";
 import { motionGuide } from "./motion-reference";
+import { waveAnchorIndexes } from "./wave-sequence";
 import { checkFrames, contactSheet, reviewFrames } from "./quality-control";
 import { FAR_CONCEPTS, castSheet, decideReference, growMask, drawBackdrop, drawCleanReference, drawScenePlate, readReference, restoreScene, seamlessPlate, splitDepth, storeReference, subjectMask } from "./reference-manager";
 import type { VideoAsset } from "../../shared/schemas";
@@ -644,6 +646,8 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
   }));
 
   const drawn: FrameId[] = [];
+  const waveAnchors = flipbook.sequence && flipbook.plan.action === "wave" && !flipbook.motionReference ? waveAnchorIndexes(flipbook.plan) : [];
+  const startedIds = new Set<FrameId>();
   let refundable = 0;
   let started = 0;
   const drawOne = async (frameId: FrameId) => {
@@ -651,16 +655,26 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
     await workerUpdate(id, signal, (current) => ({ ...current, queuedDrawings: current.queuedDrawings?.filter((id) => id !== frameId) }));
     if (signal.aborted) return;
     started++;
+    startedIds.add(frameId);
     const frame = flipbook.frames.find((entry) => entry.id === frameId)!;
     try {
       let neighbor: Buffer | null = null;
+      const latest = flipbook.sequence ? await getFlipbook(id) : flipbook;
       if (options.withNeighbor || flipbook.sequence) {
         const order = flipbook.order;
         const previousIndex = order.indexOf(frameId) - 1;
-        const previousId = order[flipbook.sequence ? previousIndex : (previousIndex + order.length) % order.length];
-        const latest = flipbook.sequence ? await getFlipbook(id) : flipbook;
-        const previous = latest.frames.find((entry) => entry.id === previousId);
+        const previousIds = flipbook.sequence ? order.slice(0, previousIndex + 1).reverse() : [order[(previousIndex + order.length) % order.length]];
+        const previous = previousIds.map((id) => latest.frames.find((entry) => entry.id === id)).find((entry) => entry?.version && (entry.status !== "failed" || ["canceled", "interrupted", "extraction_failed"].includes(entry.error?.code ?? "")));
         if (previous?.version) neighbor = await readFile(path.join(flipbookFiles.versionDir(id, previous.id, previous.version), "raw.png")).catch(() => null);
+      }
+      let temporalPair: Parameters<typeof services.draw>[0]["temporalPair"];
+      if (waveAnchors.length && !waveAnchors.includes(frame.poseIndex) && !options.repair) {
+        const fromIndex = waveAnchors.filter((index) => index < frame.poseIndex).at(-1)!;
+        const toIndex = waveAnchors.find((index) => index > frame.poseIndex)!;
+        const from = latest.frames.find((entry) => entry.poseIndex === fromIndex)!;
+        const to = latest.frames.find((entry) => entry.poseIndex === toIndex)!;
+        if (!from.version || !to.version) throw new AppError("keyframes_not_ready", 409, "Finish the surrounding key poses before drawing this transition.");
+        temporalPair = { from: await readFile(path.join(flipbookFiles.versionDir(id, from.id, from.version), "raw.png")), to: await readFile(path.join(flipbookFiles.versionDir(id, to.id, to.version), "raw.png")), fromIndex, toIndex, position: (frame.poseIndex - fromIndex) / (toIndex - fromIndex) };
       }
       let repair: { png: Buffer; problems: string[] } | null = null;
       if (options.repair && frame.version) {
@@ -671,7 +685,7 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
       const guideId = compatiblePoseId(flipbook.plan.poseId ?? flipbook.plan.poses[frame.poseIndex].referenceId, flipbook.plan.action, flipbook.plan.view ?? "side");
       const tick = flipbook.sequence ? Number(frame.phase.slice(7)) : -1;
       const guide = flipbook.motionReference ? await motionGuide(id, flipbook.motionReference, tick) : null;
-      const image = await services.draw({ reference: reference.png, neighbor, extras, identityReference, repair, motionGuide: guide ?? undefined, poseReference: guideId ? poseReferences.get(guideId) : undefined, requirePoseReference: Boolean(flipbook.poseId), analysis: flipbook.analysis, plan: flipbook.plan, index: frame.poseIndex, note: options.note, flipbookId: id, signal });
+      const image = await services.draw({ reference: reference.png, neighbor, extras, identityReference, repair, temporalPair, motionGuide: guide ?? undefined, poseReference: guideId ? poseReferences.get(guideId) : undefined, requirePoseReference: Boolean(flipbook.poseId), analysis: flipbook.analysis, plan: flipbook.plan, index: frame.poseIndex, note: options.note, flipbookId: id, signal });
       if (signal.aborted) return;
       const version = newVersionId();
       await writeAtomic(path.join(flipbookFiles.versionDir(id, frameId, version), "raw.png"), image.png);
@@ -690,7 +704,7 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
       }));
     } catch (error) {
       if (signal.aborted) return;
-      if (unbilled(error)) refundable++;
+      if (unbilled(error) || (error instanceof AppError && error.code === "keyframes_not_ready")) refundable++;
       const failure = error instanceof AppError ? error : new AppError("image_failed", 502, "This drawing failed. Redraw it.");
       if (!(error instanceof AppError)) console.error("[focus] flipbook drawing failed", error);
       await workerUpdate(id, signal, (current) => patchFrame(current, frameId, (entry) => ({
@@ -702,14 +716,26 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
     }
   };
   try {
-    for (let offset = 0; offset < frameIds.length && !signal.aborted; offset += 2) {
-      await Promise.all(frameIds.slice(offset, offset + 2).map(drawOne));
+    let remaining = [...frameIds];
+    if (waveAnchors.length && !options.repair && !options.note) {
+      const keyIds = waveAnchors.map((index) => flipbook.order[index]);
+      for (const key of keyIds) if (remaining.includes(key) && !signal.aborted) await drawOne(key);
+      remaining = remaining.filter((id) => !keyIds.includes(id));
+      const current = await getFlipbook(id);
+      if (keyIds.some((id) => !current.frames.find((frame) => frame.id === id)?.version)) remaining = [];
+    } else if (flipbook.sequence && remaining.includes(flipbook.order[0])) {
+      await drawOne(flipbook.order[0]);
+      remaining = remaining.filter((id) => id !== flipbook.order[0]);
+    }
+    for (let offset = 0; offset < remaining.length && !signal.aborted; offset += 2) {
+      await Promise.all(remaining.slice(offset, offset + 2).map(drawOne));
     }
   } finally {
     await refundImages(id, refundable + frameIds.length - started);
     await updateFlipbook(id, (current) => ({ ...current, queuedDrawings: [] }), { evenIfCanceled: true });
   }
   if (signal.aborted) return;
+  await workerUpdate(id, signal, (current) => ({ ...current, frames: current.frames.map((frame) => frameIds.includes(frame.id) && !startedIds.has(frame.id) ? { ...frame, status: "failed", error: { code: "keyframes_not_ready", message: "A surrounding key pose failed. Generate the pending drawings to continue." } } : frame) }));
   await cutOut(id, signal, [...drawn, ...(options.alsoCut ?? [])]);
 }
 
@@ -811,12 +837,15 @@ async function cutOut(id: string, signal: AbortSignal, frameIds: readonly FrameI
       const dir = flipbookFiles.versionDir(id, frameId, frame.version);
       const source = frame.versions.find((version) => version.id === frame.version)?.source;
       try {
-        const extraction = await extractSubject({ png: await readFile(path.join(dir, "raw.png")), concept: flipbook.analysis?.subject ?? "character", flipbookId: id, allowAlpha: source === "uploaded", ...(flipbook.cast.length ? { group: { concepts: groupConcepts(flipbook.cast.map((member) => member.analysis)), expected: flipbook.cast.length } } : {}), signal });
-        await writeAtomic(path.join(dir, "cutout.png"), extraction.cutout);
-        await writeAtomic(path.join(dir, "measure.json"), JSON.stringify(extraction.measure));
+        const measured = await readMeasure(id, frame);
+        if (!measured || !(await stat(path.join(dir, "cutout.png")).catch(() => null))) {
+          const extraction = await extractSubject({ png: await readFile(path.join(dir, "raw.png")), concept: flipbook.analysis?.subject ?? "character", flipbookId: id, allowAlpha: source === "uploaded", ...(flipbook.cast.length ? { group: { concepts: groupConcepts(flipbook.cast.map((member) => member.analysis)), expected: flipbook.cast.length } } : {}), signal });
+          await writeAtomic(path.join(dir, "cutout.png"), extraction.cutout);
+          await writeAtomic(path.join(dir, "measure.json"), JSON.stringify(extraction.measure));
+        }
         // The first drawing that could be cut out is the one "Restore original" brings back, never one that failed.
         const prepared = frame.version;
-        await workerUpdate(id, signal, (current) => patchFrame(current, frameId, (entry) => (entry.originalVersion || entry.version !== prepared ? entry : { ...entry, originalVersion: prepared })));
+        await workerUpdate(id, signal, (current) => patchFrame(current, frameId, (entry) => entry.version !== prepared ? entry : { ...entry, status: "processing", originalVersion: entry.originalVersion ?? prepared, error: null }));
       } catch (error) {
         if (signal.aborted) return;
         const failure = error instanceof AppError ? error : new AppError("extraction_failed", 422, "We couldn’t cut this character out. Redraw the frame.");
@@ -881,8 +910,10 @@ async function finalize(id: string, signal?: AbortSignal): Promise<Flipbook> {
     entries.push({ frameId: entry.id, version: entry.version!, phase: "inbetween", relativeRootY: from.relativeRootY + (to.relativeRootY - from.relativeRootY) * position, lift: from.lift + (to.lift - from.lift) * position, measure });
   }
   // A scene's camera is fixed: its drawings keep the place they were drawn at instead of being registered on one body.
-  const alignment = entries.length ? (flipbook.cast.length || flipbook.sequence ? computeEnsembleAlignment(entries) : computeAlignment(entries, flipbook.alignment, plan?.action, plan?.view)) : flipbook.alignment;
+  const fixedGesture = flipbook.sequence && !flipbook.motionReference && (plan?.action === "wave" || plan?.action === "idle");
+  const alignment = entries.length ? ((flipbook.cast.length || flipbook.sequence) && !fixedGesture ? computeEnsembleAlignment(entries) : computeAlignment(entries, flipbook.alignment, plan?.action, plan?.view)) : flipbook.alignment;
   const sprites = new Map<string, Buffer>();
+  const bodyColors = new Map<string, BodyColors>();
   if (alignment) {
     for (const { entry, measure } of inbetweens) {
       const transform = alignment.transforms[entry.id]!;
@@ -895,15 +926,21 @@ async function finalize(id: string, signal?: AbortSignal): Promise<Flipbook> {
       const transform = alignment.transforms[frame.id]!;
       const file = flipbookFiles.sprite(id, frame.id, transform.key);
       let sprite: Buffer | null = await readFile(file).catch(() => null);
+      const cutout = !sprite || fixedGesture ? await readFile(path.join(flipbookFiles.versionDir(id, frame.id, frame.version!), "cutout.png")) : null;
       if (!sprite) {
-        const cutout = await readFile(path.join(flipbookFiles.versionDir(id, frame.id, frame.version!), "cutout.png"));
-        sprite = await renderSprite(cutout, measure, transform, { width: alignment.cellWidth, height: alignment.cellHeight });
+        sprite = await renderSprite(cutout!, measure, transform, { width: alignment.cellWidth, height: alignment.cellHeight });
         await writeAtomic(file, sprite);
       }
+      if (fixedGesture && cutout) bodyColors.set(frame.id, await stationaryBodyColors(cutout, { centerX: measure.torsoX, topY: measure.topY, footY: measure.footY }));
       sprites.set(frame.id, flipbook.sequence ? await sharp(sprite).resize(96, 96, { fit: "fill" }).png().toBuffer() : sprite);
     }
   }
   const reference = flipbook.reference ? await readReference(id, flipbook.reference.version).catch(() => null) : null;
+  const stationaryReference = fixedGesture && reference?.measure ? await stationaryBodyColors(reference.png, {
+    centerX: reference.measure.crop.left + reference.measure.torsoX,
+    topY: reference.measure.crop.top + reference.measure.topY,
+    footY: reference.measure.crop.top + reference.measure.footY,
+  }) : undefined;
   const order = orderedFrames(flipbook).filter((frame) => sprites.has(frame.id));
   const byId = new Map(measured.map((entry) => [entry.frame.id, entry.measure]));
   const checks = alignment
@@ -915,7 +952,8 @@ async function finalize(id: string, signal?: AbortSignal): Promise<Flipbook> {
       scale: alignment.transforms[frame.id]!.scale,
       relativeRootY: plan?.poses[frame.poseIndex].relativeRootY ?? WALK_POSES[frame.poseIndex]?.relativeRootY ?? 0,
       sprite: sprites.get(frame.id)!,
-    })), reference?.measure?.histogram ?? null, plan?.action, plan?.view, Boolean(flipbook.sequence))
+      stationaryColors: bodyColors.get(frame.id),
+    })), reference?.measure?.histogram ?? null, plan?.action, plan?.view, Boolean(flipbook.sequence), stationaryReference)
     : new Map();
   const update = (current: Flipbook): Flipbook => ({
     ...current,

@@ -4,15 +4,39 @@
    main column answers to its own width (container queries), since the sidebar
    takes part of the viewport. */
 
-/* The page shell (header, sidebar, main) is the editor's own: app/editor/studio.module.css. */
+/* Keep studio chrome outside the content scroller. The sidebar and its
+   resize/fold controls then share a stable viewport, including after scroll. */
+.studio { height: 100dvh; overflow: hidden; --studio-preview-top: 16px; }
+.header { flex-shrink: 0; }
+.body { min-height: 0; grid-template-rows: minmax(0, 1fr); }
+.sidebar { position: static; min-height: 0; height: auto; overflow: hidden; }
+.sidebarScroll { flex: 1; }
+.sidebarContent { display: flex; min-width: 0; flex-direction: column; gap: 18px; }
+.sidebarToggle { flex-shrink: 0; color: var(--muted-foreground); }
+.main { min-height: 0; overflow: hidden; container-type: inline-size; }
+/* The workspace is the page: no gutter from the shared studio shell. */
+.studio .main { padding: 0 16px; }
+.studio .body[data-collapsed] .main { padding-left: 16px; }
+.mainViewport { scrollbar-width: none; }
+.mainViewport::-webkit-scrollbar { display: none; width: 0; height: 0; }
+/* Keep the soft edge while content is scrolled, not only during the movement. */
+.main:global([data-fade-top="true"]) > :global(div) > :global([data-slot="scroll-fade-top"]),
+.main :global([data-slot="scroll-area"][data-fade-top="true"] > div > [data-slot="scroll-fade-top"]) { opacity: 1; }
+.main:global([data-fade-bottom="true"]) > :global(div) > :global([data-slot="scroll-fade-bottom"]),
+.main :global([data-slot="scroll-area"][data-fade-bottom="true"] > div > [data-slot="scroll-fade-bottom"]) { opacity: 1; }
+.mainContent { display: flex; min-width: 0; min-height: 100%; flex-direction: column; gap: 24px; }
 .posterContain { object-fit: contain; }
 
 /* ── Shared bits ─────────────────────────────────────────────────────── */
-.hint { color: var(--muted-foreground); font-size: 12px; line-height: 1.55; }
+.hint { color: var(--muted-foreground); font-size: 12px; line-height: 1.55; overflow-wrap: anywhere; }
 .hint[data-invalid] { color: var(--destructive); }
 .sectionLabel { color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
 .chips { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
 .buttonRow { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.pager { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
+.pager button { padding: 5px 11px; border: 1px solid var(--border); border-radius: 999px; background: var(--card); color: var(--foreground); font: inherit; font-size: 12px; cursor: pointer; transition: border-color 150ms, background-color 150ms; }
+.pager button:hover:not(:disabled) { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); background: var(--muted); }
+.pager button:disabled { color: var(--muted-foreground); cursor: default; opacity: 0.45; }
 .inline { display: inline-flex; align-items: center; gap: 8px; }
 
 /* The transparent-pixel checkerboard behind sprites. */
@@ -51,6 +75,20 @@
 }
 .fieldInput::placeholder { color: color-mix(in srgb, var(--muted-foreground) 80%, transparent); }
 .fieldInput:disabled { opacity: 0.5; cursor: not-allowed; }
+/* Compact controls keep their system surface; the label isn't another field. */
+.controlField { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
+fieldset.controlField > legend { margin-bottom: 8px; }
+.controlHeading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.controlValue { flex-shrink: 0; color: var(--foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
+.uploadName { overflow-wrap: anywhere; color: var(--foreground); font-size: 12px; }
+/* The system checkbox (radix uses role="checkbox" on a button): the native control is unthemed. */
+.checkbox { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 1px solid var(--border); border-radius: 5px; background: var(--muted); color: var(--primary-foreground, #fff); cursor: pointer; transition: background-color 150ms, border-color 150ms; }
+.checkbox:hover { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); }
+.checkbox:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
+.checkbox[data-state="checked"] { border-color: var(--primary); background: var(--primary); }
+.checkbox svg { opacity: 0; transition: opacity 120ms; }
+.checkbox[data-state="checked"] svg { opacity: 1; }
+.checkbox:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ── Create ──────────────────────────────────────────────────────────── */
 /* The drop icon: the glass feather re-tinted with the app blue, like the home page steps. */
@@ -80,8 +118,23 @@
 .steps li[data-state="done"] .stepDot { background: color-mix(in srgb, var(--primary) 70%, transparent); box-shadow: none; color: var(--primary-foreground, #fff); }
 
 .grid { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(280px, 340px); align-items: start; gap: 28px; }
-.columnSide, .columnMain { display: flex; min-width: 0; flex-direction: column; gap: 24px; }
-.columnMain { position: sticky; top: 76px; }
+.columnSide, .columnMain { min-width: 0; min-height: 0; }
+.columnContent { display: flex; min-width: 0; flex-direction: column; gap: 24px; }
+.columnViewport { overflow: visible; scrollbar-gutter: auto; scrollbar-width: none; }
+.columnViewport::-webkit-scrollbar { display: none; width: 0; height: 0; }
+.columnMain { min-height: 0; }
+
+/* Three columns only when each has room. Each panel scrolls within the
+   workspace instead of stretching the page and leaving empty columns. */
+@container (min-width: 1081px) {
+  .mainContent:has(> .editor) { height: 100%; min-height: 0; }
+  .editor { flex: 1; min-height: 0; }
+  .editor > :not(.grid) { flex-shrink: 0; }
+  .grid { flex: 1; min-height: 0; align-items: stretch; }
+  .mainViewport { overflow: hidden; }
+  .columnViewport { overflow-y: auto; scrollbar-gutter: stable; }
+  .columnContent { padding: 2px 4px 16px; }
+}
 
 .panel { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
 .panel ~ .panel { padding-top: 20px; border-top: 1px solid var(--border); }
@@ -149,7 +202,8 @@
 .controlLabel { color: var(--muted-foreground); font-size: 12px; }
 
 /* Strip */
-.strip { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; }
+.strip { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; animation: stripPage 180ms var(--ease-smooth-out) both; }
+@keyframes stripPage { from { opacity: 0; translate: 0 4px; } }
 .stripFrame { display: flex; width: 100%; flex-direction: column; gap: 4px; padding: 4px; border: 0; border-radius: 12px; background: transparent; color: inherit; text-align: left; cursor: pointer; transition: background-color 150ms, box-shadow 150ms; }
 .stripFrame:hover { background: #ffffff06; }
 .stripFrameActive { background: #ffffff08; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 60%, transparent); }
@@ -184,18 +238,34 @@
 
 @container (max-width: 1080px) {
   .grid { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); }
-  .grid > .columnSide:first-child { grid-column: 1 / -1; display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); align-items: start; }
-  .grid > .columnSide:first-child > .panel ~ .panel { padding-top: 0; border-top: 0; }
+  .grid > .columnSide:first-child { grid-column: 2; grid-row: 1; }
+  .grid > .columnSide:last-child { grid-column: 2; grid-row: 2; }
+  .columnMain { grid-column: 1; grid-row: 1 / span 2; position: sticky; top: 16px; max-height: calc(100dvh - 132px); }
+  .columnMain .columnViewport { overflow-y: auto; scrollbar-gutter: stable; }
+  .referencePair, .extras { max-width: 440px; }
 }
 @container (max-width: 760px) {
   .grid { grid-template-columns: 1fr; }
-  .grid > .columnSide:first-child { display: flex; }
-  .grid > .columnSide:first-child > .panel ~ .panel { padding-top: 20px; border-top: 1px solid var(--border); }
-  .columnMain { position: static; }
+  .grid > .columnSide:first-child, .grid > .columnSide:last-child { grid-column: auto; grid-row: auto; }
+  .columnMain { grid-column: auto; grid-row: auto; position: static; max-height: none; }
+  .columnMain .columnViewport { overflow: visible; scrollbar-gutter: auto; }
   .strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+@media (max-width: 860px) {
+  .studio { height: auto; overflow: visible; }
+  .body { grid-template-rows: auto; }
+  .sidebar { max-height: min(32dvh, 260px); }
+  .sidebarToggle { display: none; }
+  .main { overflow: visible; }
+  .mainViewport { overflow: visible; scrollbar-gutter: auto; }
+  .columnMain { top: 76px; }
+}
+@media (max-width: 520px) {
+  .headerTitle { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
   .stripFrame, .field, .extraRemove { transition: none; }
+  .strip { animation: none; }
 }
 
 /* Skeletons: the same boxes as the real panels, so nothing moves when they fill in. */

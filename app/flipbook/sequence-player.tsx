@@ -1,10 +1,11 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { NextIcon, PauseIcon, PlayIcon, PreviousIcon, Exchange01Icon, RotateLeft01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
+import { Slider } from "../../components/ui/slider";
 import { ToggleChip } from "../../components/ui/toggle-chip";
 import { useReducedMotion } from "../../lib/hooks/use-reduced-motion";
 import {
@@ -164,6 +165,9 @@ export function SequencePlayer({
     if (!canvas || !context || !count) return;
     const again = () => draw(frameRef.current);
     const { index, previousIndex, previousWeight } = poseSmoothingAt(frame, holds, settings.smoothing);
+    const current = imageFor(drawings[index].src, again);
+    // A decode/network delay must hold the last painted pose, never flash an empty stage.
+    if (drawings[index].src && !current) return;
     const clock = playbackClock(frame, settings, keyCount);
     context.clearRect(0, 0, canvas.width, canvas.height);
     if (background.kind === "color") {
@@ -213,7 +217,6 @@ export function SequencePlayer({
       }
       context.globalAlpha = 1;
     }
-    const current = imageFor(drawings[index].src, again);
     const previous = previousWeight > 0 ? imageFor(drawings[previousIndex].src, again) : null;
     if (current && previous) {
       const layer = smoothingCanvas.current ?? (smoothingCanvas.current = document.createElement("canvas"));
@@ -433,20 +436,19 @@ export function SequencePlayer({
           </div>
         ) : null}
         {travel && settings.motion !== "in_place" ? (
-          <label className={styles.controlRow}>
+          <div className={styles.controlRow}>
             <span className={styles.controlLabel}>Travel speed <span className="tabular-nums">{settings.speed.toFixed(2)}×</span></span>
-            <input
-              type="range"
+            <Slider
               min={SPEED_BOUNDS[0]}
               max={SPEED_BOUNDS[1]}
               step={0.05}
-              value={settings.speed}
-              onChange={(event) => onSettingsChange({ ...settings, speed: Number(event.currentTarget.value) })}
-              className="editor-scrubber w-40"
-              style={{ "--scrub": `${((settings.speed - SPEED_BOUNDS[0]) / (SPEED_BOUNDS[1] - SPEED_BOUNDS[0])) * 100}%` } as CSSProperties}
+              value={[settings.speed]}
+              onValueChange={([speed]) => onSettingsChange({ ...settings, speed })}
+              className="w-40 max-w-full"
+              aria-label="Travel speed"
               aria-valuetext={`${settings.speed.toFixed(2)} times the measured stride`}
             />
-          </label>
+          </div>
         ) : null}
         <div className={styles.controlRow}>
           <span className={styles.controlLabel}>Onion skin</span>
@@ -454,11 +456,10 @@ export function SequencePlayer({
             <Switch checked={onion} onCheckedChange={setOnion} label="Onion skin" />
             {onion ? (
               <>
-                <input
-                  type="range" min={0.1} max={0.7} step={0.05} value={onionOpacity}
-                  onChange={(event) => setOnionOpacity(Number(event.currentTarget.value))}
-                  className="editor-scrubber w-24"
-                  style={{ "--scrub": `${((onionOpacity - 0.1) / 0.6) * 100}%` } as CSSProperties}
+                <Slider
+                  min={0.1} max={0.7} step={0.05} value={[onionOpacity]}
+                  onValueChange={([opacity]) => setOnionOpacity(opacity)}
+                  className="w-24"
                   aria-label="Onion skin opacity"
                   aria-valuetext={`${Math.round(onionOpacity * 100)}%`}
                 />

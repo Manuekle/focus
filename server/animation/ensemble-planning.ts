@@ -234,7 +234,7 @@ function followingImages(castSize: number, repair: boolean, neighbor: boolean): 
   const neighborNumber = castSize + 1 + (repair ? 1 : 0);
   return {
     repair: repair ? `Image ${repairNumber} is the drawing to repair: keep its staging, its pose and its camera, and fix its mistakes.` : "",
-    neighbor: neighbor ? `Image ${neighborNumber} is the neighboring drawing of the same scene: keep its camera, the characters’ size and their places on the ground line, and its line weight and colors, but advance the action to the pose described below. Do NOT copy its pose.` : "",
+    neighbor: neighbor ? `Image ${neighborNumber} is the neighboring drawing of the same scene: keep its camera, the characters’ size and their places on the ground line, but advance the action to the pose described below. Do NOT copy its pose or appearance errors; colors, line weight and shading come from each character's own reference.` : "",
   };
 }
 
@@ -259,6 +259,7 @@ export function ensemblePrompt(input: {
     `The scene: ${input.scene}`,
     `All ${input.cast.length} characters appear TOGETHER in this one drawing, each exactly as in its own reference image.`,
     ...castLines(input.cast),
+    "Each character's own reference image is the sole authority for its exact garment colors, local shading and contrast. Never recolor, relight, brighten or darken a garment between drawings. Any appearance differences in generated scene drawings are errors to correct from that character's reference, never a design to propagate or blend between characters.",
     "Keep each character’s face, hairstyle, outfit, accessories and where each sits on the body (never mirror them), colors, proportions, line weight and shading identical to its reference. Never merge, swap, blend or duplicate characters, and never give one character another’s features: exactly " + input.cast.length + " separate characters, each clearly readable.",
     following.repair,
     input.repair?.problems.length ? `Problems found in Image ${input.cast.length + 1}: ${input.repair.problems.join(" ")}` : "",

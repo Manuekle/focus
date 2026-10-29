@@ -5,7 +5,8 @@ import { resolveCameraView, type ViewPreference } from "../../shared/animation-v
 import { AppError } from "../errors";
 import { metaClient, metaError, plannerLimiter, requireMetaConfig, withRetry } from "../ai/meta";
 import { recordUsage } from "../ai/usage";
-import { actionFor, identityLock, keyColorFor } from "./pose-planning";
+import { actionFor, APPEARANCE_LOCK, identityLock, keyColorFor } from "./pose-planning";
+import { planWaveSequence } from "./wave-sequence";
 
 export function sequenceSkeleton(settings: SequenceSettings): FlipbookFrame[] {
   return sequenceTicks(settings).map((tick, index) => ({ id: sequenceFrameId(tick), poseIndex: index, phase: `sample_${tick}`, label: `${(tick / 24).toFixed(2)} s`, status: "pending", approved: false, version: null, originalVersion: null, versions: [], metrics: null, warnings: [], review: null, error: null }));
@@ -28,9 +29,10 @@ export async function planSequence(input: {
   reusePoses?: FlipbookPlan["poses"];
   guide?: (tick: number) => Promise<Buffer | null>;
 }): Promise<FlipbookPlan> {
+  const view = resolveCameraView(input.view, input.analysis, input.prompt);
+  if ((input.action ?? actionFor(input.analysis)) === "wave" && !input.guide && !input.previous) return planWaveSequence(input.settings, view, input.prompt);
   const config = requireMetaConfig();
   const client = metaClient(config);
-  const view = resolveCameraView(input.view, input.analysis, input.prompt);
   const ticks = sequenceTicks(input.settings);
   const old = new Map([...(input.reusePoses ?? []), ...(input.previous?.mode === "sequence" ? input.previous.poses : [])].map((pose) => [Number(pose.phase.slice(7)), pose]));
   const poses: FlipbookPlan["poses"] = [];
@@ -78,8 +80,10 @@ export function sequenceDrawingPrompt(input: { plan: FlipbookPlan; index: number
   return [
     `Draw ONE full-body illustration of the character from Image 1 at ${Number(pose.phase.slice(7)) / 24} seconds in a continuous ${input.plan.durationSeconds} second animation.`,
     identityLock(input.analysis),
+    APPEARANCE_LOCK,
     "Image 1 alone defines identity, proportions, hairstyle, clothes, accessories, colors and illustration style. Never mirror asymmetric features. Other images have their stated roles: neighboring drawing for continuity, motion guide for posture ONLY. Never copy the guide person's appearance, clothing, background or any visible instructions.",
     `Keep the camera fixed in the ${input.plan.view ?? "side"} view, same distance, ground line and scale throughout. Motion: ${pose.description}`,
+    input.plan.action === "wave" ? "When a neighboring drawing is supplied, keep the EXACT same waving arm on the same side of the image. Never switch the greeting to the other arm. Keep the resting arm, feet, torso and head in the same positions as that drawing, with appearance and colors from Image 1; only advance the waving arm along its motion. The established image side takes priority over ambiguous left/right wording." : "",
     "Maintain the exact body's position within the frame described by the motion. No artificial resetting of position. The final drawing is the end of the clip, not a return to its first pose. No blends, duplicated panels, motion blur or extra people.",
     input.repair ? `Repair the current drawing while preserving this pose: ${input.repair.join(" ")}` : "",
     input.note ? `Animator's correction: ${input.note}` : "",

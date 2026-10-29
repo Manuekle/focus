@@ -29,10 +29,10 @@ Files: `shared/flipbook.ts`, new `shared/sequence.ts`,
 Interfaces: `SequenceSettingsSchema`; `sequenceTicks(settings): number[]`;
 `sequenceFrameId(tick): string`; sequence plan mode and timestamped poses.
 
-- [ ] Add tests for 96/480 samples, shared 8/12/24 Hz ticks, strict IDs,
+- [x] Add tests for 96/480 samples, shared 8/12/24 Hz ticks, strict IDs,
   exact finite timing, and legacy-cycle parsing.
-- [ ] Add bounded sequence contracts without changing legacy frame IDs.
-- [ ] Verify with `pnpm exec vitest run shared/sequence.test.ts shared/flipbook.test.ts`.
+- [x] Add bounded sequence contracts without changing legacy frame IDs.
+- [x] Verify with `pnpm exec vitest run shared/sequence.test.ts shared/flipbook.test.ts`.
 
 ## Task 2: Planning, generation and revisions
 
@@ -44,12 +44,12 @@ Interfaces: `planSequence(input): Promise<FlipbookPlan>`;
 `reviseSequence(id, settings, gate): Promise<Flipbook>`; generation reuses
 existing `generateMissing` and per-frame version storage.
 
-- [ ] Test windowed absolute-time planning, continuity, budget reservation,
+- [x] Test windowed absolute-time planning, continuity, budget reservation,
   cancellation/retry and reuse of drawings at identical ticks.
-- [ ] Add sequence skeletons, bounded scheduling and stable revision snapshots.
-- [ ] Preserve staging positions with ensemble-style registration and avoid
+- [x] Add sequence skeletons, bounded scheduling and stable revision snapshots.
+- [x] Preserve staging positions with ensemble-style registration and avoid
   last-to-first neighbors in finite sequences.
-- [ ] Verify sequence lifecycle and existing cycle/ensemble tests.
+- [x] Verify sequence lifecycle and existing cycle/ensemble tests.
 
 ## Task 3: Full timeline and exports
 
@@ -59,11 +59,11 @@ frame-strip,export-panel,frame-panel}.tsx`, `server/animation/export.ts`.
 Interfaces: sequence creation options, complete drawing selection, persisted
 timeline revisions and finite exposure settings shared with exporter.
 
-- [ ] Add finite timing/export tests and check the first/last output frames.
-- [ ] Show mode, duration, density, pending counts and all timestamped drawings.
-- [ ] Bound sprite cache and thumbnail window; stop finite playback at end.
-- [ ] Page large atlases and stream frame files; retain legacy exports.
-- [ ] Clarify individual-frame correction and collapse technical metrics.
+- [x] Add finite timing/export tests and check the first/last output frames.
+- [x] Show mode, duration, density, pending counts and all timestamped drawings.
+- [x] Bound sprite cache and thumbnail window; stop finite playback at end.
+- [x] Page large atlases and stream frame files; retain legacy exports.
+- [x] Clarify individual-frame correction and collapse technical metrics.
 
 ## Task 4: Sound
 
@@ -74,9 +74,9 @@ shared contracts, player, exporter and client API.
 Interfaces: upload/read/remove track; audio settings `{version, offset,
 startsAt, volume}`; normalized AAC input to export.
 
-- [ ] Test detected media, byte limits, short/long/offset audio and cache keys.
-- [ ] Persist per-project tracks and integrate synchronized preview controls.
-- [ ] Mux audio to exact MP4 duration; label silent formats accurately.
+- [x] Test detected media, byte limits, short/long/offset audio and cache keys.
+- [x] Persist per-project tracks and integrate synchronized preview controls.
+- [x] Mux audio to exact MP4 duration; label silent formats accurately.
 
 ## Task 5: Duplicate with another character
 
@@ -87,9 +87,9 @@ Files: new `server/animation/duplicate.ts`,
 Interfaces: `duplicateFlipbook(source, target, ownerId): Promise<Flipbook>`;
 target is an uploaded image or an owned saved-character version.
 
-- [ ] Test distinct IDs, renewed identity, unchanged movement and original,
+- [x] Test distinct IDs, renewed identity, unchanged movement and original,
   independently copied background/audio/reference assets and access checks.
-- [ ] Prepare the copy without drawing automatically; open it in the studio.
+- [x] Prepare the copy without drawing automatically; open it in the studio.
 
 ## Task 6: Uploaded movement reference
 
@@ -100,16 +100,35 @@ Files: new `server/animation/motion-reference.ts`,
 Interfaces: upload validated local MP4/MOV, choose start/duration, persist
 24 Hz guide samples and pass matching guides with identity kept separate.
 
-- [ ] Test trimming, rotation, timestamps, source audio selection, invalid
+- [x] Test trimming, rotation, timestamps, source audio selection, invalid
   files and network/playlist rejection; prior plans survive failures.
-- [ ] Add preview/trim/attach UI, plan revision and per-frame guide images.
-- [ ] Mark model fidelity as requiring a real authorized visual test.
+- [x] Add preview/trim/attach UI, plan revision and per-frame guide images.
+- [x] Mark model fidelity as requiring a real authorized visual test.
 
 ## Task 7: Integration verification
 
-- [ ] Run TypeScript, ESLint and affected Vitest suites; fix regressions.
-- [ ] Exercise the local studio with simulated generation, desktop/mobile
+- [x] Run TypeScript, ESLint and affected Vitest suites; fix regressions.
+- [x] Exercise the local studio with simulated generation, desktop/mobile
   timeline controls, sound and duplication.
-- [ ] Update `docs/FLIPBOOK.md` with actual shipped behavior and limits.
-- [ ] Review the final diff against the approved spec and report remaining
+- [x] Update `docs/FLIPBOOK.md` with actual shipped behavior and limits.
+- [x] Review the final diff against the approved spec and report remaining
   visual/provider validation separately from automated correctness.
+
+
+## Verification — 2026-10-28
+
+- Full `pnpm test`: 546 passed; one optional load test skipped by configuration.
+- Additional sequence-planner contract tests: four passed, including all 480
+  absolute ticks, bounded windows, density reuse and rejected invalid plans.
+- Browser checks: three continuous-Flipbook scenarios and three existing chat
+  scenarios passed. Creation sends the default 4 s / 24 drawings/s request;
+  desktop/mobile timeline controls and restored-cycle timing were exercised.
+- `pnpm typecheck`, `pnpm lint` and production `pnpm build` passed.
+- The simulated full 20-second generation completed all 480 registered drawings
+  with at most two simultaneous image requests. MP4 audio, ZIP timing and paged
+  atlases were checked with FFmpeg and decoded output.
+- Independent review verified the corrected density/revision reuse, finite
+  review windows, ownership, bounded media execution, cancellation reservations,
+  bounded ZIP verification and protection of approvals during active work.
+- No real paid image-generation test was run. Appearance consistency, anatomy
+  and reference-video fidelity still need visual evaluation with real output.

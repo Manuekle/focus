@@ -41,6 +41,7 @@ import { MotionReferencePanel } from "./motion-reference-panel";
 import { ProgressSteps, ReferencePanel } from "./reference-panel";
 import { SequencePlayer, type PlayerBackground } from "./sequence-player";
 import styles from "./flipbook.module.css";
+import { ScrollArea } from "../../components/ui/scroll-area";
 
 type Confirm = { readonly message: string; readonly run: () => Promise<Flipbook> };
 
@@ -343,7 +344,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
       ) : null}
 
       <div className={styles.grid}>
-        <div className={styles.columnSide}>
+        <ScrollArea className={styles.columnSide} viewportClassName={styles.columnViewport} contentClassName={styles.columnContent}>
           <ReferencePanel
             flipbook={flipbook}
             busy={locked}
@@ -378,9 +379,9 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
               return next;
             })}
           />
-        </div>
+        </ScrollArea>
 
-        <div className={styles.columnMain}>
+        <ScrollArea className={styles.columnMain} viewportClassName={styles.columnViewport} contentClassName={styles.columnContent}>
           <SequencePlayer
             key={`${flipbook.id}:${finite}:${sequenceFps}:${sequenceSeconds}`}
             frames={playerFrames}
@@ -408,9 +409,9 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             onPlayback={applyPlayback}
             onApplyPoses={(changes, confirmExtra, proposalId) => run((extra) => flipbookApi.applyChat(flipbook.id, { ...(proposalId ? { proposalId } : { changes: changes.map((change) => ({ frame: change.frame as FrameId, description: change.description })) }), confirmExtra: extra }), confirmExtra)}
           />}
-        </div>
+        </ScrollArea>
 
-        <div className={styles.columnSide}>
+        <ScrollArea className={styles.columnSide} viewportClassName={styles.columnViewport} contentClassName={styles.columnContent}>
           {frame ? (
             <FramePanel
               key={frame.id}
@@ -450,7 +451,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             sending={sending}
             onSendToEditor={() => void sendToEditor()}
           />
-        </div>
+        </ScrollArea>
       </div>
 
       <MediaLightbox

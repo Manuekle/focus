@@ -13,6 +13,7 @@ import { AppError } from "../errors";
 import { metaClient, metaError, plannerLimiter, requireMetaConfig, withRetry } from "../ai/meta";
 import { recordUsage } from "../ai/usage";
 import type { Measure } from "./frame-alignment";
+import { stationaryColorsDiffer, type BodyColors } from "./appearance-consistency";
 
 // Frame quality control. The automatic checks measure things pixels can
 // show — framing, scale drift, color drift, flat background, silhouettes
@@ -30,6 +31,8 @@ export type QcEntry = {
   readonly relativeRootY?: number;
   /** Aligned sprite PNG (cell size). */
   readonly sprite: Buffer;
+  /** Interior torso colors, only for a planned gesture whose torso stays still. */
+  readonly stationaryColors?: BodyColors;
 };
 
 export type QcResult = { readonly warnings: FrameWarning[]; readonly relativeScale: number; readonly colorDistance: number | null };
@@ -67,7 +70,7 @@ const median = (values: readonly number[]) => {
 };
 
 /** Checks every ready frame, in playback order (the loop's wrap counts as a neighbor). */
-export async function checkFrames(entries: readonly QcEntry[], referenceHistogram: readonly number[] | null, action: AnimationAction = "walk", view: string = "side", finite = false): Promise<Map<string, QcResult>> {
+export async function checkFrames(entries: readonly QcEntry[], referenceHistogram: readonly number[] | null, action: AnimationAction = "walk", view: string = "side", finite = false, stationaryReference?: BodyColors): Promise<Map<string, QcResult>> {
   const spec = actionSpec(action);
   const stride = !finite && view === "side" ? spec.stride : null;
   // A scene has several figures that move about a fixed frame: neither a second figure nor a shifting center of mass is a fault.
@@ -92,7 +95,8 @@ export async function checkFrames(entries: readonly QcEntry[], referenceHistogra
       warnings.push({ code: "scale_corrected", message: `Drawn ${relativeScale > 1 ? "smaller" : "larger"} than the others; resized by ${Math.round(Math.abs(relativeScale - 1) * 100)}% to match. Check the proportions.` });
     }
     const colorDistance = referenceHistogram ? histogramDistance(measure.histogram, referenceHistogram) : null;
-    if (colorDistance !== null && colorDistance > 0.38) warnings.push({ code: "color_shift", message: "Its colors differ noticeably from the reference character." });
+    const localColorShift = entry.stationaryColors && stationaryReference && stationaryColorsDiffer(entry.stationaryColors, stationaryReference);
+    if ((colorDistance !== null && colorDistance > 0.38) || localColorShift) warnings.push({ code: "color_shift", message: "Its colors differ noticeably from the reference character." });
     if (measure.method !== "alpha" && measure.backgroundUniformity < 0.85) warnings.push({ code: "background_not_plain", message: "Muse Image drew a background here; the cut-out may include part of it." });
     if (measure.method === "key") warnings.push({ code: "key_extraction", message: "Cut out by its flat background color (SAM found no match). Check the edges." });
     if (measure.multiple && !group) warnings.push({ code: "multiple_subjects", message: "More than one figure was found in this drawing; the largest was kept." });

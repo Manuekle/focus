@@ -3,13 +3,13 @@
     position: relative;
   }
 
-  /* Figma's half-pixel inside stroke. A mask preserves its width at each
-     pixel density without rounding a CSS border or shifting the contents. */
+  /* The reference's 1px inside stroke follows every size and radius
+     without shifting the contents or covering the focus outline. */
   .highlight::before {
     content: "";
     position: absolute;
     inset: 0;
-    padding: 0.5px;
+    padding: 1px;
     border-radius: inherit;
     background: var(--btn-surface-stroke);
     mask: linear-gradient(#fff 0 0) content-box, linear-gradient(#fff 0 0);

@@ -9,9 +9,9 @@ elegida»**, confirmado en el chat. Aumentar los dibujos por segundo añade
 dibujos del movimiento y conserva la duración. La coreografía se desarrolla
 durante el clip completo; no se obtiene repitiendo las ocho poses iniciales.
 
-Este documento concreta el diseño presentado en el chat. La elección del modo
-continuo está aprobada; los detalles siguientes se entregan para revisión antes
-de implementar. No autoriza ejecutar pruebas con generación de imágenes de pago.
+El usuario aprobó este diseño completo en el chat con «lo apruebo».
+La implementación y sus verificaciones usan proveedores simulados; la aprobación
+del diseño no inicia por sí sola una prueba con cientos de imágenes de pago.
 
 ## Problema verificado
 

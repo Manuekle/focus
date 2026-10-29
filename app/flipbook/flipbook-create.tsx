@@ -155,6 +155,7 @@ export function FlipbookCreate({
   const [motionFile, setMotionFile] = useState<File | undefined>();
   const [living, setLiving] = useState<LivingPreview>({ video: null, busy: false, highlight: null });
   const touched = useRef(false);
+  const motionInput = useRef<HTMLInputElement>(null);
   const handle = useRef<UploadHandle | null>(null);
 
   useEffect(() => () => handle.current?.abort(), []);
@@ -332,7 +333,16 @@ export function FlipbookCreate({
 
           {mode === "living" ? <LivingPanel image={image} onPreview={setLiving} /> : <>
           {mode === "sequence" ? <SequenceFields value={sequence} onChange={setSequence} disabled={creating} /> : null}
-          {mode === "sequence" ? <label className={styles.field}>Movement reference video (optional)<input type="file" accept="video/mp4,video/quicktime,.mp4,.mov" disabled={creating} onChange={(event) => setMotionFile(event.target.files?.[0])} /><span className={styles.hint}>{motionFile ? motionFile.name : "You can trim and apply the video in the animation editor. The first motion plan uses your written instruction."}</span></label> : null}
+          {mode === "sequence" ? <div className={styles.controlField}>
+            <span className={composer.label}>Movement reference video (optional)</span>
+            <input ref={motionInput} type="file" accept="video/mp4,video/quicktime,.mp4,.mov" disabled={creating} className="sr-only" tabIndex={-1} aria-hidden onChange={(event) => { setMotionFile(event.currentTarget.files?.[0]); event.currentTarget.value = ""; }} />
+            <div className={styles.buttonRow}>
+              <Button type="button" size="sm" variant="outline" disabled={creating} onClick={() => motionInput.current?.click()}>{motionFile ? "Replace reference video" : "Choose reference video"}</Button>
+              {motionFile ? <Button type="button" size="sm" variant="ghost" disabled={creating} onClick={() => setMotionFile(undefined)}>Remove video</Button> : null}
+            </div>
+            {motionFile ? <p className={styles.uploadName}>{motionFile.name}</p> : null}
+            <p className={styles.hint}>You can trim and apply the video in the animation editor. The first motion plan uses your written instruction.</p>
+          </div> : null}
           <div className={composer.group}>
             <label htmlFor="flipbook-camera-view" className={composer.label}>Camera view</label>
             <Select id="flipbook-camera-view" value={cameraView} options={VIEW_OPTIONS} onValueChange={(value) => { touched.current = true; const next = value as ViewPreference; setCameraView(next); if (["front", "back", "high", "low"].includes(next) && travels(action)) setDirection("in_place"); }} />

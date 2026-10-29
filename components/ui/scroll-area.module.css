@@ -1,0 +1,56 @@
+@layer components {
+.area, .surface {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex-direction: column;
+  isolation: isolate;
+}
+.surface { flex: 1; }
+
+.viewport {
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+  scrollbar-gutter: stable;
+}
+
+.edge {
+  position: absolute;
+  z-index: 2;
+  inset-inline: 0;
+  height: 36px;
+  max-height: 25%;
+  pointer-events: none;
+  opacity: 0;
+  background: color-mix(in srgb, var(--background) 45%, transparent);
+  backdrop-filter: blur(6px);
+  transition: opacity 150ms ease-out;
+}
+
+.top {
+  top: 0;
+  mask-image: linear-gradient(to bottom, #000, transparent);
+}
+
+.bottom {
+  bottom: 0;
+  mask-image: linear-gradient(to top, #000, transparent);
+}
+
+.area[data-scrolling="true"][data-fade-top="true"] > .surface > .top,
+.area[data-scrolling="true"][data-fade-bottom="true"] > .surface > .bottom {
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .edge { transition: none; backdrop-filter: none; }
+}
+
+@media (forced-colors: active) {
+  .edge { display: none; }
+}
+}

@@ -3,6 +3,7 @@ import { ACTION_SPECS, type CharacterAnalysis } from "../../shared/flipbook";
 import { drawInbetween, drawPose } from "./frame-generation";
 import { generateImage } from "./muse-image";
 import { parsePlanOutput } from "./pose-planning";
+import { planWaveSequence } from "./wave-sequence";
 
 vi.mock("./muse-image", () => ({ generateImage: vi.fn().mockResolvedValue({ png: Buffer.from("drawn"), width: 1024, height: 1536 }) }));
 const analysis: CharacterAnalysis = {
@@ -25,6 +26,40 @@ it("draws distinct temporal positions from the same two keys and identity", asyn
     expect(request.prompt).toContain(`exactly ${progress} of the way from Image 2 to Image 3`);
     expect(request.prompt).toContain("swing along arcs from their joints");
   }
+});
+
+it("draws a sequence transition from its two bounding keys at the exact clip time", async () => {
+  const wave = planWaveSequence({ durationSeconds: 4, drawingFps: 12 }, "front", "wave");
+  const from = Buffer.from("hand down"), to = Buffer.from("hand halfway up");
+  await drawPose({ reference: anchor, neighbor: Buffer.from("unrelated previous pose"), analysis, plan: wave, index: 2, note: "Keep the hand below the waist",
+    temporalPair: { from, to, fromIndex: 0, toIndex: 6, position: 1 / 3 }, flipbookId: "test" });
+  const request = vi.mocked(generateImage).mock.lastCall![0];
+  expect(request.references.map((entry) => entry.png)).toEqual([anchor, from, to]);
+  expect(request.prompt).toContain("exactly 33.3% of the way from Image 2 to Image 3");
+  expect(request.prompt).toContain(`Exact time: ${2 / 12} s`);
+  expect(request.prompt).toContain("Only the specified waving arm moves");
+  expect(request.prompt).toContain("Animator's correction for this intermediate: Keep the hand below the waist");
+  expect(request.prompt).toContain("Image 1 is the sole authority for garment colors");
+  expect(request.prompt).toContain("Never blend or interpolate garment colors between the keys");
+  expect(request.references[1].role).toContain("never a color authority");
+});
+
+it("keeps garment colors anchored during drawing, sequence repair and in-between generation", async () => {
+  const wave = planWaveSequence({ durationSeconds: 4, drawingFps: 12 }, "front", "wave");
+  const neighbor = Buffer.from("neighbor with an incorrectly brightened shirt");
+  for (const selectedPlan of [plan, wave]) for (const repair of [null, { png: Buffer.from("repair"), problems: ["shirt changed color"] }]) {
+    await drawPose({ reference: anchor, neighbor, repair, analysis, plan: selectedPlan, index: 1, flipbookId: "test" });
+    const request = vi.mocked(generateImage).mock.lastCall![0];
+    expect(request.references[0].png).toBe(anchor);
+    expect(request.prompt).toContain("Image 1 is the sole authority for garment colors");
+    expect(request.prompt).toContain("Any appearance difference in a generated drawing is an error");
+    expect(request.references.find((entry) => entry.png === neighbor)?.role).toContain("Image 1 controls colors");
+    expect(request.prompt).not.toMatch(/match its size, line weight and colors/);
+  }
+  await drawInbetween({ reference: anchor, from: neighbor, to: neighbor, analysis, plan, fromIndex: 0, toIndex: 1, flipbookId: "test" });
+  const request = vi.mocked(generateImage).mock.lastCall![0];
+  expect(request.prompt).toContain("Image 1 is the sole authority for garment colors");
+  expect(request.prompt).not.toContain("line weight, colors, shading, the camera");
 });
 
 describe("pose reference roles", () => {

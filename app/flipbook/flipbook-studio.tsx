@@ -3,10 +3,11 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Add01Icon, Delete02Icon, UserGroupIcon, UserMultiple02Icon } from "@hugeicons/core-free-icons";
+import { Add01Icon, Delete02Icon, PanelLeftCloseIcon, PanelLeftOpenIcon, UserGroupIcon, UserMultiple02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { ProgressMeter } from "../../components/ui/progress-meter";
+import { ScrollArea } from "../../components/ui/scroll-area";
 import { useToast } from "../../components/toast-provider";
 import { cn } from "../../lib/utils";
 import { ACTION_SPECS, FLIPBOOK_TITLE_MAX, flipbookTitle, type CreateEnsembleRequest, type Flipbook, type FlipbookImage, type FlipbookSummary } from "../../shared/flipbook";
@@ -147,9 +148,12 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
   };
 
   return (
-    <div className={shell.studio}>
-      <header className={shell.header}>
+    <div className={cn(shell.studio, styles.studio)}>
+      <header className={cn(shell.header, styles.header)}>
         <div className={shell.headerStart}>
+          <Button variant="ghost" size="icon-sm" className={styles.sidebarToggle} aria-label={sidebar.collapsed ? "Show sidebar" : "Hide sidebar"} aria-expanded={!sidebar.collapsed} aria-controls="flipbook-library" data-static onClick={() => sidebar.commitCollapsed(!sidebar.collapsed)}>
+            <HugeiconsIcon icon={sidebar.collapsed ? PanelLeftOpenIcon : PanelLeftCloseIcon} size={18} strokeWidth={1.75} />
+          </Button>
           <Link href="/" className={shell.brand} aria-label="Focus — Home">
             <Image src="/brand/focus-cat.webp" alt="" width={30} height={30} />
             <span>focus<span className={shell.brandDot}>.</span></span>
@@ -157,7 +161,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
           {flipbook && owned ? (
             <input
               aria-label="Animation name"
-              className={shell.title}
+              className={cn(shell.title, styles.headerTitle)}
               value={title}
               maxLength={FLIPBOOK_TITLE_MAX}
               onChange={(event) => setTitle(event.target.value)}
@@ -165,7 +169,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
               onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }}
             />
           ) : flipbook ? (
-            <span className={shell.titleStatic}>{flipbookTitle(flipbook)}</span>
+            <span className={cn(shell.titleStatic, styles.headerTitle)}>{flipbookTitle(flipbook)}</span>
           ) : null}
           {owned ? <span className={shell.saved}>Saved to your animations</span> : null}
         </div>
@@ -173,9 +177,10 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
         <div className={shell.headerEnd}><AccountButton session={session} next={here} /></div>
       </header>
 
-      <div className={shell.body} {...sidebar.bodyProps}>
-        <SidebarResizer sidebar={sidebar} />
-        <aside className={shell.sidebar} aria-label={user ? "Your animations" : "Account"}>
+      <div className={cn(shell.body, styles.body)} {...sidebar.bodyProps}>
+        <SidebarResizer sidebar={sidebar} showToggle={false} />
+        <aside id="flipbook-library" className={cn(shell.sidebar, styles.sidebar)} aria-label={user ? "Your animations" : "Account"}>
+          <ScrollArea className={styles.sidebarScroll} contentClassName={styles.sidebarContent}>
           <Button variant="outline" size="sm" className="w-full justify-start" onClick={startOver}>
             <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
             New animation
@@ -237,9 +242,10 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
               <FacebookButton next={here} label="Sign in with Facebook" className="h-9 whitespace-nowrap px-3 text-[13px]" />
             </section>
           ) : null}
+          </ScrollArea>
         </aside>
 
-        <main className={shell.main}>
+        <ScrollArea as="main" className={cn(shell.main, styles.main)} viewportClassName={styles.mainViewport} contentClassName={styles.mainContent}>
           {pollError ? <p className={styles.hint} data-invalid="" role="status">{pollError}</p> : null}
           {!together && characterSource && !flipbook && importError ? <p className={styles.hint} role="alert">{importError} <Link href="/characters">Open my characters</Link></p> : !together && characterSource && !flipbook && !imported ? <FlipbookSkeleton /> : flipbookId && !flipbook && !loadError ? (
             <FlipbookSkeleton />
@@ -273,7 +279,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
               />}
             </>
           )}
-        </main>
+        </ScrollArea>
       </div>
       <LoginDialog open={login !== null} onOpenChange={(open) => { if (!open) setLogin(null); }} next={here} reason={login ?? "save"} />
     </div>

@@ -1,20 +1,23 @@
 "use client";
 
-import { useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { Button } from "../../components/ui/button";
-import { ToggleChip } from "../../components/ui/toggle-chip";
+import { Select } from "../../components/ui/select";
+import { Slider } from "../../components/ui/slider";
 import { DEFAULT_SEQUENCE, type SequenceSettings } from "../../shared/sequence";
 import type { Flipbook } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
 
 export function SequenceFields({ value, onChange, disabled = false }: { value: SequenceSettings; onChange: (value: SequenceSettings) => void; disabled?: boolean }) {
+  const lengthLabel = useId();
   return <>
-    <label className={styles.field}>Length · {value.durationSeconds} s
-      <input type="range" min={1} max={20} step={1} value={value.durationSeconds} disabled={disabled} onChange={(event) => onChange({ ...value, durationSeconds: Number(event.target.value) })} aria-valuetext={`${value.durationSeconds} seconds`} />
-    </label>
-    <fieldset disabled={disabled} className={styles.field}>
+    <div className={styles.controlField}>
+      <div className={styles.controlHeading}><span id={lengthLabel} className={styles.controlLabel}>Length</span><output className={styles.controlValue}>{value.durationSeconds} s</output></div>
+      <Slider min={1} max={20} step={1} value={[value.durationSeconds]} disabled={disabled} onValueChange={([durationSeconds]) => onChange({ ...value, durationSeconds })} aria-labelledby={lengthLabel} aria-valuetext={`${value.durationSeconds} seconds`} />
+    </div>
+    <fieldset disabled={disabled} className={styles.controlField}>
       <legend className={styles.controlLabel}>Drawings per second</legend>
-      <div className={styles.chips}>{([8, 12, 24] as const).map((drawingFps) => <ToggleChip key={drawingFps} size="xs" selected={value.drawingFps === drawingFps} onClick={() => onChange({ ...value, drawingFps })}>{drawingFps}</ToggleChip>)}</div>
+      <div className={styles.chips}>{([8, 12, 24] as const).map((drawingFps) => <Button type="button" key={drawingFps} size="sm" className="flex-1" variant={value.drawingFps === drawingFps ? "default" : "outline"} aria-pressed={value.drawingFps === drawingFps} disabled={disabled} onClick={() => onChange({ ...value, drawingFps })}>{drawingFps}</Button>)}</div>
     </fieldset>
     <p className={styles.hint} role="status">{value.durationSeconds * value.drawingFps} drawings across {value.durationSeconds} s. Increasing density adds drawings and keeps the movement’s timing. MP4 plays at 60 fps.</p>
   </>;
@@ -23,16 +26,23 @@ export function SequenceFields({ value, onChange, disabled = false }: { value: S
 export function SequenceControls({ flipbook, disabled, onPlan, onRestore }: { flipbook: Flipbook; disabled: boolean; onPlan: (settings: SequenceSettings) => void; onRestore: (id: string) => void }) {
   const [value, setValue] = useState(flipbook.sequence ?? DEFAULT_SEQUENCE);
   const unchanged = flipbook.sequence?.durationSeconds === value.durationSeconds && flipbook.sequence.drawingFps === value.drawingFps;
+  const revisions = useMemo(() => [...(flipbook.revisions ?? [])].reverse(), [flipbook.revisions]);
   return <section className={styles.panel} aria-labelledby="sequence-title">
     <h2 id="sequence-title" className={styles.panelTitle}>Continuous sequence</h2>
     <SequenceFields value={value} onChange={setValue} disabled={disabled} />
     <Button size="sm" disabled={disabled || unchanged} onClick={() => onPlan(value)}>{flipbook.sequence ? "Update motion plan" : "Create a continuous motion plan"}</Button>
     <p className={styles.hint}>Plans the complete action first. Generate pending drawings when you are ready; changing these controls does not draw automatically.</p>
-    {flipbook.revisions?.length ? <label className={styles.field}>Motion history
-      <select className={styles.fieldInput} value="" disabled={disabled} onChange={(event) => { if (event.target.value) onRestore(event.target.value); }}>
-        <option value="">Restore a previous motion…</option>
-        {[...flipbook.revisions].reverse().map((entry) => <option key={entry.id} value={entry.id}>{new Date(entry.createdAt).toLocaleTimeString()} · {entry.plan.mode === "sequence" ? "Sequence" : "Cycle"} · {entry.plan.durationSeconds} s · {entry.frames.length} drawings</option>)}
-      </select>
-    </label> : null}
+    {revisions.length ? <div className={styles.controlField}>
+      <label className={styles.controlLabel} htmlFor="motion-history-select">Motion history</label>
+      <Select
+        id="motion-history-select"
+        value=""
+        disabled={disabled}
+        placeholder="Restore a previous motion…"
+        aria-label="Motion history"
+        options={revisions.map((entry) => ({ value: entry.id, label: `${new Date(entry.createdAt).toLocaleTimeString()} · ${entry.plan.mode === "sequence" ? "Sequence" : "Cycle"} · ${entry.frames.length} drawings` }))}
+        onValueChange={(id) => { if (id) onRestore(id); }}
+      />
+    </div> : null}
   </section>;
 }

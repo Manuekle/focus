@@ -168,7 +168,7 @@ export function BackgroundPanel({
         {bare && !generated ? <p className={styles.hint}>Your drawing has no background. Describe a setting and Focus draws it in the same style, ready to stay still or move.</p> : null}
         <div className={styles.chips} role="group" aria-label="Ideas for the background">
           {IDEAS.map((idea) => (
-            <ToggleChip key={idea} size="xs" selected={prompt === idea} disabled={busy || generating} onClick={() => setPrompt(idea)}>{idea.split(",")[0].replace(/^an? /, "")}</ToggleChip>
+            <ToggleChip key={idea} size="xs" className="h-auto min-h-7 max-w-full whitespace-normal py-1 text-left" selected={prompt === idea} disabled={busy || generating} onClick={() => setPrompt(idea)}>{idea.split(",")[0].replace(/^an? /, "")}</ToggleChip>
           ))}
         </div>
         <div className={styles.field}>

@@ -10,6 +10,22 @@ function fixture() {
   return { id, imageId: randomUUID(), status: "ready", prompt: "Dance across the whole clip", title: "Continuous test", detail: null, progress: null, source: { width: 512, height: 768, hasAlpha: true }, analysis: null, sequence: { durationSeconds: 4, drawingFps: 24 }, plan: { mode: "sequence", motionId: randomUUID(), action: "dance", direction: "right", view: "side", motion: "in_place", drawingFps: 24, durationSeconds: 4, loop: false, poses }, warnings: [], reference: { kind: "original", version, reason: "Fixture reference", createdAt: now }, frames, order: frames.map((frame) => frame.id), alignment: { cellWidth: 512, cellHeight: 768, baselineY: 768, targetHeight: 768, strideX: 0, strideMeasured: false, transforms: Object.fromEntries(frames.map((frame) => [frame.id, { version, scale: 1, left: 0, top: 0, key: "1234567890abcdef" }])) }, budget: { limit: 96, used: 96 }, backgrounds: { scene: false, custom: false }, review: null, exports: [], error: null, createdAt: now, updatedAt: now };
 }
 
+test("creation defaults to 96 drawings and sends continuous settings", async ({ page }) => {
+  const book = fixture();
+  const image = { id: book.imageId, originalName: "character.png", width: 512, height: 768, hasAlpha: true, createdAt: book.createdAt, url: `data:image/png;base64,${pixel.toString("base64")}` };
+  const analysis = { characterCount: 1, subject: "character", facing: "right", view: "side", fullBodyVisible: true, feetVisible: true, background: "plain", style: "flat", hair: "short", clothing: "shirt", accessories: [], palette: ["#3366aa"], proportions: "human", requestedAction: "walk" };
+  let created: unknown;
+  await page.route("**/api/flipbooks/images", (route) => route.fulfill({ status: 201, json: image }));
+  await page.route(`**/api/flipbooks/images/${image.id}/look`, (route) => route.fulfill({ json: { imageId: image.id, analysis, summary: "A full-body character", setting: null, warnings: [], ideas: [], layers: { character: true, scene: false } } }));
+  await page.route("**/api/flipbooks", (route) => { created = route.request().postDataJSON(); return route.fulfill({ status: 202, json: book }); });
+  await page.route(`**/api/flipbooks/${book.id}/media**`, (route) => route.fulfill({ body: pixel, contentType: "image/png" }));
+  await page.goto("/flipbook");
+  await page.locator('input[type="file"][accept*="image/png"]').first().setInputFiles({ name: "character.png", mimeType: "image/png", buffer: pixel });
+  await expect(page.getByText(/96 drawings across 4 s/)).toBeVisible();
+  await page.getByRole("button", { name: "Prepare continuous animation", exact: true }).click();
+  await expect.poll(() => created).toMatchObject({ imageId: image.id, sequence: { durationSeconds: 4, drawingFps: 24 } });
+});
+
 test("the complete timeline, finite playback and all new controls work on desktop and mobile", async ({ page }) => {
   const book = fixture();
   await page.route(`**/api/flipbooks/${book.id}`, (route) => route.fulfill({ json: book }));
@@ -40,10 +56,14 @@ test("restoring a cycle resynchronizes its drawing rate after a continuous seque
   const plan = { ...book.plan, mode: "cycle", motionId: undefined, loop: true, drawingFps: 8, durationSeconds: 2, poses };
   const alignment = { ...book.alignment, transforms: Object.fromEntries(frames.map((frame, i) => [frame.id, book.alignment.transforms[`s${i}`]])) };
   const snapshot = { id: "v-abcdef123456", createdAt: book.createdAt, plan, frames, order: frames.map((frame) => frame.id), alignment };
-  await page.route(`**/api/flipbooks/${book.id}`, (route) => route.fulfill({ json: route.request().method() === "POST" ? { ...book, sequence: undefined, plan, frames, order: snapshot.order, alignment, look: { settings: { drawingFps: 8, durationSeconds: 2, motion: "in_place", aspect: "16:9", speed: 1 }, background: { kind: "color", color: "#ffffff" } }, revisions: [] } : { ...book, revisions: [snapshot] } }));
+  await page.route(`**/api/flipbooks/${book.id}`, (route) => {
+    const restore = route.request().method() === "POST" && route.request().postDataJSON()?.action === "revision";
+    return route.fulfill({ json: restore ? { ...book, sequence: undefined, plan, frames, order: snapshot.order, alignment, look: { settings: { drawingFps: 8, durationSeconds: 2, motion: "in_place", aspect: "16:9", speed: 1 }, background: { kind: "color", color: "#ffffff" } }, revisions: [] } : { ...book, revisions: [snapshot] } });
+  });
   await page.route(`**/api/flipbooks/${book.id}/media**`, (route) => route.fulfill({ body: pixel, contentType: "image/png" }));
   await page.goto(`/flipbook?f=${book.id}`);
-  await page.getByLabel("Motion history", { exact: true }).selectOption(snapshot.id);
+  await page.getByLabel("Motion history").click();
+  await page.getByRole("option", { name: /Cycle.*8 drawings/ }).click();
   await expect(page.getByText(/Each drawing is held for 125 ms/)).toBeVisible();
   await expect(page.getByRole("button", { name: "Loop", exact: true })).toHaveAttribute("aria-pressed", "true");
 });

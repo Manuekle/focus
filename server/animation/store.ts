@@ -179,11 +179,12 @@ export function updateFlipbook(id: string, change: (current: Flipbook) => Flipbo
 
 export async function getFlipbook(id: string): Promise<Flipbook> {
   const flipbook = await readState(parseFlipbookId(id));
+  const unfinished = (book: Flipbook) => ACTIVE_FLIPBOOK_STATUSES.includes(book.status) || book.queuedDrawings?.length || book.frames.some((frame) => frame.status === "generating");
   // Active with no live worker: the server restarted mid-run.
-  if ((ACTIVE_FLIPBOOK_STATUSES.includes(flipbook.status) || flipbook.queuedDrawings?.length) && !runtime.running.has(flipbook.id)) {
+  if (unfinished(flipbook) && !runtime.running.has(flipbook.id)) {
     return withLock(flipbook.id, async () => {
       const current = await readState(flipbook.id);
-      if ((!ACTIVE_FLIPBOOK_STATUSES.includes(current.status) && !current.queuedDrawings?.length) || runtime.running.has(current.id)) return current;
+      if (!unfinished(current) || runtime.running.has(current.id)) return current;
       const usable = Boolean(current.plan && current.reference);
       return writeState({
         ...current,
