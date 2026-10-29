@@ -18,6 +18,8 @@ import {
   type BackgroundMedia,
   flipbookUrls,
   orderedFrames,
+  frameNeedsAttention,
+  repairableFrames,
   playbackCycle,
   type ExportFormat,
   type Flipbook,
@@ -44,6 +46,7 @@ import styles from "./flipbook.module.css";
 import { ScrollArea } from "../../components/ui/scroll-area";
 
 type Confirm = { readonly message: string; readonly run: () => Promise<Flipbook> };
+type RequestFailure = { readonly message: string; readonly request: (confirmExtra: boolean) => Promise<Flipbook> };
 
 export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly flipbook: Flipbook; readonly onChange: (flipbook: Flipbook) => void; readonly onStartOver: () => void }) {
   const { toast } = useToast();
@@ -97,6 +100,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   const [sending, setSending] = useState(false);
   const [reviewing, setReviewing] = useState(false);
   const [confirm, setConfirm] = useState<Confirm | null>(null);
+  const [requestError, setRequestError] = useState<RequestFailure | null>(null);
   const [sheetOpen, setSheetOpen] = useState(false);
 
   const active = isActive(flipbook);
@@ -110,6 +114,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   /** Runs one request; a budget refusal turns into an explicit confirmation. */
   const run = useCallback(async (request: (confirmExtra: boolean) => Promise<Flipbook>, confirmExtra = false): Promise<boolean> => {
     setBusy(true);
+    setRequestError(null);
     try {
       onChange(await request(confirmExtra));
       setConfirm(null);
@@ -118,20 +123,21 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
       if (error instanceof FlipbookApiError && error.code === "budget_reached" && !confirmExtra) {
         setConfirm({ message: error.message, run: () => request(true) });
       } else {
-        toast({ title: "That didn’t work", description: error instanceof Error ? error.message : "Try again.", status: "error" });
+        setRequestError({ message: error instanceof Error ? error.message : "Try again.", request: (extra) => request(extra || confirmExtra) });
       }
       return false;
     } finally {
       setBusy(false);
     }
-  }, [onChange, toast]);
+  }, [onChange]);
 
   const select = (index: number) => {
     setSelected(index);
     setSeekNonce((value) => value + 1);
   };
 
-  const frame = frames[Math.min(selected, frames.length - 1)];
+  const selectedIndex = Math.min(selected, Math.max(0, frames.length - 1));
+  const frame = frames[selectedIndex];
   // Stable props for the player: new objects only when what they describe changes.
   const alignment = flipbook.alignment;
   const cellWidth = alignment?.cellWidth ?? 512;
@@ -286,6 +292,10 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
 
   const missing = flipbook.frames.filter((entry) => entry.status === "pending" || entry.status === "failed").length;
   const readyCount = flipbook.frames.filter((entry) => entry.status === "ready").length;
+  const flagged = frames.filter(frameNeedsAttention);
+  const repairable = repairableFrames(flipbook);
+  const approvedFlagged = flagged.filter((entry) => entry.approved).length;
+  const canRetryPreparation = !scene && !flipbook.reference && (flipbook.status === "failed" || flipbook.status === "canceled");
 
   return (
     <div className={styles.editor}>
@@ -323,18 +333,36 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
       {confirm ? (
         <Alert tone="warning" title="Drawing budget reached" action={
           <div className={styles.buttonRow}>
-            <Button size="sm" onClick={() => { const pending = confirm; setConfirm(null); void run(() => pending.run()); }}>Draw anyway</Button>
+            <Button size="sm" disabled={locked} onClick={() => { const pending = confirm; setConfirm(null); void run(() => pending.run(), true); }}>Draw anyway</Button>
             <Button size="sm" variant="ghost" onClick={() => setConfirm(null)}>Not now</Button>
           </div>
         }>{confirm.message} Each drawing is one paid Muse Image request.</Alert>
       ) : null}
 
+      {requestError ? (
+        <Alert tone="error" role="alert" title="The change couldn’t be completed" onDismiss={() => setRequestError(null)} action={<Button size="sm" variant="outline" disabled={locked} onClick={() => { void run(requestError.request); }}>Try again</Button>}>
+          {requestError.message}
+        </Alert>
+      ) : null}
+
       {flipbook.status === "unsupported" || (flipbook.status === "failed" && !flipbook.reference) || flipbook.status === "canceled" ? (
-        <Alert tone={flipbook.status === "canceled" ? "info" : "error"} title={flipbook.status === "unsupported" ? "This animation isn’t supported yet" : flipbook.status === "canceled" ? "Canceled" : "This animation couldn’t be made"} action={<Button size="sm" variant="outline" onClick={onStartOver}>Start over</Button>}>
+        <Alert tone={flipbook.status === "canceled" ? "info" : "error"} role={flipbook.status === "canceled" ? "status" : "alert"} title={flipbook.status === "unsupported" ? "This animation isn’t supported yet" : flipbook.status === "canceled" ? "Canceled" : "This animation couldn’t be made"} action={<>
+          {canRetryPreparation ? <Button size="sm" disabled={locked} onClick={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "retry", confirmExtra }))}>Retry preparation</Button> : null}
+          <Button size="sm" variant="outline" onClick={onStartOver}>Start over</Button>
+        </>}>
           {flipbook.error ? messageFor(flipbook.error.code, flipbook.error.message) : "Start again with another illustration or instruction."}
         </Alert>
       ) : flipbook.error && !active ? (
-        <Alert tone="error" size="sm">{messageFor(flipbook.error.code, flipbook.error.message)}</Alert>
+        <Alert tone="error" role="alert" size="sm">{messageFor(flipbook.error.code, flipbook.error.message)}</Alert>
+      ) : null}
+
+      {flagged.length > 0 && !active ? (
+        <Alert tone="warning" title={`${flagged.length} ${flagged.length === 1 ? "drawing needs" : "drawings need"} attention`} action={repairable.length ? <Button size="sm" variant="ai" disabled={locked || !flipbook.plan || !flipbook.reference} onClick={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "enhance_flagged", confirmExtra }))}>Fix all {repairable.length} {repairable.length === 1 ? "drawing" : "drawings"}</Button> : undefined}>
+          {repairable.length ? `AI will use each drawing’s warnings to fix it while keeping its pose. This uses ${repairable.length} new ${repairable.length === 1 ? "drawing" : "drawings"}; previous versions stay in history.` : "Select a marked drawing to review its warnings or retry it."}
+          {approvedFlagged ? ` ${approvedFlagged} approved ${approvedFlagged === 1 ? "drawing stays" : "drawings stay"} unchanged. Unapprove ${approvedFlagged === 1 ? "it" : "them"} to include ${approvedFlagged === 1 ? "it" : "them"} in a fix.` : ""}
+          {flagged.some((entry) => entry.status === "failed") ? " Use Generate missing drawings to retry failed drawings." : ""}
+          {flagged.some((entry) => entry.warnings.some((warning) => warning.code === "exposure_too_long")) ? " For long exposures, add in-between drawings or create a continuous sequence at 8 or more drawings/s; redrawing alone does not change the timing." : ""}
+        </Alert>
       ) : null}
 
       {flipbook.review && !active ? (
@@ -389,7 +417,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             settings={settings}
             onSettingsChange={setSettings}
             background={playerBackground}
-            selectedIndex={Math.min(selected, Math.max(0, frames.length - 1))}
+            selectedIndex={selectedIndex}
             seekNonce={seekNonce}
             strideMeasured={flipbook.alignment?.strideMeasured ?? false}
             travel={!finite && spec.travels ? { verb: spec.action === "run" ? "Run" : "Walk" } : null}
@@ -400,7 +428,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             finite={finite}
             audio={flipbook.audio ?? undefined}
             audioUrl={flipbook.audio ? `/api/flipbooks/${flipbook.id}/audio?v=${flipbook.audio.version}` : undefined}
-            strip={<FrameStrip flipbook={flipbook} frames={frames} selected={selected} onSelect={select} onMove={move} disabled={locked} scene={scene || finite} />}
+            strip={<FrameStrip flipbook={flipbook} frames={frames} selected={selectedIndex} onSelect={select} onMove={move} disabled={locked} scene={scene || finite} />}
           />
           {scene ? null : <ChatPanel
             flipbook={flipbook}
@@ -417,12 +445,12 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
               key={frame.id}
               flipbook={flipbook}
               frame={frame}
-              index={selected}
+              index={selectedIndex}
               count={frames.length}
               busy={locked}
               onAction={onFrameAction}
               onReplace={(file) => void run(() => flipbookApi.replaceFrame(flipbook.id, frame.id, file))}
-              onMove={(delta) => move(selected, selected + delta)}
+              onMove={(delta) => move(selectedIndex, selectedIndex + delta)}
               canMove={!scene && !finite}
             />
           ) : null}

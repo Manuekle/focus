@@ -14,6 +14,9 @@ import { metaClient, metaError, plannerLimiter, requireMetaConfig, withRetry } f
 import { recordUsage } from "../ai/usage";
 import type { Measure } from "./frame-alignment";
 import { stationaryColorsDiffer, type BodyColors } from "./appearance-consistency";
+import { overlongDrawingHolds } from "./drawing-holds";
+import { MOTION_CONTINUITY_RULES } from "./motion-continuity";
+import { MAX_DRAWING_HOLD_SECONDS } from "../../shared/sequence";
 
 // Frame quality control. The automatic checks measure things pixels can
 // show — framing, scale drift, color drift, flat background, silhouettes
@@ -33,6 +36,7 @@ export type QcEntry = {
   readonly sprite: Buffer;
   /** Interior torso colors, only for a planned gesture whose torso stays still. */
   readonly stationaryColors?: BodyColors;
+  readonly timing?: { readonly atSeconds: number; readonly holdSeconds: number };
 };
 
 export type QcResult = { readonly warnings: FrameWarning[]; readonly relativeScale: number; readonly colorDistance: number | null };
@@ -78,6 +82,7 @@ export async function checkFrames(entries: readonly QcEntry[], referenceHistogra
   const results = new Map<string, QcResult>();
   if (!entries.length) return results;
   const shapes = await Promise.all(entries.map((entry) => silhouette(entry.sprite)));
+  const held = await overlongDrawingHolds(entries.flatMap((entry) => entry.timing ? [{ frameId: entry.frameId, sprite: entry.sprite, ...entry.timing }] : []));
   // Every drawing is framed alike, so its scale carries the pose's planned height (a crouch is drawn
   // shorter on purpose). Divided out, what is left is drift in how big the character was drawn.
   const drift = entries.map((entry) => entry.scale / (1 + (entry.relativeRootY ?? 0)));
@@ -104,6 +109,9 @@ export async function checkFrames(entries: readonly QcEntry[], referenceHistogra
     if (!finite && !spec.subtle && entries.length > 1 && previous !== index && iou(shapes[index].mask, shapes[previous].mask) > 0.95) {
       warnings.push({ code: "near_duplicate", message: `Almost identical to the frame before it (“${entries[previous].label}”). The pose may not have changed.` });
     }
+    if (held.has(entry.frameId)) warnings.push(entry.timing && entry.timing.holdSeconds > MAX_DRAWING_HOLD_SECONDS + 1e-6
+      ? { code: "exposure_too_long", message: "This drawing is held for more than 125 ms. Add in-between drawings or use a continuous sequence at 8 or more drawings/s. Redrawing this pose alone cannot change its timing." }
+      : { code: "overlong_hold", message: "This pose stays practically unchanged for more than 125 ms. Advance the planned movement along its joint arcs while preserving the character design and support contacts." });
     if (stride?.contact.includes(entry.phase as Phase) && passingSpan !== null && measure.lowerSpan * entry.scale < passingSpan * 1.25) {
       warnings.push({ code: "stride_unclear", message: "The feet are not clearly apart, as a contact pose needs." });
     }
@@ -184,6 +192,8 @@ export async function reviewFrames(input: {
   const client = metaClient(config);
   const started = Date.now();
   const instructions = `You review the drawings of a hand-drawn ${spec.label} for Focus Flipbook. Image 1 is the character reference. Image 2 is a contact sheet of ${input.labels.length} drawings in playback order, read left to right, top to bottom; frame 1 is at the top left. ${input.finite ? "This is a time window of one finite continuous action. Its last drawing does NOT loop to its first; do not expect a complete cycle in this window. Small differences at 24 drawings/s are intentional and do not indicate duplicates. Judge visible anatomy, identity and local motion continuity." : "The cycle loops from the last frame back to frame 1."}
+Continuity requirements: ${MOTION_CONTINUITY_RULES}
+Judge support-foot sliding, disconnected joint trajectories, swapped moving limbs, inconsistent body volume, unplanned contour jitter and character design drift. Distinguish intentional occlusion from a missing limb. Do not invent an issue in hidden anatomy, and do not label subtle but visible planned movement as a duplicate. Report an extended hold only when the supplied timestamps support it.
 Frames: ${input.labels.map((label, index) => `${index + 1} = ${label}`).join(", ")}. Camera and heading in every frame: ${input.direction}.
 For each frame, report only problems you can actually see: wrong_facing, identity_change (outfit, hair, colors or accessories differ from the reference), missing_limb, extra_limb, wrong_pose (does not match its phase), cropped, style_change, same_as_neighbor (pose barely differs from an adjacent frame), other. Write every note and the summary in English. Keep each note under 20 words. ok=true when a frame has no visible problem.
 recognizableWalk: true when playing the frames in order would read as a ${spec.label}. summary: one or two sentences for the animator. Be honest; do not praise.`;

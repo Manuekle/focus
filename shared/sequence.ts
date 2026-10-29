@@ -1,6 +1,7 @@
 import { z } from "zod";
 
 export const SEQUENCE_CLOCK = 24;
+export const MAX_DRAWING_HOLD_SECONDS = 3 / SEQUENCE_CLOCK;
 export const MAX_SEQUENCE_FRAMES = 480;
 export const SequenceSettingsSchema = z.object({
   durationSeconds: z.number().int().min(1).max(20),

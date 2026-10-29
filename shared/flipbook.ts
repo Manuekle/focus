@@ -734,6 +734,8 @@ export const FrameWarningCodeSchema = z.enum([
   "color_shift",
   "background_not_plain",
   "near_duplicate",
+  "overlong_hold",
+  "exposure_too_long",
   "stride_unclear",
   "body_offset",
   "multiple_subjects",
@@ -1075,7 +1077,20 @@ export const FrameActionSchema = z.discriminatedUnion("action", [
 ]);
 export type FrameAction = z.infer<typeof FrameActionSchema>;
 
+/** The same attention state drives the timeline badge and the repair action. */
+export function frameNeedsAttention(frame: FlipbookFrame): boolean {
+  return frame.warnings.length > 0 || Boolean(frame.review && (!frame.review.ok || frame.review.issues.length)) || Boolean(frame.error);
+}
+
+export function repairableFrames(flipbook: Pick<Flipbook, "frames">): FlipbookFrame[] {
+  return flipbook.frames.filter((frame) => frame.status === "ready" && frame.version && !frame.approved && (
+    frame.warnings.some((warning) => warning.code !== "exposure_too_long") || Boolean(frame.review && (!frame.review.ok || frame.review.issues.length)) || Boolean(frame.error)
+  ));
+}
+
 export const FlipbookActionSchema = z.discriminatedUnion("action", [
+  z.object({ action: z.literal("retry"), confirmExtra: z.boolean().optional() }),
+  z.object({ action: z.literal("enhance_flagged"), confirmExtra: z.boolean().optional() }),
   z.object({ action: z.literal("sequence"), settings: SequenceSettingsSchema }),
   z.object({ action: z.literal("revision"), id: VersionIdSchema }),
   /** Draw every frame that has no drawing yet (first run after a reference check, or after failures). */

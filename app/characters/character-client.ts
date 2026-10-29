@@ -5,8 +5,12 @@ import {
   CharacterSchema,
   CharacterSummarySchema,
   type GenerateCharacterRequest,
+  type Character,
+  type CharacterSummary,
   type UpdateCharacterSchema,
 } from "../../shared/characters";
+import { characterActivity, discoverCharacters, observeCharacter } from "../_activity/activity-adapters";
+import { getActivityVersion, trackActivity } from "../_activity/activity-store";
 
 export class CharacterApiError extends Error {
   constructor(
@@ -21,6 +25,7 @@ async function call<T>(
   init: RequestInit,
   parse: (value: unknown) => T,
 ): Promise<T> {
+  const activityVersion = getActivityVersion();
   const response = await fetch(url, { ...init, cache: "no-store" }).catch(
     () => {
       throw new CharacterApiError(
@@ -35,8 +40,13 @@ async function call<T>(
       body?.error?.message ?? "This change couldn’t be saved. Try again.",
       body?.error?.code ?? `http_${response.status}`,
     );
-  return parse(body);
+  const value = parse(body);
+  if (parse === parseCharacter && activityVersion === getActivityVersion()) observeCharacter(value as Character);
+  if (parse === parseCharacterList && activityVersion === getActivityVersion()) discoverCharacters(value as CharacterSummary[]);
+  return value;
 }
+const parseCharacter = (value: unknown) => CharacterSchema.parse(value);
+const parseCharacterList = (value: unknown) => z.array(CharacterSummarySchema).parse(value);
 const json = (body: unknown, method = "POST"): RequestInit => ({
   method,
   headers: { "Content-Type": "application/json" },
@@ -52,11 +62,9 @@ const upload = (file: File): RequestInit => ({
 });
 export const characterApi = {
   list: () =>
-    call("/api/characters", {}, (value) =>
-      z.array(CharacterSummarySchema).parse(value),
-    ),
+    call("/api/characters", {}, parseCharacterList),
   get: (id: string) =>
-    call(`/api/characters/${id}`, {}, (value) => CharacterSchema.parse(value)),
+    call(`/api/characters/${id}`, {}, parseCharacter),
   elf: () =>
     call("/api/characters", json({ preset: "elf-chan" }), (value) =>
       CharacterSchema.parse(value),
@@ -78,7 +86,5 @@ export const characterApi = {
   remove: (id: string) =>
     call(`/api/characters/${id}`, { method: "DELETE" }, () => undefined),
   generate: (id: string, request: GenerateCharacterRequest) =>
-    call(`/api/characters/${id}/generate`, json(request), (value) =>
-      CharacterSchema.parse(value),
-    ),
+    trackActivity({ title: "Generating image", href: `/characters?c=${id}`, resource: { kind: "character", id } }, () => call(`/api/characters/${id}/generate`, json(request), parseCharacter), characterActivity),
 };

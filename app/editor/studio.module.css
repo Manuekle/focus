@@ -83,10 +83,12 @@
   height: calc(100dvh - 60px);
   flex-direction: column;
   gap: 18px;
-  overflow-y: auto;
+  overflow: hidden;
   padding: 16px 12px;
   border-right: 1px solid var(--border);
 }
+.sidebarScroll { min-height: 48px; flex: 1; }
+.sidebarContent { display: flex; min-width: 0; flex-direction: column; gap: 18px; }
 .sideLabel { padding-inline: 8px; color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
 .sidebarNav { display: grid; gap: 4px; }
 .projects { display: flex; flex-direction: column; gap: 8px; }
@@ -129,7 +131,8 @@
   .resizer, .sidebarToggle { display: none; }
   .body[data-collapsed] .main { padding-left: clamp(16px, 3vw, 36px); }
   .body[data-collapsed] .sidebar { visibility: visible; border-right-color: var(--border); opacity: 1; }
-  .sidebar { position: static; height: auto; border-right: 0; border-bottom: 1px solid var(--border); }
+  .sidebar { position: static; height: auto; max-height: 55dvh; border-right: 0; border-bottom: 1px solid var(--border); }
+  .sidebarScroll { flex: 1 1 auto; }
   .saved { display: none; }
 }
 

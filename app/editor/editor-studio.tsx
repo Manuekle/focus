@@ -9,6 +9,8 @@ import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { confirmAction } from "../../components/ui/confirm-dialog";
 import { ProgressMeter } from "../../components/ui/progress-meter";
+import { ScrollArea } from "../../components/ui/scroll-area";
+import { SidebarActivity } from "../_activity/sidebar-activity";
 import { cn } from "../../lib/utils";
 import { ProjectDetailSchema, ProjectSummarySchema, type ProjectDetail, type ProjectSummary } from "../../shared/account";
 import { ACTIVE_JOB_STATUSES, VideoAssetSchema, type EditJob, type EffectId, type VideoAsset } from "../../shared/schemas";
@@ -219,6 +221,7 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
       <div className={styles.body} {...sidebar.bodyProps}>
         <SidebarResizer sidebar={sidebar} />
         <aside id="editor-sidebar" className={styles.sidebar} aria-label={user ? "Your projects" : "Account"}>
+          <ScrollArea className={styles.sidebarScroll} contentClassName={styles.sidebarContent}>
           <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => router.push("/editor")}>
             <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
             New clip
@@ -265,6 +268,8 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
               <FacebookButton next={here} label="Sign in with Facebook" className="h-9 whitespace-nowrap px-3 text-[13px]" />
             </section>
           ) : null}
+          </ScrollArea>
+          <SidebarActivity />
         </aside>
 
         <main className={styles.main}>

@@ -9,6 +9,7 @@ import { Button } from "../../components/ui/button";
 import { confirmAction } from "../../components/ui/confirm-dialog";
 import { ProgressMeter } from "../../components/ui/progress-meter";
 import { ScrollArea } from "../../components/ui/scroll-area";
+import { SidebarActivity } from "../_activity/sidebar-activity";
 import { useToast } from "../../components/toast-provider";
 import { cn } from "../../lib/utils";
 import { ACTION_SPECS, FLIPBOOK_TITLE_MAX, flipbookTitle, type CreateEnsembleRequest, type Flipbook, type FlipbookImage, type FlipbookSummary } from "../../shared/flipbook";
@@ -183,6 +184,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
       <div className={cn(shell.body, styles.body)} {...sidebar.bodyProps}>
         <SidebarResizer sidebar={sidebar} showToggle={false} />
         <aside id="flipbook-library" className={cn(shell.sidebar, styles.sidebar)} aria-label={user ? "Your animations" : "Account"}>
+          <ScrollArea className={shell.sidebarScroll} contentClassName={shell.sidebarContent}>
           <Button variant="outline" size="sm" className="w-full justify-start" onClick={startOver}>
             <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
             New animation
@@ -244,6 +246,8 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
               <FacebookButton next={here} label="Sign in with Facebook" className="h-9 whitespace-nowrap px-3 text-[13px]" />
             </section>
           ) : null}
+          </ScrollArea>
+          <SidebarActivity />
         </aside>
 
         <ScrollArea as="main" className={cn(shell.main, styles.main)} viewportClassName={styles.mainViewport} contentClassName={cn(styles.mainContent, "pt-4")}>

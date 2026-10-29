@@ -15,6 +15,8 @@ import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { Skeleton } from "../../components/ui/skeleton";
+import { ScrollArea } from "../../components/ui/scroll-area";
+import { SidebarActivity } from "../_activity/sidebar-activity";
 import {
   IMAGE_ACCEPT_ATTRIBUTE,
   MAX_IMAGE_BYTES,
@@ -190,6 +192,7 @@ export function CharactersStudio({
           className={`${shell.sidebar} ${styles.librarySidebar}`}
           aria-label="Character library"
         >
+          <ScrollArea className={shell.sidebarScroll} contentClassName={shell.sidebarContent}>
           <Button
             variant="outline"
             size="sm"
@@ -250,6 +253,8 @@ export function CharactersStudio({
               Sign in to keep your references and every version together.
             </p>
           )}
+          </ScrollArea>
+          <SidebarActivity />
         </aside>
         <main
           id="characters-main"

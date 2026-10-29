@@ -15,6 +15,7 @@ import { recordUsage } from "../ai/usage";
 import type { PoseId } from "../../shared/pose-library";
 import { compatiblePoseId, poseCandidates, poseReferenceFor } from "./pose-catalog";
 import { cameraDescription, phaseForView, resolveCameraView, type CameraView, type ViewPreference } from "../../shared/animation-view";
+import { MOTION_CONTINUITY_RULES } from "./motion-continuity";
 
 const POSED_MOTION = [
   "Rest in the selected posture, eyes open, shoulders relaxed.",
@@ -97,6 +98,8 @@ export function planInstructions(action: CycleAction = "walk", poseId?: PoseId, 
     : `- motion: always "in_place" (a ${spec.label} stays on the spot).`;
   return `You plan a hand-drawn ${spec.label} for Focus Flipbook. Eight drawings make one complete cycle and loop forever. You never draw and never execute anything; you return JSON. Write all text fields in English, regardless of the user’s language.
 Camera lock: ${camera}. Keep this camera throughout all eight phases. Project the body mechanics into this view without changing the camera. Preserve the original resting posture for idle loops.
+${MOTION_CONTINUITY_RULES}
+These eight drawings are key poses. Where a key interval exceeds 125 ms, plan intermediate drawings along the same paths rather than holding a key too long.
 
 The eight phases, always in this order, with their fixed body mechanics:
 ${phases.map((pose, index) => `${index + 1}. ${pose.phase}: ${phaseForView(pose.constraints, view)}`).join("\n")}

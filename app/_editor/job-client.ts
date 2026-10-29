@@ -5,6 +5,8 @@ import { ACTIVE_JOB_STATUSES, ApiErrorBodySchema, EditJobSchema, type EditJob } 
 import type { RenderParamsInput } from "../../shared/render";
 import { TrackingSchema, type Tracking } from "../../shared/tracking";
 import { editorErrorMessage } from "./messages";
+import { editActivity, observeEdit } from "../_activity/activity-adapters";
+import { getActivityVersion, trackActivity } from "../_activity/activity-store";
 
 export class ApiRequestError extends Error {
   constructor(message: string, readonly code: string) {
@@ -13,6 +15,7 @@ export class ApiRequestError extends Error {
 }
 
 async function call<T>(url: string, init: RequestInit | undefined, parse: (value: unknown) => T): Promise<T> {
+  const activityVersion = getActivityVersion();
   let response: Response;
   try {
     response = await fetch(url, init);
@@ -24,14 +27,16 @@ async function call<T>(url: string, init: RequestInit | undefined, parse: (value
     const error = ApiErrorBodySchema.safeParse(body);
     throw new ApiRequestError(error.success ? editorErrorMessage(error.data.error.code) : "The server couldn’t complete your request. Try again.", error.success ? error.data.error.code : `http_${response.status}`);
   }
-  return parse(body);
+  const value = parse(body);
+  if (parse === parseJob && activityVersion === getActivityVersion()) observeEdit(value as EditJob);
+  return value;
 }
 
 const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 const parseJob = (value: unknown) => EditJobSchema.parse(value);
 
 export const jobApi = {
-  create: (body: { videoId: string; effect: string; prompt: string }) => call("/api/edits", json(body), parseJob),
+  create: (body: { videoId: string; effect: string; prompt: string }) => trackActivity({ title: "Video effect", href: `/editor?v=${body.videoId}` }, () => call("/api/edits", json(body), parseJob), editActivity),
   get: (id: string) => call(`/api/jobs/${id}`, { cache: "no-store" }, parseJob),
   cancel: (id: string) => call(`/api/jobs/${id}/cancel`, { method: "POST" }, parseJob),
   select: (id: string, objectIds: readonly string[]) => call(`/api/jobs/${id}/selection`, json({ objectIds }), parseJob),
@@ -40,7 +45,7 @@ export const jobApi = {
     call(`/api/jobs/${id}/refine`, json({ frameIndex, point }), parseJob),
   fill: (id: string) => call(`/api/jobs/${id}/fill`, { method: "POST" }, parseJob),
   render: (id: string, params?: RenderParamsInput) => call(`/api/jobs/${id}/render`, json({ params }), parseJob),
-  chat: (id: string, message: string) => call(`/api/jobs/${id}/chat`, json({ message }), parseJob),
+  chat: (id: string, message: string) => trackActivity({ title: "Editing video", resource: { kind: "edit", id } }, () => call(`/api/jobs/${id}/chat`, json({ message }), parseJob), editActivity),
   restore: (id: string, messageId: string) => call(`/api/jobs/${id}/chat`, json({ restore: messageId }), parseJob),
   tracking: (id: string) => call(`/api/jobs/${id}/tracking`, undefined, (value) => TrackingSchema.parse(value)),
 };

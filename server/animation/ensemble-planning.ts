@@ -14,6 +14,7 @@ import { AppError } from "../errors";
 import { metaClient, metaError, plannerLimiter, requireMetaConfig, withRetry } from "../ai/meta";
 import { recordUsage } from "../ai/usage";
 import { identityLock, keyColorFor } from "./pose-planning";
+import { MOTION_CONTINUITY_RULES } from "./motion-continuity";
 
 // A scene: several saved characters drawn together in every frame. Muse Spark
 // choreographs it, one beat per drawing (the duration at a fixed pace); Muse
@@ -94,6 +95,7 @@ The characters, in the order of the images you receive:
 ${input.cast.map((entry, index) => `${index + 1}. ${castLabel(entry, index)}${entry.analysis ? `: ${entry.analysis.subject}; ${entry.analysis.clothing}; hair ${entry.analysis.hair}` : ""}`).join("\n")}
 
 Camera lock: ${ensembleCamera(input.view)}. The camera never moves, zooms or cuts: the characters move inside the frame.
+${MOTION_CONTINUITY_RULES}
 
 Return:
 - direction: "right" or "left", the side the first character starts on facing, from the viewer’s point of view.

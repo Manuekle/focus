@@ -10,6 +10,8 @@ import {
   drawInbetweens,
   generateBackground,
   generateMissing,
+  enhanceFlagged,
+  retryPreparation,
   reorderFrames,
   reviewFlipbook,
   saveFlipbook,
@@ -45,6 +47,8 @@ export async function POST(request: Request, { params }: Context) {
     const gate = paidGate(request);
     const flipbook =
       action.action === "sequence" ? await reviseSequence(id, action.settings, gate)
+      : action.action === "enhance_flagged" ? await enhanceFlagged(id, action.confirmExtra === true, gate)
+      : action.action === "retry" ? await retryPreparation(id, action.confirmExtra === true, gate)
       : action.action === "revision" ? await restoreSequenceRevision(id, action.id)
       : action.action === "generate" ? await generateMissing(id, action.confirmExtra === true, gate)
       : action.action === "inbetweens" ? await drawInbetweens(id, action.confirmExtra === true, gate, action.drawingFps)

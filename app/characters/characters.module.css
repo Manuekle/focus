@@ -636,6 +636,8 @@
   aside.librarySidebar {
     display: none;
   }
+  aside.librarySidebar:has([data-slot="sidebar-activity"]:not([data-empty])) { display: flex; }
+  aside.librarySidebar > [data-slot="scroll-area"] { display: none; }
   .headerLabel {
     display: none;
   }

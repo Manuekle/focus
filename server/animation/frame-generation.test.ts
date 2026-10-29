@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ACTION_SPECS, type CharacterAnalysis } from "../../shared/flipbook";
-import { drawInbetween, drawPose } from "./frame-generation";
+import { drawEnsembleFrame, drawInbetween, drawPose } from "./frame-generation";
 import { generateImage } from "./muse-image";
 import { parsePlanOutput } from "./pose-planning";
 import { planWaveSequence } from "./wave-sequence";
@@ -60,6 +60,36 @@ it("keeps garment colors anchored during drawing, sequence repair and in-between
   const request = vi.mocked(generateImage).mock.lastCall![0];
   expect(request.prompt).toContain("Image 1 is the sole authority for garment colors");
   expect(request.prompt).not.toContain("line weight, colors, shading, the camera");
+});
+
+it("carries anatomy, support, timing and immutable design requirements through every generation path", async () => {
+  const wave = planWaveSequence({ durationSeconds: 4, drawingFps: 24 }, "front", "wave");
+  for (const selected of [plan, wave]) for (const repair of [null, { png: anchor, problems: ["pose held too long"] }]) {
+    await drawPose({ reference: anchor, neighbor: anchor, repair, analysis, plan: selected, index: 2, flipbookId: "test" });
+  }
+  await drawInbetween({ reference: anchor, from: anchor, to: anchor, analysis, plan, fromIndex: 0, toIndex: 1, flipbookId: "test" });
+  await drawEnsembleFrame({ cast: [{ name: "Robot", versionName: "Original", analysis, png: anchor }], neighbor: anchor, analysis, plan, index: 1, scene: "Wave together", flipbookId: "test" });
+  for (const [request] of vi.mocked(generateImage).mock.calls) {
+    expect(request.prompt).toContain("125 ms");
+    expect(request.prompt).toContain("A planted contact stays fixed");
+    expect(request.prompt).toContain("Preserve bone lengths");
+    expect(request.prompt).toContain("keep the established pose and occlusion");
+    expect(request.prompt).toContain("do not add whole-body wobble or line jitter");
+  }
+});
+
+it("guides whole-body sequence intermediates with both keys and the video's exact-time pose", async () => {
+  const sequence = { ...planWaveSequence({ durationSeconds: 1, drawingFps: 24 }, "front", "wave"), action: "dance" as const };
+  const guide = Buffer.from("motion reference at this time");
+  await drawPose({ reference: anchor, neighbor: null, analysis, plan: sequence, index: 2, motionGuide: guide,
+    temporalPair: { from: Buffer.from("start key"), to: Buffer.from("next key"), fromIndex: 0, toIndex: 6, position: 1 / 3 }, flipbookId: "test" });
+  const request = vi.mocked(generateImage).mock.lastCall![0];
+  expect(request.references.at(-1)?.png).toBe(guide);
+  expect(request.references.at(-1)?.role).toContain("posture and support only");
+  expect(request.prompt).toContain("Interpolate the specified moving joints");
+  expect(request.prompt).toContain("Previous planned pose (sample_1)");
+  expect(request.prompt).toContain("Next planned pose (sample_3)");
+  expect(request.prompt).not.toContain("Only the specified waving arm moves");
 });
 
 describe("pose reference roles", () => {

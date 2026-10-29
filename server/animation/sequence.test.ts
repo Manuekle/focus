@@ -6,7 +6,8 @@ import sharp from "sharp";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { type CharacterAnalysis, type Flipbook, FlipbookPlanSchema } from "../../shared/flipbook";
 import { sequenceSkeleton, parseSequenceWindow } from "./sequence-planning";
-import { applyFrameAction, cancelFlipbook, createFlipbook, generateMissing, reviseSequence, restoreSequenceRevision, services } from "./flipbooks";
+import { applyFrameAction, cancelFlipbook, createFlipbook, enhanceFlagged, generateMissing, retryPreparation, reviseSequence, restoreSequenceRevision, services } from "./flipbooks";
+import { AppError } from "../errors";
 import { getFlipbook, isRunning, flipbookDir, flipbookFiles, updateFlipbook } from "./store";
 import { segmentation } from "./frame-alignment";
 import { ingestCharacterImage } from "./image-input";
@@ -16,12 +17,13 @@ import { attachMotionReference, motionDir, motionGuide, uploadMotionReference } 
 import { ffmpeg } from "../ffmpeg";
 import { storeProposal, readProposal } from "./proposals";
 import { planWaveSequence, waveAnchorIndexes } from "./wave-sequence";
+import { sequenceAnchorIndexes } from "./motion-continuity";
 
 let work: string, imageId: string, png: Buffer;
 let active = 0, peak = 0, drawings = 0;
 let blocked: Promise<void> | undefined;
 let blockAtIndex: number | undefined;
-const drawInputs: { index: number; neighbor: boolean; pair: boolean; action: string }[] = [];
+const drawInputs: { index: number; neighbor: boolean; pair: boolean; action: string; from?: number; to?: number }[] = [];
 const analysis: CharacterAnalysis = { characterCount: 1, subject: "character", facing: "right", view: "side", fullBodyVisible: true, feetVisible: true, background: "plain", style: "flat", hair: "new red hair", clothing: "new blue shirt", accessories: [], palette: ["#3366aa"], proportions: "human", requestedAction: "dance" };
 const body = (buffer: Buffer) => Readable.toWeb(Readable.from(buffer)) as ReadableStream<Uint8Array>;
 async function settled(id: string): Promise<Flipbook> {
@@ -55,7 +57,7 @@ beforeAll(async () => {
     return FlipbookPlanSchema.parse({ mode: "sequence", action: "dance", direction: "right", view: "side", motion: "in_place", drawingFps: settings.drawingFps, durationSeconds: settings.durationSeconds, loop: false, poses: sequenceSkeleton(settings).map((frame) => ({ ...(old.get(frame.phase) ?? { label: frame.label, description: `Body turns gradually at ${frame.phase}`, relativeRootY: 0, lift: 0 }), index: frame.poseIndex, phase: frame.phase })) });
   };
   services.draw = async ({ signal, index, neighbor, temporalPair, plan }) => {
-    drawInputs.push({ index, neighbor: Boolean(neighbor), pair: Boolean(temporalPair), action: plan.action });
+    drawInputs.push({ index, neighbor: Boolean(neighbor), pair: Boolean(temporalPair), action: plan.action, from: temporalPair?.fromIndex, to: temporalPair?.toIndex });
     active++; peak = Math.max(peak, active); drawings++;
     try { if (blocked && (blockAtIndex === undefined || index === blockAtIndex)) await blocked; if (signal?.aborted) throw new Error("Canceled test request"); return { png, width: 160, height: 240 }; }
     finally { active--; }
@@ -64,6 +66,90 @@ beforeAll(async () => {
 afterAll(async () => { await rm(work, { recursive: true, force: true }); });
 
 describe("complete continuous workflow", () => {
+  it("draws bounding key poses before dance intermediates and checks extended holds", async () => {
+    const source = await make(1, 8);
+    const before = drawInputs.length;
+    await generateMissing(source.id, true);
+    const result = await settled(source.id);
+    const calls = drawInputs.slice(before);
+    const anchors = sequenceAnchorIndexes(source.plan!);
+    expect(anchors).toEqual([0, 2, 4, 6, 7]);
+    expect(calls.slice(0, anchors.length).map((call) => call.index)).toEqual(anchors);
+    expect(calls.filter((call) => call.pair).map(({ index, from, to }) => ({ index, from, to }))).toEqual([{ index: 1, from: 0, to: 2 }, { index: 3, from: 2, to: 4 }, { index: 5, from: 4, to: 6 }]);
+    expect(result.frames[0].warnings.some((warning) => warning.code === "overlong_hold")).toBe(false);
+    expect(result.frames.slice(1).every((frame) => frame.warnings.some((warning) => warning.code === "overlong_hold"))).toBe(true);
+  });
+  it("retries a failed preparation from its saved analysis without replacing the animation", async () => {
+    const original = services.planSequence;
+    services.planSequence = async () => { throw new AppError("meta_model_not_found", 502, "Model unavailable."); };
+    let source: Flipbook;
+    try {
+      const created = await createFlipbook({ imageId, prompt: "Dance", action: "dance", sequence: { durationSeconds: 1, drawingFps: 8 } });
+      source = await settled(created.id);
+      expect(source.status).toBe("failed");
+      expect(source.analysis).not.toBeNull();
+    } finally { services.planSequence = original; }
+    const before = drawings;
+    const started = await retryPreparation(source!.id, false);
+    expect(["analyzing", "planning", "referencing"]).toContain(started.status);
+    const result = await settled(source!.id);
+    expect(result.id).toBe(source!.id);
+    expect(result.status).toBe("reference_ready");
+    expect(result.error).toBeNull();
+    expect(result.frames.every((frame) => frame.status === "pending")).toBe(true);
+    expect(drawings).toBe(before);
+  });
+  it("repairs only flagged unapproved drawings, checks the full budget and preserves drawings on provider failure", async () => {
+    const source = await make(1, 8);
+    await generateMissing(source.id, true);
+    const complete = await settled(source.id);
+    const prepared = await updateFlipbook(source.id, (current) => ({ ...current, budget: { used: current.budget.used, limit: current.budget.used }, frames: current.frames.map((frame, index) => ({ ...frame, warnings: index === 0 || index === 1 ? [{ code: "color_shift" as const, message: "Restore the original blue shirt." }] : [], approved: index === 1, review: index === 2 ? { ok: false, issues: [{ code: "extra_limb" as const, note: "Remove the extra hand." }] } : null })) }));
+    const before = drawings;
+    await expect(enhanceFlagged(source.id, false)).rejects.toMatchObject({ code: "budget_reached" });
+    expect(drawings).toBe(before);
+    expect((await getFlipbook(source.id)).frames.map((frame) => frame.version)).toEqual(complete.frames.map((frame) => frame.version));
+    const original = services.draw;
+    const repairs: { index: number; problems: readonly string[] }[] = [];
+    services.draw = async (input) => {
+      repairs.push({ index: input.index, problems: input.repair!.problems });
+      if (input.index === 2) throw new AppError("meta_model_not_found", 502, "Model unavailable.");
+      return original(input);
+    };
+    try {
+      await enhanceFlagged(source.id, true);
+      const result = await settled(source.id);
+      expect(repairs.map((entry) => entry.index).sort()).toEqual([0, 2]);
+      expect(repairs.find((entry) => entry.index === 0)!.problems).toContain("Restore the original blue shirt.");
+      expect(repairs.find((entry) => entry.index === 2)!.problems.join(" ")).toContain("Remove the extra hand.");
+      expect(result.frames[0].versions.at(-1)?.source).toBe("enhanced");
+      expect(result.frames[0].originalVersion).toBe(prepared.frames[0].originalVersion);
+      expect(result.frames[1].version).toBe(prepared.frames[1].version);
+      expect(result.frames[2].version).toBe(prepared.frames[2].version);
+      expect(result.frames[2].status).toBe("ready");
+      expect(result.frames[2].error?.code).toBe("meta_model_not_found");
+      expect(result.budget.used).toBe(prepared.budget.used + 1);
+    } finally { services.draw = original; }
+  });
+  it("replans the full action when length changes and keeps the old motion in history", async () => {
+    const source = await make(1, 8);
+    await generateMissing(source.id, true);
+    const previous = await settled(source.id);
+    const original = services.planSequence;
+    services.planSequence = async (input) => {
+      expect(input.previous).toBeUndefined();
+      expect(input.reusePoses).toEqual([]);
+      return original(input);
+    };
+    try {
+      await reviseSequence(source.id, { durationSeconds: 2, drawingFps: 8 });
+      const result = await settled(source.id);
+      expect(result.frames).toHaveLength(16);
+      expect(result.frames.every((frame) => frame.status === "pending" && !frame.version)).toBe(true);
+      expect(result.plan?.motionId).not.toBe(previous.plan?.motionId);
+      const restored = await restoreSequenceRevision(source.id, result.revisions![0].id);
+      expect(restored.frames.map((frame) => frame.version)).toEqual(previous.frames.map((frame) => frame.version));
+    } finally { services.planSequence = original; }
+  });
   it("plans 96 and 480 separate drawing states and asks for the complete generation count", async () => {
     const book = await make();
     expect(book.frames).toHaveLength(96);

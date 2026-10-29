@@ -5,7 +5,7 @@ import { Alert02Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Skeleton } from "../../components/ui/skeleton";
 import { cn } from "../../lib/utils";
-import { flipbookUrls, type Flipbook, type FlipbookFrame } from "../../shared/flipbook";
+import { flipbookUrls, frameNeedsAttention, type Flipbook, type FlipbookFrame } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
 
 const STATE_LABEL: Record<FlipbookFrame["status"], string> = {
@@ -67,7 +67,7 @@ export function FrameStrip({
       {frames.slice(Math.max(0, start), start + pageSize).map((frame, offset) => {
         const index = start + offset;
         const thumb = frameThumb(flipbook, frame);
-        const flagged = frame.warnings.length > 0 || (frame.review && !frame.review.ok);
+        const flagged = frameNeedsAttention(frame);
         return (
           <li key={frame.id}>
             <button

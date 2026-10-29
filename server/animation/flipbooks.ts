@@ -19,6 +19,8 @@ import {
   denseInbetweenTargets,
   nextInOrder,
   orderedFrames,
+  exposureSheet,
+  repairableFrames,
   playbackCycle,
   type CreateEnsembleRequest,
   type DrawingId,
@@ -64,7 +66,7 @@ import { planSequence, sequenceSkeleton } from "./sequence-planning";
 import { SequenceSettingsSchema, type SequenceSettings } from "../../shared/sequence";
 import { prepareExportTrack } from "./flipbook-audio";
 import { motionGuide } from "./motion-reference";
-import { waveAnchorIndexes } from "./wave-sequence";
+import { sequenceAnchorIndexes } from "./motion-continuity";
 import { checkFrames, contactSheet, reviewFrames } from "./quality-control";
 import { FAR_CONCEPTS, castSheet, decideReference, growMask, drawBackdrop, drawCleanReference, drawScenePlate, readReference, restoreScene, seamlessPlate, splitDepth, storeReference, subjectMask } from "./reference-manager";
 import type { VideoAsset } from "../../shared/schemas";
@@ -413,7 +415,7 @@ async function runEnsemble(id: string, signal: AbortSignal, seconds: number): Pr
   await drawEnsembleFrames(id, signal, frameIds, {});
 }
 
-async function runPipeline(id: string, signal: AbortSignal, options: { keepScene: boolean; fromReading: boolean; action?: CycleAction }): Promise<void> {
+async function runPipeline(id: string, signal: AbortSignal, options: { keepScene: boolean; fromReading: boolean; action?: CycleAction; retry?: boolean; confirmExtra?: boolean }): Promise<void> {
   const flipbook = await getFlipbook(id);
   // Fail before paid model work if the selected posture cannot be retrieved.
   if (flipbook.poseId) await services.poseReference(flipbook.poseId, signal);
@@ -430,13 +432,13 @@ async function runPipeline(id: string, signal: AbortSignal, options: { keepScene
   }
   await workerUpdate(id, signal, (current) => ({ ...current, analysis, warnings: assessed.warnings, status: "planning", detail: flipbook.sequence ? `Planning ${flipbook.frames.length} drawings across ${flipbook.sequence.durationSeconds} seconds` : `Planning eight ${actionSpec(actionFor(analysis)).label} poses with Muse Spark` }));
 
-  const proposedPlan = flipbook.sequence
+  const proposedPlan = options.retry && flipbook.plan ? flipbook.plan : flipbook.sequence
     ? await services.planSequence({ analysis, prompt: flipbook.prompt, flipbookId: id, settings: flipbook.sequence, view: flipbook.requestedView, action, signal })
     : await services.plan({ analysis, prompt: flipbook.prompt, flipbookId: id, imagePng: sourceFlat, poseId: flipbook.poseId, view: flipbook.requestedView, signal });
   // The camera is user intent, not a model suggestion. Keep it even if a
   // provider or an older injected planner omits the new plan field.
   const cameraView = resolveCameraView(flipbook.requestedView, analysis, flipbook.prompt);
-  const plan = { ...proposedPlan, ...(flipbook.sequence ? { motionId: randomUUID() } : {}), view: cameraView,
+  const plan = { ...proposedPlan, ...(flipbook.sequence ? { motionId: proposedPlan.motionId ?? randomUUID() } : {}), view: cameraView,
     poseId: compatiblePoseId(proposedPlan.poseId, proposedPlan.action, cameraView),
     poses: proposedPlan.poses.map((pose) => ({ ...pose, referenceId: compatiblePoseId(pose.referenceId, proposedPlan.action, cameraView), description: phaseForView(pose.description, cameraView) })),
   };
@@ -453,10 +455,10 @@ async function runPipeline(id: string, signal: AbortSignal, options: { keepScene
   const scene = options.keepScene ? separateScene(id, signal, plan) : Promise.resolve();
   try {
     const decision = decideReference(analysis, plan.view);
-    if (decision.kind === "clean") await reserveImages(id, 1, false);
+    if (decision.kind === "clean") await reserveImages(id, 1, options.confirmExtra === true);
     await prepareReference(id, decision, signal);
     if (signal.aborted) return;
-    if (flipbook.sequence) {
+    if (flipbook.sequence || options.retry) {
       await workerUpdate(id, signal, (current) => ({ ...current, status: "reference_ready", detail: `Motion ready. Generate ${current.frames.length} timed drawings to complete the clip.` }));
       return;
     }
@@ -647,7 +649,7 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
   }));
 
   const drawn: FrameId[] = [];
-  const waveAnchors = flipbook.sequence && flipbook.plan.action === "wave" && !flipbook.motionReference ? waveAnchorIndexes(flipbook.plan) : [];
+  const anchors = sequenceAnchorIndexes(flipbook.plan, Boolean(flipbook.motionReference));
   const startedIds = new Set<FrameId>();
   let refundable = 0;
   let started = 0;
@@ -669,9 +671,9 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
         if (previous?.version) neighbor = await readFile(path.join(flipbookFiles.versionDir(id, previous.id, previous.version), "raw.png")).catch(() => null);
       }
       let temporalPair: Parameters<typeof services.draw>[0]["temporalPair"];
-      if (waveAnchors.length && !waveAnchors.includes(frame.poseIndex) && !options.repair) {
-        const fromIndex = waveAnchors.filter((index) => index < frame.poseIndex).at(-1)!;
-        const toIndex = waveAnchors.find((index) => index > frame.poseIndex)!;
+      if (anchors.length && !anchors.includes(frame.poseIndex) && !options.repair) {
+        const fromIndex = anchors.filter((index) => index < frame.poseIndex).at(-1)!;
+        const toIndex = anchors.find((index) => index > frame.poseIndex)!;
         const from = latest.frames.find((entry) => entry.poseIndex === fromIndex)!;
         const to = latest.frames.find((entry) => entry.poseIndex === toIndex)!;
         if (!from.version || !to.version) throw new AppError("keyframes_not_ready", 409, "Finish the surrounding key poses before drawing this transition.");
@@ -718,8 +720,8 @@ async function drawFrames(id: string, signal: AbortSignal, frameIds: readonly Fr
   };
   try {
     let remaining = [...frameIds];
-    if (waveAnchors.length && !options.repair && !options.note) {
-      const keyIds = waveAnchors.map((index) => flipbook.order[index]);
+    if (anchors.length && !options.repair && !options.note) {
+      const keyIds = anchors.map((index) => flipbook.order[index]);
       for (const key of keyIds) if (remaining.includes(key) && !signal.aborted) await drawOne(key);
       remaining = remaining.filter((id) => !keyIds.includes(id));
       const current = await getFlipbook(id);
@@ -943,6 +945,16 @@ async function finalize(id: string, signal?: AbortSignal): Promise<Flipbook> {
     footY: reference.measure.crop.top + reference.measure.footY,
   }) : undefined;
   const order = orderedFrames(flipbook).filter((frame) => sprites.has(frame.id));
+  const keyTiming = new Map<string, { atSeconds: number; holdSeconds: number }>();
+  if (plan && !inbetweens.length) {
+    const sheet = exposureSheet(orderedFrames(flipbook), plan.drawingFps);
+    let atSeconds = 0;
+    sheet.drawings.forEach((frame, index) => {
+      const holdSeconds = sheet.holds[index] / 24;
+      keyTiming.set(frame.id, { atSeconds, holdSeconds });
+      atSeconds += holdSeconds;
+    });
+  }
   const byId = new Map(measured.map((entry) => [entry.frame.id, entry.measure]));
   const checks = alignment
     ? await checkFrames(order.map((frame) => ({
@@ -954,6 +966,7 @@ async function finalize(id: string, signal?: AbortSignal): Promise<Flipbook> {
       relativeRootY: plan?.poses[frame.poseIndex].relativeRootY ?? WALK_POSES[frame.poseIndex]?.relativeRootY ?? 0,
       sprite: sprites.get(frame.id)!,
       stationaryColors: bodyColors.get(frame.id),
+      timing: keyTiming.get(frame.id),
     })), reference?.measure?.histogram ?? null, plan?.action, plan?.view, Boolean(flipbook.sequence), stationaryReference)
     : new Map();
   const update = (current: Flipbook): Flipbook => ({
@@ -1019,6 +1032,32 @@ const markGenerating = (frameIds: readonly FrameId[], detail: string) => (curren
   frames: current.frames.map((frame) => (frameIds.includes(frame.id) ? { ...frame, status: "generating", error: null } : frame)),
 });
 
+/** Continue a failed preparation using the saved upload, analysis and plan. */
+export async function retryPreparation(id: string, confirmExtra: boolean, gate?: PaidWorkGate): Promise<Flipbook> {
+  assertFlipbookEnabled();
+  const source = await getFlipbook(id);
+  assertIdle(source);
+  if (source.cast.length || source.reference || !["failed", "canceled"].includes(source.status)) throw new AppError("nothing_to_retry", 409, "Generate missing drawings or correct a drawing to continue this animation.");
+  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 });
+  // Report a known allowance refusal before the worker starts so the UI can confirm it.
+  const needsClean = source.analysis && decideReference(source.analysis, source.plan?.view).kind === "clean";
+  if (needsClean && source.budget.used >= source.budget.limit && !confirmExtra) throw new AppError("budget_reached", 402, "Preparing this reference needs one more drawing. Confirm to continue.");
+  return startVisible(id, (current) => ({ ...current, status: "analyzing", detail: "Retrying animation preparation", error: null }), (signal) => runPipeline(id, signal, { keepScene: false, fromReading: false, retry: true, confirmExtra }));
+}
+
+/** Repair every flagged, finished drawing in one budgeted, cancelable run. */
+export async function enhanceFlagged(id: string, confirmExtra: boolean, gate?: PaidWorkGate): Promise<Flipbook> {
+  assertFlipbookEnabled();
+  const source = await getFlipbook(id);
+  assertIdle(source);
+  assertDrawable(source);
+  const targets = repairableFrames(source).map((frame) => frame.id);
+  if (!targets.length) throw new AppError("nothing_to_enhance", 409, "There are no unapproved drawings with warnings to fix.");
+  await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: targets.length });
+  await reserveImages(id, targets.length, confirmExtra);
+  return startVisible(id, markGenerating(targets, `Fixing ${targets.length} flagged drawings with Muse Image`), (signal) => drawFrames(id, signal, targets, { withNeighbor: true, repair: true }));
+}
+
 export async function generateMissing(id: string, confirmExtra: boolean, gate?: PaidWorkGate): Promise<Flipbook> {
   const flipbook = await getFlipbook(id);
   assertIdle(flipbook);
@@ -1051,12 +1090,14 @@ export async function reviseSequence(id: string, settings: SequenceSettings, gat
   assertDrawable(source);
   if (source.cast.length || !source.analysis) throw new AppError("sequence_not_supported", 409, "Choose a single character with a prepared reference.");
   const parsed = SequenceSettingsSchema.parse(settings);
+  if (!motion && source.motionReference && parsed.durationSeconds > source.motionReference.durationSeconds) throw new AppError("invalid_motion_trim", 400, "Choose a longer segment in Video movement reference before extending this sequence.");
+  const retainTiming = !motion && source.sequence?.durationSeconds === parsed.durationSeconds;
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 0 });
   return startVisible(id, (current) => ({ ...current, status: "planning", detail: `Planning ${parsed.durationSeconds * parsed.drawingFps} timed drawings`, error: null }), async (signal) => {
-    const eligible = motion ? [] : (source.revisions ?? []).filter((entry) => source.plan?.motionId && entry.plan.motionId === source.plan.motionId && entry.motionReference?.version === source.motionReference?.version);
-    const planned = await services.planSequence({ analysis: source.analysis!, prompt: source.prompt, settings: parsed, flipbookId: id, view: source.requestedView, action: source.plan!.action === "ensemble" ? undefined : source.plan!.action, previous: motion ? undefined : source.plan!, reusePoses: eligible.flatMap((entry) => entry.plan.poses), guide: motion?.guide ?? (source.motionReference ? (tick) => motionGuide(id, source.motionReference!, tick) : undefined), signal });
-    const plan = { ...planned, motionId: motion ? randomUUID() : source.plan?.motionId ?? randomUUID() };
-    const reusable = new Map(motion ? [] : [...eligible.flatMap((entry) => entry.frames), ...source.frames].map((frame) => [frame.id, frame]));
+    const eligible = retainTiming ? (source.revisions ?? []).filter((entry) => source.plan?.motionId && entry.plan.motionId === source.plan.motionId && entry.motionReference?.version === source.motionReference?.version) : [];
+    const planned = await services.planSequence({ analysis: source.analysis!, prompt: source.prompt, settings: parsed, flipbookId: id, view: source.requestedView, action: source.plan!.action === "ensemble" ? undefined : source.plan!.action, previous: retainTiming ? source.plan! : undefined, reusePoses: eligible.flatMap((entry) => entry.plan.poses), guide: motion?.guide ?? (source.motionReference ? (tick) => motionGuide(id, source.motionReference!, tick) : undefined), signal });
+    const plan = { ...planned, motionId: retainTiming ? source.plan?.motionId ?? randomUUID() : randomUUID() };
+    const reusable = new Map(retainTiming ? [...eligible.flatMap((entry) => entry.frames), ...source.frames].map((frame) => [frame.id, frame] as const) : []);
     const frames = sequenceSkeleton(parsed).map((frame) => ({ ...(reusable.get(frame.id) ?? frame), poseIndex: frame.poseIndex, phase: frame.phase, label: plan.poses[frame.poseIndex].label }));
     await workerUpdate(id, signal, (current) => ({ ...current, sequence: parsed, plan, frames, order: frames.map((frame) => frame.id), inbetweens: [], revisions: [...(current.revisions ?? []), revisionOf(source)].slice(-20), ...(motion ? { motionReference: motion.reference, ...(motion.audio ? { audio: motion.audio } : {}) } : {}), look: { settings: { ...(current.look?.settings ?? { aspect: "16:9", speed: 1 }), ...parsed, motion: "in_place", cycleSeconds: undefined, smoothing: 0 }, background: current.look?.background ?? { kind: "color", color: "#ffffff" } }, alignment: null, status: "reference_ready", detail: null, error: null }));
     await finalize(id, signal);

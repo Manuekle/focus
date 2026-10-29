@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import type { ReactNode } from "react";
 import { FocusProvider } from "../components/focus-provider";
+import { ActivityProvider } from "./_activity/activity-provider";
 import "./globals.css";
 
 export const metadata: Metadata = {
@@ -9,5 +10,5 @@ export const metadata: Metadata = {
 };
 export default function RootLayout({children}: {readonly children: ReactNode}) {
   return <html lang="en" className="dark" style={{ colorScheme: "dark" }} suppressHydrationWarning><head><link rel="preload" href="/fonts/inter/InterVariable-latin.woff2" as="font" type="font/woff2" crossOrigin="anonymous"/></head>
-    <body suppressHydrationWarning><FocusProvider locale="en" forcedTheme="dark">{children}</FocusProvider></body></html>;
+    <body suppressHydrationWarning><FocusProvider locale="en" forcedTheme="dark"><ActivityProvider>{children}</ActivityProvider></FocusProvider></body></html>;
 }

@@ -9,7 +9,7 @@
 .studio { height: 100dvh; overflow: hidden; --studio-preview-top: 16px; }
 .header { flex-shrink: 0; }
 .body { min-height: 0; grid-template-rows: minmax(0, 1fr); }
-.sidebar { position: static; min-height: 0; height: 100%; overflow-y: auto; }
+.sidebar { position: static; min-height: 0; height: 100%; }
 .sidebarToggle { flex-shrink: 0; color: var(--muted-foreground); }
 .main { min-height: 0; overflow: hidden; container-type: inline-size; }
 /* The workspace is the page: no gutter from the shared studio shell. */
@@ -252,7 +252,7 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 @media (max-width: 860px) {
   .studio { height: auto; overflow: visible; }
   .body { grid-template-rows: auto; }
-  .sidebar { max-height: min(32dvh, 260px); }
+  .sidebar { max-height: min(55dvh, 440px); }
   .sidebarToggle { display: none; }
   .main { overflow: visible; }
   .mainViewport { overflow: visible; scrollbar-gutter: auto; }
