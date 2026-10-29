@@ -46,24 +46,24 @@ const diff = (a: Buffer, b: Buffer) =>
 
 beforeAll(async () => {
   work = await mkdtemp(path.join(tmpdir(), "focus-smooth-"));
-  const elf = await sharp(
-    await readFile(path.join(process.cwd(), "public/characters/elf-chan.png")),
+  const reze = await sharp(
+    await readFile(path.join(process.cwd(), "public/characters/reze.jpeg")),
   )
     .resize(28, 56)
     .png()
     .toBuffer();
   frames = [];
   for (let i = 0; i < 8; i++) {
-    const file = path.join(work, `elf-${i}.png`);
+    const file = path.join(work, `reze-${i}.png`);
     await sharp({
       create: { width: 64, height: 96, channels: 4, background: "#ffffff" },
     })
-      .composite([{ input: elf, left: 4 + i * 3, top: 20 }])
+      .composite([{ input: reze, left: 4 + i * 3, top: 20 }])
       .png()
       .toFile(file);
     frames.push({
       frameId: `f${i}`,
-      label: `Elf ${i}`,
+      label: `Reze ${i}`,
       phase: "wave_rest",
       spritePath: file,
     });

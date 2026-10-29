@@ -22,7 +22,7 @@ import {
   MAX_IMAGE_BYTES,
   hasAcceptedImageExtension,
 } from "../../shared/flipbook";
-import type { Character, CharacterSummary } from "../../shared/characters";
+import { CHARACTER_PRESETS, CharacterPresetSchema, type Character, type CharacterPreset, type CharacterSummary } from "../../shared/characters";
 import { formatBytes } from "../../shared/media";
 import { AccountButton } from "../_auth/account-button";
 import { LoginDialog } from "../_auth/login-dialog";
@@ -46,7 +46,7 @@ export function CharactersStudio({
   const [list, setList] = useState<CharacterSummary[] | null>(null);
   const [character, setCharacter] = useState<Character | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [creating, setCreating] = useState(false);
+  const [creating, setCreating] = useState<CharacterPreset | "upload" | null>(null);
   const [login, setLogin] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const createLock = useRef(false);
@@ -124,7 +124,8 @@ export function CharactersStudio({
     };
   }, [character?.id, character?.status, user, loadList]);
 
-  const create = async (file?: File) => {
+  const create = async (source: File | CharacterPreset) => {
+    const file = source instanceof File ? source : undefined;
     if (!user) {
       setLogin(true);
       return;
@@ -138,12 +139,12 @@ export function CharactersStudio({
       return;
     }
     createLock.current = true;
-    setCreating(true);
+    setCreating(typeof source === "string" ? source : "upload");
     setError(null);
     try {
-      const next = file
-        ? await characterApi.create(file)
-        : await characterApi.elf();
+      const next = typeof source === "string"
+        ? await characterApi.preset(source)
+        : await characterApi.create(source);
       router.push(`/characters?c=${next.id}`);
     } catch (cause) {
       if (cause instanceof CharacterApiError && cause.code === "login_required")
@@ -156,7 +157,7 @@ export function CharactersStudio({
         );
     } finally {
       createLock.current = false;
-      setCreating(false);
+      setCreating(null);
     }
   };
   const changed = (next: Character) => {
@@ -197,7 +198,7 @@ export function CharactersStudio({
             variant="outline"
             size="sm"
             className="w-full justify-start"
-            disabled={creating || loading}
+            disabled={Boolean(creating) || loading}
             onClick={() => {
               if (!user) setLogin(true);
               else fileRef.current?.click();
@@ -322,7 +323,7 @@ export function CharactersStudio({
                 {Boolean(list?.length) && (
                   <Button
                     variant="outline"
-                    disabled={creating}
+                    disabled={Boolean(creating)}
                     onClick={() => fileRef.current?.click()}
                   >
                     <HugeiconsIcon icon={Add01Icon} size={14} />
@@ -358,27 +359,19 @@ export function CharactersStudio({
               ) : null}
               <section
                 className={styles.starter}
-                aria-labelledby="elf-starter-title"
+                aria-labelledby="starter-title"
               >
                 <div className={styles.starterCopy}>
-                  <Badge size="sm">Start with a reference</Badge>
-                  <h2 id="elf-starter-title">Meet Elf-chan.</h2>
+                  <Badge size="sm">Character templates</Badge>
+                  <h2 id="starter-title">Choose your starting character.</h2>
                   <p>
-                    A familiar face for your first character. Keep her original
-                    reference, create a full-body design, then try a new outfit.
+                    Start with Denji or Reze. Keep the original reference,
+                    create a full-body design, then try a new outfit.
                   </p>
-                  <Button
-                    disabled={creating || loading}
-                    aria-busy={creating}
-                    onClick={() => void create()}
-                  >
-                    {creating ? "Opening Elf-chan…" : "Start with Elf-chan"}
-                    <HugeiconsIcon icon={ArrowRight01Icon} size={15} />
-                  </Button>
                   <button
                     className={styles.textButton}
                     type="button"
-                    disabled={creating || loading}
+                    disabled={Boolean(creating) || loading}
                     onClick={() => {
                       if (!user) setLogin(true);
                       else fileRef.current?.click();
@@ -390,15 +383,36 @@ export function CharactersStudio({
                     Nothing is generated until you choose Create design.
                   </small>
                 </div>
-                <div className={styles.starterArt}>
-                  <Image
-                    src="/characters/elf-chan.png"
-                    alt="Elf-chan, with blonde braided hair, green eyes and pointed ears"
-                    width={736}
-                    height={1042}
-                    priority
-                  />
-                  <span>Original reference</span>
+                <div className={styles.starterTemplates}>
+                  {CharacterPresetSchema.options.map((id) => {
+                    const preset = CHARACTER_PRESETS[id];
+                    return (
+                      <article className={styles.starterTemplate} key={id}>
+                        <div className={styles.starterArt}>
+                          <Image
+                            src={`/characters/${preset.fileName}`}
+                            alt={preset.alt}
+                            width={preset.width}
+                            height={preset.height}
+                            sizes="(max-width: 600px) 42vw, (max-width: 900px) 35vw, 220px"
+                          />
+                        </div>
+                        <div className={styles.templateCaption}>
+                          <h3>{preset.name}</h3>
+                          <span>{preset.label}</span>
+                        </div>
+                        <Button
+                          variant="outline"
+                          disabled={Boolean(creating) || loading}
+                          aria-busy={creating === id}
+                          onClick={() => void create(id)}
+                        >
+                          {creating === id ? `Opening ${preset.name}…` : `Start with ${preset.name}`}
+                          <HugeiconsIcon icon={ArrowRight01Icon} size={15} />
+                        </Button>
+                      </article>
+                    );
+                  })}
                 </div>
               </section>
             </>

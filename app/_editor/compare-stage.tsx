@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
-import { ArrowLeftRightIcon, PauseIcon, PlayIcon, VolumeHighIcon, VolumeMute01Icon } from "@hugeicons/core-free-icons";
+import { ArrowLeftRightIcon, PauseIcon, PlayIcon, VolumeHighIcon, VolumeOffIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
 import { formatSeconds } from "../../shared/media";
@@ -234,7 +234,7 @@ export function CompareStage({
             aria-pressed={!muted}
             className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
           >
-            <HugeiconsIcon icon={muted ? VolumeMute01Icon : VolumeHighIcon} size={17} strokeWidth={1.75} />
+            <HugeiconsIcon icon={muted ? VolumeOffIcon : VolumeHighIcon} size={17} strokeWidth={1.75} />
           </button>
         ) : null}
         <SlidingTabs

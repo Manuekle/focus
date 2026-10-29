@@ -24,7 +24,7 @@ import {
   MAX_IMAGE_BYTES,
   hasAcceptedImageExtension,
 } from "../../shared/flipbook";
-import { characterUrls, type Character } from "../../shared/characters";
+import { CHARACTER_PRESETS, characterUrls, type Character } from "../../shared/characters";
 import { formatBytes } from "../../shared/media";
 import { characterApi } from "./character-client";
 import styles from "./characters.module.css";
@@ -34,12 +34,10 @@ const REFERENCE_ROLES = [
   { value: "style", label: "Style" },
 ] as const;
 
-const ELF_FIRST =
-  "Keep Elf-chan’s blonde side braid, green eyes, long pointed ears, burgundy choker and soft anime line work. Keep her blue long-sleeved top and original front-facing view. Complete the full-body design with dark trousers and simple ankle boots, facing the camera.";
 const CHANGES = [
-  "Change the top to a forest-green coat. Keep her face, hair and pose.",
+  "Change the top to a forest-green coat. Keep the face, hair and pose.",
   "Add a small brown satchel. Keep the rest of the design.",
-  "Make the outfit warmer for winter. Keep her identity and pose.",
+  "Make the outfit warmer for winter. Keep the character’s identity and pose.",
 ];
 
 export function CharacterEditor({
@@ -59,8 +57,8 @@ export function CharacterEditor({
       ? (character.job?.prompt ?? "")
       : character.versions.length
         ? ""
-        : character.preset === "elf-chan"
-          ? ELF_FIRST
+        : character.preset
+          ? CHARACTER_PRESETS[character.preset].prompt
           : "Keep the character exactly as drawn: same face, hair, outfit (every garment, legwear and shoes), colors, camera view and facing direction. Show the whole body on a plain background.",
   );
   const [compare, setCompare] = useState(false);

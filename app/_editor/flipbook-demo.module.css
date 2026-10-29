@@ -1,0 +1,34 @@
+.demo { width: min(620px, 100%); margin: 0 auto; scroll-margin-top: 28px; }
+.scene { position: relative; display: grid; grid-template-columns: 170px 76px 230px; justify-content: center; align-items: center; gap: 8px; padding: 6px 0 20px; }
+.reference { position: relative; padding-top: 34px; }
+.photo { padding: 6px 6px 18px; border-radius: 16px; background: linear-gradient(180deg, #ffffff0d, #ffffff03); box-shadow: inset 0 1px 0 #ffffff14, inset 0 0 0 1px #ffffff0a, 0 18px 40px -20px #0009; transform: rotate(-5deg); }
+.photo img { display: block; width: 100%; height: auto; border-radius: 8px; }
+.referenceLabel { display: block; margin: 20px -10px 0; color: var(--muted-foreground); font-size: 12px; text-align: center; }
+.doodle { display: flex; flex-direction: column; align-items: center; align-self: start; gap: 3px; margin-top: 90px; color: var(--accent-foreground); }
+.doodle > span { white-space: nowrap; font-family: var(--font-porkys), sans-serif; font-size: 16px; font-weight: 400; transform: rotate(-8deg); }
+.result { min-width: 0; }
+.player { position: relative; overflow: hidden; padding: 6px; border-radius: 22px; background: linear-gradient(180deg, #ffffff0d, #ffffff03); box-shadow: inset 0 1px 0 #ffffff14, inset 0 0 0 1px #ffffff0a, 0 30px 80px -24px #000000b3, 0 18px 90px -40px #2853e966; }
+.player video { display: block; width: 100%; aspect-ratio: 9 / 16; object-fit: cover; border-radius: 16px; }
+.videoControl { position: absolute; bottom: 18px; display: grid; width: 28px; height: 28px; place-items: center; padding: 0; border: 0; border-radius: 50%; background: #0b0d12b8; box-shadow: inset 0 0 0 1px #ffffff1f; backdrop-filter: blur(10px); color: #c6ccda; opacity: 0; cursor: pointer; }
+.videoPlay { left: 18px; }
+.videoSound { right: 18px; }
+.player:hover .videoControl, .player:focus-within .videoControl, .videoSound[data-muted="true"] { opacity: 1; }
+.videoControl:hover { color: #fff; background: #0b0d12e6; }
+.videoControl:focus-visible { outline: 2px solid #b6c9ff; outline-offset: 3px; }
+.videoControl:disabled { opacity: .4; cursor: default; }
+.caption { margin-top: 15px; color: var(--muted-foreground); font-size: 12px; line-height: 1.6; text-align: center; text-wrap: balance; }
+@media (max-width: 560px) {
+  .scene { grid-template-columns: minmax(0, .76fr) 44px minmax(0, 1fr); gap: 5px; padding-inline: 8px; }
+  .reference { padding-top: 20px; }
+  .photo { padding: 6px 6px 15px; border-radius: 12px; }
+  .referenceLabel { margin-inline: -6px; font-size: 11px; }
+  .doodle { margin-top: 62px; }
+  .doodle > span { font-size: 12px; }
+  .doodle svg { width: 44px; height: 35px; }
+}
+@media (hover: none) {
+  .videoControl { width: 36px; height: 36px; opacity: 1; }
+}
+@media (forced-colors: active) {
+  .photo, .player { border: 1px solid CanvasText; }
+}

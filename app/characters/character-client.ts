@@ -6,6 +6,7 @@ import {
   CharacterSummarySchema,
   type GenerateCharacterRequest,
   type Character,
+  type CharacterPreset,
   type CharacterSummary,
   type UpdateCharacterSchema,
 } from "../../shared/characters";
@@ -65,8 +66,8 @@ export const characterApi = {
     call("/api/characters", {}, parseCharacterList),
   get: (id: string) =>
     call(`/api/characters/${id}`, {}, parseCharacter),
-  elf: () =>
-    call("/api/characters", json({ preset: "elf-chan" }), (value) =>
+  preset: (preset: CharacterPreset) =>
+    call("/api/characters", json({ preset }), (value) =>
       CharacterSchema.parse(value),
     ),
   create: (file: File) =>

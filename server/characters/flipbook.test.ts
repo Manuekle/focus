@@ -48,24 +48,24 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-it("copies the selected Elf-chan design and her original into Flipbook, independent of later changes and upload expiry", async () => {
-  const elf = await readFile(
-    path.join(process.cwd(), "public/characters/elf-chan.png"),
+it("copies the selected Reze design and her original into Flipbook, independent of later changes and upload expiry", async () => {
+  const reze = await readFile(
+    path.join(process.cwd(), "public/characters/reze.jpeg"),
   );
   const character = await createCharacter(ownerId, {
-    name: "Elf-chan",
-    png: elf,
-    fileName: "elf-chan.png",
-    preset: "elf-chan",
+    name: "Reze",
+    png: reze,
+    fileName: "reze.jpeg",
+    preset: "reze",
   });
   characterServices.generate = async () => ({
-    png: elf,
+    png: reze,
     width: 736,
-    height: 1042,
+    height: 1227,
   });
   await generateCharacterVersion(character.id, ownerId, {
     operationId: randomUUID(),
-    prompt: "Prepare Elf-chan",
+    prompt: "Prepare Reze",
     fromVersionId: null,
   });
   let generated = await getCharacter(character.id, ownerId);
@@ -83,18 +83,18 @@ it("copies the selected Elf-chan design and her original into Flipbook, independ
   );
   const analysis: CharacterAnalysis = {
     characterCount: 1,
-    subject: "elf girl",
+    subject: "anime girl",
     facing: "right",
     view: "front",
     fullBodyVisible: false,
     feetVisible: false,
     background: "plain",
     style: "anime illustration",
-    hair: "blonde side braid",
-    clothing: "blue top",
-    accessories: ["burgundy choker"],
+    hair: "dark purple hair tied back",
+    clothing: "white sleeveless shirt and black shorts",
+    accessories: ["black neck ribbon"],
     palette: ["#d8c682", "#557449"],
-    proportions: "long pointed ears",
+    proportions: "slender full-body proportions",
     requestedAction: "wave",
   };
   services.analyze = async () => analysis;
@@ -116,7 +116,7 @@ it("copies the selected Elf-chan design and her original into Flipbook, independ
     originalReachedCleanReference = Boolean(
       input.identityReference?.equals(originalIdentity),
     );
-    return { png: elf, width: 736, height: 1042 };
+    return { png: reze, width: 736, height: 1227 };
   };
   const flipbook = await createFlipbook({
     characterSource: { characterId: character.id, versionId: selectedId },
@@ -141,7 +141,7 @@ it("copies the selected Elf-chan design and her original into Flipbook, independ
   expect(saved.characterSource).toMatchObject({
     characterId: character.id,
     versionId: selectedId,
-    name: "Elf-chan",
+    name: "Reze",
   });
   expect(
     (await readFile(flipbookFiles.source(saved.id))).equals(selectedImage),
@@ -169,23 +169,23 @@ it("copies the selected Elf-chan design and her original into Flipbook, independ
 });
 
 it("keeps a requested frontal camera through all eight drawings even if a planner defaults to side view", async () => {
-  const elf = await readFile(
-    path.join(process.cwd(), "public/characters/elf-chan.png"),
+  const reze = await readFile(
+    path.join(process.cwd(), "public/characters/reze.jpeg"),
   );
   const character = await createCharacter(ownerId, {
-    name: "Elf-chan frontal",
-    png: elf,
-    fileName: "elf-chan.png",
-    preset: "elf-chan",
+    name: "Reze frontal",
+    png: reze,
+    fileName: "reze.jpeg",
+    preset: "reze",
   });
   characterServices.generate = async () => ({
-    png: elf,
+    png: reze,
     width: 736,
-    height: 1042,
+    height: 1227,
   });
   await generateCharacterVersion(character.id, ownerId, {
     operationId: randomUUID(),
-    prompt: "Full-body Elf-chan",
+    prompt: "Full-body Reze",
     fromVersionId: null,
   });
   let source = await getCharacter(character.id, ownerId);
@@ -195,18 +195,18 @@ it("keeps a requested frontal camera through all eight drawings even if a planne
   }
   const analysis: CharacterAnalysis = {
     characterCount: 1,
-    subject: "elf girl",
+    subject: "anime girl",
     facing: "front",
     view: "front",
     fullBodyVisible: true,
     feetVisible: true,
     background: "plain",
     style: "anime illustration",
-    hair: "blonde braid",
+    hair: "dark purple hair",
     clothing: "green coat",
     accessories: [],
     palette: ["#456547"],
-    proportions: "pointed ears",
+    proportions: "slender full-body proportions",
     requestedAction: "wave",
   };
   services.analyze = async () => analysis;
@@ -229,7 +229,7 @@ it("keeps a requested frontal camera through all eight drawings even if a planne
   services.draw = async (input) => {
     views.push(input.plan.view);
     expect(input.identityReference).toBeDefined();
-    return { png: elf, width: 736, height: 1042 };
+    return { png: reze, width: 736, height: 1227 };
   };
   const created = await createFlipbook({
     characterSource: {

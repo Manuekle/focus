@@ -11,7 +11,7 @@ import {
   it,
   vi,
 } from "vitest";
-import type { Character } from "../../shared/characters";
+import { CHARACTER_PRESETS, CharacterPresetSchema, CharacterSchema, type Character } from "../../shared/characters";
 import { AppError } from "../errors";
 import { activeWorkCount } from "../jobs";
 import {
@@ -38,8 +38,9 @@ import {
   PATCH as patch,
 } from "../../app/api/characters/[id]/route";
 import { POST as generate } from "../../app/api/characters/[id]/generate/route";
+import { POST as create } from "../../app/api/characters/route";
 
-// Tests have no provider calls and always use the supplied Elf-chan reference.
+// Tests have no provider calls and always use the supplied Reze reference.
 vi.mock("../auth/users", () => ({
   currentUser: async (request: Request) => {
     const id = request.headers.get("x-test-user");
@@ -50,7 +51,7 @@ vi.mock("../auth/users", () => ({
 }));
 
 let root: string;
-let elf: Buffer;
+let reze: Buffer;
 let owner: string;
 let character: Character;
 let calls: Parameters<typeof characterServices.generate>[0][];
@@ -83,8 +84,8 @@ beforeAll(async () => {
   root = await mkdtemp(path.join(tmpdir(), "focus-characters-"));
   process.env.FOCUS_DATA_DIR = root;
   process.env.NEXT_PUBLIC_ENABLE_FLIPBOOK = "true";
-  elf = await readFile(
-    path.join(process.cwd(), "public/characters/elf-chan.png"),
+  reze = await readFile(
+    path.join(process.cwd(), "public/characters/reze.jpeg"),
   );
 });
 beforeEach(async () => {
@@ -92,13 +93,13 @@ beforeEach(async () => {
   calls = [];
   characterServices.generate = async (input) => {
     calls.push(input);
-    return { png: elf, width: 736, height: 1042 };
+    return { png: reze, width: 736, height: 1227 };
   };
   character = await createCharacter(owner, {
-    name: "Elf-chan",
-    png: elf,
-    fileName: "elf-chan.png",
-    preset: "elf-chan",
+    name: "Reze",
+    png: reze,
+    fileName: "reze.jpeg",
+    preset: "reze",
   });
 });
 afterAll(async () => {
@@ -111,7 +112,7 @@ afterAll(async () => {
 });
 
 describe("character versions", () => {
-  it("stores Elf-chan’s immutable original and scopes the library to its owner", async () => {
+  it("stores Reze’s immutable original and scopes the library to its owner", async () => {
     expect(character.versions).toHaveLength(0);
     expect(
       (await readFile(characterAsset(character.id, character.references[0].id)))
@@ -188,7 +189,7 @@ describe("character versions", () => {
     characterServices.generate = async (input) => {
       calls.push(input);
       await wait;
-      return { png: elf, width: 736, height: 1042 };
+      return { png: reze, width: 736, height: 1227 };
     };
     const change = request();
     const gate = vi.fn(async () => undefined);
@@ -271,12 +272,12 @@ describe("character versions", () => {
   it("limits supporting references and never replaces the primary reference", async () => {
     const primary = character.references[0];
     await addCharacterReference(character.id, owner, {
-      bytes: elf,
+      bytes: reze,
       name: "outfit.png",
       role: "outfit",
     });
     const full = await addCharacterReference(character.id, owner, {
-      bytes: elf,
+      bytes: reze,
       name: "style.png",
       role: "style",
     });
@@ -284,7 +285,7 @@ describe("character versions", () => {
     expect(full.references).toHaveLength(3);
     await expect(
       addCharacterReference(character.id, owner, {
-        bytes: elf,
+        bytes: reze,
         name: "extra.png",
         role: "style",
       }),
@@ -317,7 +318,7 @@ describe("character versions", () => {
   });
 
   it("removes a supporting reference but never the original", async () => {
-    const withOutfit = await addCharacterReference(character.id, owner, { bytes: elf, name: "outfit.png", role: "outfit" });
+    const withOutfit = await addCharacterReference(character.id, owner, { bytes: reze, name: "outfit.png", role: "outfit" });
     const outfit = withOutfit.references[1];
     const removed = await updateCharacter(character.id, owner, { action: "remove_reference", referenceId: outfit.id });
     expect(removed.references).toEqual([character.references[0]]);
@@ -334,7 +335,7 @@ describe("character versions", () => {
     expect(await listCharacters(owner)).toEqual([]);
   });
 
-  it("loads exactly the chosen version for Flipbook and retains the immutable Elf-chan reference", async () => {
+  it("loads exactly the chosen version for Flipbook and retains the immutable Reze reference", async () => {
     await generateCharacterVersion(character.id, owner, request());
     const base = await settled(character.id);
     const source = { characterId: base.id, versionId: base.selectedVersionId! };
@@ -353,14 +354,42 @@ describe("character versions", () => {
     const copy = Buffer.from(snapshot.png);
     await updateCharacter(base.id, owner, {
       action: "rename",
-      name: "Elf-chan winter",
+      name: "Reze winter",
     });
-    expect(snapshot.origin.name).toBe("Elf-chan");
+    expect(snapshot.origin.name).toBe("Reze");
     expect(snapshot.png.equals(copy)).toBe(true);
   });
 });
 
 describe("private character HTTP routes", () => {
+  it.each(CharacterPresetSchema.options)("creates the %s template from its supplied reference without generating", async (preset) => {
+    const response = await create(http(owner, "POST", { preset }));
+    expect(response.status).toBe(201);
+    const saved = CharacterSchema.parse(await response.json());
+    const template = CHARACTER_PRESETS[preset];
+    expect(saved).toMatchObject({
+      name: template.name,
+      ownerId: owner,
+      preset,
+      references: [{ name: template.fileName, role: "identity", width: template.width, height: template.height }],
+      versions: [],
+      budget: { used: 0 },
+    });
+    expect((await getCharacter(saved.id, owner)).preset).toBe(preset);
+    const { decodeImage } = await import("../animation/image-input");
+    const original = await decodeImage(await readFile(path.join(process.cwd(), "public/characters", template.fileName)));
+    expect((await readFile(characterAsset(saved.id, saved.references[0].id))).equals(original.png)).toBe(true);
+    expect(calls).toHaveLength(0);
+  });
+  it("rejects the retired starter while keeping saved characters readable", async () => {
+    const response = await create(http(owner, "POST", { preset: "elf-chan" }));
+    expect(response.status).toBe(400);
+    expect((await response.json()).error.code).toBe("invalid_character");
+    const legacy = CharacterSchema.parse({ ...character, preset: "elf-chan" });
+    expect(legacy.preset).toBeNull();
+    expect(legacy.references).toEqual(character.references);
+    expect(calls).toHaveLength(0);
+  });
   it("requires a session and returns 404 to a different account", async () => {
     const context = { params: Promise.resolve({ id: character.id }) };
     expect((await detail(http(""), context)).status).toBe(401);
@@ -399,7 +428,7 @@ describe("private character HTTP routes", () => {
   });
   it("blocks cross-origin writes and permits the browser’s host behind an internal URL", async () => {
     const context = { params: Promise.resolve({ id: character.id }) };
-    const body = JSON.stringify({ action: "rename", name: "Elf-chan" });
+    const body = JSON.stringify({ action: "rename", name: "Reze" });
     const headers = {
       "Content-Type": "application/json",
       "x-test-user": owner,

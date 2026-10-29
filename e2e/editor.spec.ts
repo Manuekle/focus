@@ -16,6 +16,7 @@ test("plays the before / after demo without blocking the studio", async ({ page 
   await page.goto("/");
   const demo = page.locator("[data-home-demo]");
   await expect(demo).toBeVisible();
+  await demo.scrollIntoViewIfNeeded();
   await expect.poll(() => demo.locator("video").evaluate((video: HTMLVideoElement) => !video.paused)).toBe(true);
   const divider = demo.getByRole("slider", { name: "Before and after divider" });
   await divider.focus();
@@ -25,7 +26,7 @@ test("plays the before / after demo without blocking the studio", async ({ page 
   await expect(demo.getByRole("button", { name: "Play demo" })).toBeVisible();
   await expect(page.getByRole("button", { name: /Drop your video here/ })).toBeEnabled();
   await expect(page.getByLabel("Describe the change")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: /Make anything\s*stand out$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Your drawings\.\s*In motion\.$/ })).toBeVisible();
 });
 
 test("shows the studio immediately and holds the demo still when motion is reduced", async ({ page }) => {
@@ -46,14 +47,14 @@ test("stays dark when the browser and saved preference are light", async ({ page
   await page.addInitScript(() => localStorage.setItem("focus-theme", "light"));
   await page.goto("/");
   await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
-  await expect(page.getByRole("heading", { name: /Make anything\s*stand out$/ })).toHaveCSS("color", "rgb(245, 245, 245)");
+  await expect(page.getByRole("heading", { name: /Your drawings\.\s*In motion\.$/ })).toHaveCSS("color", "rgb(245, 245, 245)");
   await page.reload();
   await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
 });
 
 test("asks for a clip before revealing editing options", async ({ page }) => {
   await page.goto("/");
-  await expect(page.getByRole("heading", { name: /Make anything\s*stand out$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Your drawings\.\s*In motion\.$/ })).toBeVisible();
   await expect(page.getByText("Drop your video here")).toBeVisible();
   await expect(page.getByText(`MP4 or MOV · up to ${limits.maxDurationSeconds}s · ${limits.maxUploadMb} MB max`, { exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Generate edit" })).toHaveCount(0);
@@ -91,7 +92,7 @@ test("uploads, plays, and reports that AI editing is paused", async ({ page }) =
   const video = page.locator("#studio video");
   await expect(video).toBeVisible({ timeout: 30_000 });
   await expect(page).toHaveURL(/\?v=[0-9a-f-]{36}/);
-  await expect(page.getByRole("heading", { name: /Make anything\s*stand out$/ })).toBeVisible();
+  await expect(page.getByRole("heading", { name: /Your drawings\.\s*In motion\.$/ })).toBeVisible();
   await expect(page.locator("#studio").getByLabel("Describe the change")).toBeVisible();
   await expect(page.locator('[aria-label="Editing steps"] [aria-current="step"]')).toHaveText("2Make it yours");
 

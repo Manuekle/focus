@@ -10,12 +10,12 @@ import { EASE_OUT } from "../../lib/ease";
 import { useReducedMotion } from "../../lib/hooks/use-reduced-motion";
 import styles from "./hero-badge.module.css";
 
-// Every line has the same 30 characters, so the pill keeps its size as they turn.
+// The hidden lines share one grid cell, so the widest one keeps the pill steady.
 const LINES = [
-  { Icon: AstronomyColored24, text: "Finds your subject in any clip" },
-  { Icon: EarthColored24, text: "Follows it through every frame" },
-  { Icon: StackPlayColored24, text: "Three effects, one prompt away" },
-  { Icon: VideoColored24, text: "Exported as a crisp, clean MP4" },
+  { Icon: StackPlayColored24, text: "One drawing. A little more life" },
+  { Icon: AstronomyColored24, text: "Your character, frame by frame" },
+  { Icon: EarthColored24, text: "Your ideas, a little more alive" },
+  { Icon: VideoColored24, text: "MP4, GIF and every little frame" },
 ] as const;
 const INTERVAL_MS = 3200;
 

@@ -1,0 +1,68 @@
+.carousel {
+  container-type: inline-size;
+  width: min(600px, 100%);
+  margin: 6px auto 0;
+}
+
+.viewport {
+  --step-near: clamp(64px, 20cqw, 110px);
+  --step-far: clamp(48px, 15cqw, 82px);
+  position: relative;
+  height: clamp(180px, 40cqw, 220px);
+  overflow: hidden;
+  touch-action: pan-y;
+  user-select: none;
+  cursor: grab;
+  mask-image: linear-gradient(to right, transparent, #000 13%, #000 87%, transparent);
+}
+
+.viewport[data-dragging="true"] { cursor: grabbing; }
+
+.card {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  display: block;
+  width: clamp(82px, 20cqw, 108px);
+  padding: 5px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 17px;
+  background: linear-gradient(180deg, #ffffff1a, #ffffff08);
+  box-shadow: inset 0 1px 0 #ffffff24, inset 0 0 0 1px #ffffff14, 0 12px 26px -12px #0009;
+  opacity: var(--fade);
+  filter: blur(var(--blur));
+  transform: translate(-50%, -50%) translateX(calc(var(--direction) * (var(--step-near) + (var(--distance) - 1) * var(--step-far)) + var(--drag-x))) scale(var(--scale));
+  cursor: pointer;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.card img { display: block; width: 100%; height: auto; aspect-ratio: 9 / 16; object-fit: cover; border-radius: 12px; pointer-events: none; }
+.card[aria-pressed="true"] { box-shadow: inset 0 1px 0 #ffffff38, inset 0 0 0 1px #b6c9ff80, 0 0 0 1px #6385fe20, 0 14px 30px -12px #0009; }
+.card[data-visible="false"] { visibility: hidden; pointer-events: none; }
+.card:focus-visible { outline: 2px solid #b6c9ff; outline-offset: 3px; }
+.card:disabled { cursor: default; }
+
+.controls { display: flex; align-items: center; justify-content: center; gap: 10px; margin-top: 2px; }
+.arrow {
+  --btn-primary-bg: #22252a;
+  --btn-primary-bg-hover: #30343c;
+  --btn-primary-fg: var(--foreground);
+  --btn-primary-border: #ffffff14;
+  --btn-primary-shadow: inset 0 0 6px 2px rgb(255 255 255 / 10%), 0 2px 5px rgb(0 0 0 / 20%), 0 0 0 1px var(--btn-primary-border);
+  --btn-primary-shadow-pressed: inset 0 2px 4px rgb(0 0 0 / 22%), inset 0 0 4px 1px rgb(255 255 255 / 8%), 0 0 0 1px var(--btn-primary-border);
+  border-radius: 50%;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .card { transition: transform 360ms cubic-bezier(.22, 1, .36, 1), opacity 240ms ease-out, filter 360ms cubic-bezier(.22, 1, .36, 1), box-shadow 180ms ease-out, visibility 0s linear; }
+  .card[data-visible="false"] { transition-delay: 0ms, 0ms, 0ms, 0ms, 240ms; }
+  .viewport[data-dragging="true"] .card { transition: none; }
+}
+
+@media (hover: none) { .arrow { width: 40px; height: 40px; } }
+@media (forced-colors: active) {
+  .card { border: 1px solid CanvasText; }
+  .card[aria-pressed="true"] { outline: 2px solid Highlight; }
+  .card:focus-visible { outline-color: Highlight; }
+}

@@ -7,6 +7,7 @@ import {
   CharacterSchema,
   characterCover,
   type Character,
+  type CharacterPreset,
   type CharacterSummary,
 } from "../../shared/characters";
 import { AppError } from "../errors";
@@ -129,7 +130,7 @@ export async function listCharacters(
 }
 export async function createCharacter(
   ownerId: string,
-  input: { name: string; png: Buffer; fileName: string; preset?: "elf-chan" },
+  input: { name: string; png: Buffer; fileName: string; preset?: CharacterPreset },
 ): Promise<Character> {
   const decoded = await decodeImage(input.png);
   const id = randomUUID(),
