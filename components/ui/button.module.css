@@ -33,6 +33,14 @@
     --btn-surface-stroke: var(--btn-destructive-stroke, var(--btn-primary-stroke));
   }
 
+  .outline {
+    --btn-surface-stroke: var(--btn-outline-stroke, var(--btn-primary-stroke));
+  }
+
+  .secondary {
+    --btn-surface-stroke: var(--btn-secondary-stroke, var(--btn-primary-stroke));
+  }
+
   @media (prefers-reduced-motion: no-preference) {
     .button:active:not(:disabled):not([data-static]) {
       scale: 0.96;

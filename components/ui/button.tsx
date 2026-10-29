@@ -42,15 +42,21 @@ const buttonVariants = cva(
           "hover:shadow-[var(--btn-destructive-shadow-hover)] hover:bg-[var(--btn-destructive-bg-hover)]",
           "active:shadow-[var(--btn-destructive-shadow-pressed)] focus-visible:outline-[color:var(--btn-destructive-focus-ring)]",
         ),
-        secondary:
-          "text-[var(--btn-secondary-fg)] bg-[var(--btn-secondary-bg)]"
-          + " shadow-[var(--btn-secondary-shadow)]"
-          + " hover:bg-[var(--btn-secondary-bg-hover)]"
-          + " active:shadow-[var(--btn-secondary-shadow-pressed)]",
-        outline:
-          "text-[var(--btn-outline-fg)] bg-[var(--btn-outline-bg)]"
-          + " shadow-[var(--btn-outline-shadow)]"
-          + " hover:bg-[var(--btn-outline-bg-hover)] active:shadow-[var(--btn-outline-shadow-pressed)]",
+        secondary: cn(
+          styles.highlight, styles.secondary,
+          "text-[var(--btn-secondary-fg)] bg-[var(--btn-secondary-bg)] shadow-[var(--btn-secondary-shadow)]",
+          "hover:bg-[var(--btn-secondary-bg-hover)] active:shadow-[var(--btn-secondary-shadow-pressed)]",
+        ),
+        outline: cn(
+          styles.highlight, styles.outline,
+          "text-[var(--btn-outline-fg)] bg-[var(--btn-outline-bg)] shadow-[var(--btn-outline-shadow)]",
+          "hover:bg-[var(--btn-outline-bg-hover)] active:shadow-[var(--btn-outline-shadow-pressed)]",
+        ),
+        neutral: cn(
+          styles.highlight, styles.outline,
+          "text-[var(--btn-outline-fg)] bg-[var(--btn-outline-bg)] shadow-[var(--btn-outline-shadow)]",
+          "hover:bg-[var(--btn-outline-bg-hover)] active:shadow-[var(--btn-outline-shadow-pressed)]",
+        ),
         ghost:
           "bg-transparent hover:bg-[var(--btn-ghost-hover-bg)]",
         link:

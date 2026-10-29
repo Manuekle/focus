@@ -158,7 +158,7 @@ export function Workspace() {
               <p className={styles.intro}>A wave, a dance, a whole little story.<br /><span>Bring your characters to life, one frame at a time.</span></p>
               <div className={styles.cta}>
                 <Button asChild>{hasFlipbook ? <Link href="/flipbook">Create a flipbook <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.75} /></Link> : <a href="#flipbook-demo">Explore flipbook <HugeiconsIcon icon={ArrowDown01Icon} size={14} strokeWidth={1.75} /></a>}</Button>
-                <Button asChild className={styles.neutralButton}><a href="#video-effects">Explore video effects</a></Button>
+                <Button asChild variant="outline"><a href="#video-effects">Explore video effects</a></Button>
               </div>
             </div>
             <div className={styles.heroVisual}><FlipbookDemo /></div>
@@ -185,7 +185,7 @@ export function Workspace() {
                 <h2 id="video-title" className={styles.sectionTitle}>Make your video stand out.</h2>
                 <p className={styles.sectionDescription}>Keep your subject in color, let it break the frame, or give every move a trail.</p>
               </div>
-              <Button asChild className={styles.neutralButton}><Link href="/editor">Open video editor <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.5} /></Link></Button>
+              <Button asChild variant="outline"><Link href="/editor">Open video editor <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.5} /></Link></Button>
             </div>
             <HeroDemo />
           </section>
