@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { SessionInfoSchema, type SessionInfo } from "../../shared/account";
 
-// The browser side of accounts: who is signed in (or how many free edits are
+// The browser side of accounts: who is signed in (or how many free generations are
 // left), and the two navigations that sign in and out.
 
 // One request per page load, shared by every component that asks.

@@ -20,7 +20,7 @@ export function Avatar({ user, className }: { readonly user: PublicUser; readonl
   );
 }
 
-/** Header account control: free edits left and "Sign in", or the signed-in person's menu. */
+/** Header account control: generations left and "Sign in", or the signed-in person's menu. */
 export function AccountButton({ session, next }: { readonly session: SessionInfo | null; readonly next: string }) {
   const router = useRouter();
   if (!session) return <span aria-hidden className="h-8 w-24" />;
@@ -30,7 +30,7 @@ export function AccountButton({ session, next }: { readonly session: SessionInfo
       <div className="flex items-center gap-3">
         {quota ? (
           <span className="hidden text-xs text-muted-foreground tabular-nums sm:inline">
-            {quota.remaining === 0 ? "No free edits left" : `${quota.remaining} of ${quota.limit} free edits left`}
+            {quota.remaining === 0 ? "No generations left" : `${quota.remaining} of ${quota.limit} generations left`}
           </span>
         ) : null}
         <Button size="sm" variant="outline" onClick={() => signInWithFacebook(next)}>
@@ -41,27 +41,31 @@ export function AccountButton({ session, next }: { readonly session: SessionInfo
   }
   const user = session.user;
   return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger className="flex items-center gap-2 rounded-full py-0.5 pr-2.5 pl-0.5 text-sm text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-primary" aria-label={`Account: ${user.name}`}>
-        <Avatar user={user} />
-        <span className="hidden max-w-32 truncate sm:inline">{user.name}</span>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content align="end" sideOffset={6} className="z-50 min-w-48 rounded-xl border border-border bg-card p-1 shadow-xl">
-          <div className="px-2.5 py-2">
-            <p className="truncate text-sm font-medium text-foreground">{user.name}</p>
-            <p className="text-xs text-muted-foreground">{user.simulated ? "Facebook (simulated locally)" : "Signed in with Facebook"}</p>
-          </div>
-          <DropdownMenu.Separator className="my-1 h-px bg-border" />
-          <DropdownMenu.Item
-            onSelect={() => void signOut().then(() => router.push("/editor"))}
-            className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground outline-none data-[highlighted]:bg-muted"
-          >
-            <HugeiconsIcon icon={Logout01Icon} size={14} strokeWidth={1.75} />
-            Sign out
-          </DropdownMenu.Item>
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
+    <div className="flex items-center gap-3">
+    {session.quota ? <span className="hidden text-xs text-muted-foreground tabular-nums sm:inline">{session.quota.remaining} of {session.quota.limit} generations left</span> : null}
+      <DropdownMenu.Root>
+        <DropdownMenu.Trigger className="flex items-center gap-2 rounded-full py-0.5 pr-2.5 pl-0.5 text-sm text-foreground hover:bg-muted focus-visible:outline-2 focus-visible:outline-primary" aria-label={`Account: ${user.name}`}>
+          <Avatar user={user} />
+          <span className="hidden max-w-32 truncate sm:inline">{user.name}</span>
+        </DropdownMenu.Trigger>
+        <DropdownMenu.Portal>
+          <DropdownMenu.Content align="end" sideOffset={6} className="z-50 min-w-48 rounded-xl border border-border bg-card p-1 shadow-xl">
+            <div className="px-2.5 py-2">
+              <p className="truncate text-sm font-medium text-foreground">{user.name}</p>
+              <p className="text-xs text-muted-foreground">{user.simulated ? "Facebook (simulated locally)" : "Signed in with Facebook"}</p>
+              {session.quota ? <p className="mt-1 text-xs text-muted-foreground" role="status">{session.quota.remaining} of {session.quota.limit} generations left</p> : null}
+            </div>
+            <DropdownMenu.Separator className="my-1 h-px bg-border" />
+            <DropdownMenu.Item
+              onSelect={() => void signOut().then(() => router.push("/editor"))}
+              className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground outline-none data-[highlighted]:bg-muted"
+            >
+              <HugeiconsIcon icon={Logout01Icon} size={14} strokeWidth={1.75} />
+              Sign out
+            </DropdownMenu.Item>
+          </DropdownMenu.Content>
+        </DropdownMenu.Portal>
+      </DropdownMenu.Root>
+    </div>
   );
 }

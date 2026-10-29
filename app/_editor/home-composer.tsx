@@ -18,8 +18,8 @@ import styles from "./editor-view.module.css";
 /**
  * The home page's last step: the clip and the instruction. Generating opens
  * the full editor, which picks up the clip, the words and the effect from
- * localStorage and starts right away. With no free edits left, Facebook
- * sign-in comes first; the draft waits in localStorage through it.
+ * localStorage and starts right away. With no generations left, the
+ * allowance notice keeps the draft available without starting paid work.
  */
 export function HomeComposer({
   video,
@@ -41,7 +41,7 @@ export function HomeComposer({
   const [leaving, setLeaving] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
   const editorUrl = `/editor?v=${video.id}`;
-  const outOfFreeEdits = Boolean(session && !session.user && session.quota?.remaining === 0);
+  const outOfFreeEdits = session?.quota?.remaining === 0;
 
   const [suggestions, setSuggestions] = useState<{ videoId: string; value: Suggestions | null } | null>(null);
   useEffect(() => {
@@ -90,7 +90,7 @@ export function HomeComposer({
           onPromptChange={onPromptChange}
           onSubmit={() => handOff(true)}
           canSubmit={!leaving}
-          blockedReason={outOfFreeEdits ? "You’ve used your free edits. Sign in with Facebook to keep going." : undefined}
+          blockedReason={outOfFreeEdits ? "You’ve used all your free generations." : undefined}
           busy={leaving}
           suggestions={suggestions?.videoId === video.id ? suggestions.value : null}
           suggestionsLoading={suggestions?.videoId !== video.id}
@@ -99,7 +99,7 @@ export function HomeComposer({
           {session?.user
             ? "Opens the full editor. Your edits are saved to your projects."
             : session?.quota
-              ? `Opens the full editor · ${session.quota.remaining} of ${session.quota.limit} free edits left.`
+              ? `Opens the full editor · ${session.quota.remaining} of ${session.quota.limit} free generations left.`
               : "Opens the full editor."}{" "}
           <button type="button" className="text-primary hover:underline" onClick={() => handOff(false)}>
             Open the editor without generating

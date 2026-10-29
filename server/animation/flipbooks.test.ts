@@ -563,8 +563,12 @@ describe("budget and failures", () => {
     await waitFor(created.id, ["ready"]);
     await applyFrameAction(created.id, "f1", { action: "regenerate" });
     await waitFor(created.id, ["ready"]);
-    await expect(applyFrameAction(created.id, "f1", { action: "regenerate" })).rejects.toMatchObject({ code: "budget_reached", status: 402 });
-    await applyFrameAction(created.id, "f1", { action: "regenerate", confirmExtra: true });
+    let generationCharges = 0;
+    const gate = async () => { generationCharges++; };
+    await expect(applyFrameAction(created.id, "f1", { action: "regenerate" }, gate)).rejects.toMatchObject({ code: "budget_reached", status: 402 });
+    expect(generationCharges).toBe(0);
+    await applyFrameAction(created.id, "f1", { action: "regenerate", confirmExtra: true }, gate);
+    expect(generationCharges).toBe(1);
     const after = await waitFor(created.id, ["ready"]);
     expect(after.budget).toEqual({ limit: 10, used: 10 });
   });

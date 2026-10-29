@@ -21,8 +21,8 @@ export function declaredLength(request: Request): number | undefined {
 }
 
 /** Every paid Flipbook call passes the same abuse and budget guards as a video edit. */
-export function paidGate(request: Request): PaidWorkGate {
-  return (cost) => guardAiRequest(request, cost);
+export function paidGate(request: Request, options: { charge?: boolean; continuation?: boolean } = {}): PaidWorkGate {
+  return (cost) => guardAiRequest(request, cost, options);
 }
 
 export function parseFrame(value: string) {

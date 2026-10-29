@@ -25,6 +25,7 @@ import { knownErrorMessage } from "../_editor/messages";
 import type { CharacterSource } from "../../shared/characters";
 import type { ViewPreference } from "../../shared/animation-view";
 import type { SequenceSettings } from "../../shared/sequence";
+import { generationFeedback } from "../_auth/generation-feedback";
 import type { FlipbookAudio } from "../../shared/sequence";
 import { discoverAnimations, flipbookActivity, observeFlipbook } from "../_activity/activity-adapters";
 import { getActivityVersion, trackActivity } from "../_activity/activity-store";
@@ -34,10 +35,10 @@ import { getActivityVersion, trackActivity } from "../_activity/activity-store";
 // (shared guards, Meta errors) use its English copy; Flipbook's own codes
 // carry their message. The code decides special flows (budget, sign-in).
 
-const SHARED_CODES = new Set(["ai_disabled", "budget_exhausted", "rate_limited", "login_required", "network"]);
+const SHARED_CODES = new Set(["ai_disabled", "budget_exhausted", "rate_limited", "login_required", "generation_limit_reached", "quota_unavailable", "network"]);
 const OWN_WORDING: Readonly<Record<string, string>> = {
   busy: "Too many animations and videos are processing right now. Try again in a minute.",
-  meta_model_not_found: "The connected AI account couldn’t access a required model. Check model access for this deployment, then retry. Your illustration and saved drawings are still here.",
+  meta_model_not_found: "Animation generation is temporarily unavailable. Your illustration and saved drawings are still here. Please try again later.",
 };
 /** What to show for an error code: shared codes in the editor's English wording, Flipbook's own as sent. */
 export const messageFor = (code: string, message: string) =>
@@ -59,6 +60,7 @@ async function call<T>(url: string, init: RequestInit | undefined, parse: (value
     throw new FlipbookApiError("We couldn’t reach the server. Check your connection and try again.", "network");
   }
   const body = await response.json().catch(() => null);
+  generationFeedback(response, body, init?.method);
   if (!response.ok) {
     const error = ApiErrorBodySchema.safeParse(body);
     throw new FlipbookApiError(error.success ? messageFor(error.data.error.code, error.data.error.message) : "The server couldn’t complete your request. Try again.", error.success ? error.data.error.code : `http_${response.status}`);

@@ -44,7 +44,9 @@ export async function POST(request: Request, { params }: Context) {
     const parsed = FlipbookActionSchema.safeParse(await readJsonBody(request));
     if (!parsed.success) throw new AppError("invalid_action", 400, "That action isn’t valid.");
     const action = parsed.data;
-    const gate = paidGate(request);
+    // Preparing and drawing the initial missing frames are one generation.
+    // The third animation must remain completable after its start uses the last slot.
+    const gate = paidGate(request, { continuation: action.action === "generate" || action.action === "retry" });
     const flipbook =
       action.action === "sequence" ? await reviseSequence(id, action.settings, gate)
       : action.action === "enhance_flagged" ? await enhanceFlagged(id, action.confirmExtra === true, gate)
@@ -57,7 +59,7 @@ export async function POST(request: Request, { params }: Context) {
       : action.action === "scene" ? await createScene(id, action.confirmExtra === true, gate)
       : action.action === "background" ? await generateBackground(id, { prompt: action.prompt || undefined, confirmExtra: action.confirmExtra === true }, gate)
       : action.action === "look" ? await saveLook(id, { settings: action.settings, background: action.background })
-      : action.action === "review" ? (guardChatRequest(request), await reviewFlipbook(id))
+      : action.action === "review" ? (await guardChatRequest(request), await reviewFlipbook(id))
       : await cancelFlipbook(id);
     return Response.json(flipbook, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

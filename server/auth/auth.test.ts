@@ -104,16 +104,16 @@ describe("free edits", () => {
     const request = requestWith("", "203.0.113.9");
     for (let index = 0; index < 3; index++) await consumeFreeEdit(request, "11111111-1111-4111-8111-111111111111");
     expect(await anonymousQuota(request, "11111111-1111-4111-8111-111111111111")).toEqual({ limit: 3, used: 3, remaining: 0 });
-    await expect(consumeFreeEdit(request, "11111111-1111-4111-8111-111111111111")).rejects.toMatchObject({ code: "login_required" });
+    await expect(consumeFreeEdit(request, "11111111-1111-4111-8111-111111111111")).rejects.toMatchObject({ code: "generation_limit_reached" });
     // A fresh cookie from the same address does not reset the allowance.
-    await expect(consumeFreeEdit(request, "22222222-2222-4222-8222-222222222222")).rejects.toMatchObject({ code: "login_required" });
+    await expect(consumeFreeEdit(request, "22222222-2222-4222-8222-222222222222")).rejects.toMatchObject({ code: "generation_limit_reached" });
   });
 
   it("is configurable", async () => {
     process.env.FOCUS_FREE_EDITS = "1";
     const request = requestWith("", "203.0.113.50");
     await consumeFreeEdit(request, "33333333-3333-4333-8333-333333333333");
-    await expect(consumeFreeEdit(request, "33333333-3333-4333-8333-333333333333")).rejects.toMatchObject({ code: "login_required" });
+    await expect(consumeFreeEdit(request, "33333333-3333-4333-8333-333333333333")).rejects.toMatchObject({ code: "generation_limit_reached" });
   });
 
   it("never lets two simultaneous requests share the last edit", async () => {

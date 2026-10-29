@@ -23,7 +23,7 @@ export const PublicUserSchema = UserSchema.pick({ id: true, name: true, avatarUr
 export type PublicUser = z.infer<typeof PublicUserSchema>;
 
 export const QuotaSchema = z.object({
-  /** Free AI edits without an account. */
+  /** Lifetime free generations, including signed-in accounts. */
   limit: z.number().int().nonnegative(),
   used: z.number().int().nonnegative(),
   remaining: z.number().int().nonnegative(),
@@ -32,7 +32,7 @@ export type Quota = z.infer<typeof QuotaSchema>;
 
 export const SessionInfoSchema = z.object({
   user: PublicUserSchema.nullable(),
-  /** Null when signed in: accounts have no free-edit limit. */
+  /** Null only when the allowance is unavailable (legacy session responses). */
   quota: QuotaSchema.nullable(),
   /** "simulated" locally until a Facebook app is configured. */
   authMode: z.enum(["facebook", "simulated"]),

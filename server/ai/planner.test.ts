@@ -155,6 +155,7 @@ describe("Meta client helpers", () => {
     expect(readMetaConfig({ MODEL_API_KEY: "a", META_API_KEY: "b" })?.apiKey).toBe("a");
     expect(readMetaConfig({ META_API_KEY: "b" })?.apiKey).toBe("b");
     expect(readMetaConfig({})).toBeNull();
+    expect(readMetaConfig({ MODEL_API_KEY: " ", META_API_KEY: " b ", META_IMAGE_MODEL: " ", META_BASE_URL: "" })).toMatchObject({ apiKey: "b", imageModel: "muse-image-1.0", baseUrl: "https://api.meta.ai/v1" });
   });
 });
 

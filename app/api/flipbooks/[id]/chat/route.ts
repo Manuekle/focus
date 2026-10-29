@@ -21,7 +21,7 @@ export async function POST(request: Request, { params }: Context) {
     if (!parsed.success) throw new AppError("invalid_message", 400, "Write what you want changed in a few words.");
     if (!flipbook.plan) throw new AppError("flipbook_not_ready", 409, "The pose plan isn’t ready yet.");
     if (flipbook.cast.length) throw new AppError("not_for_scenes", 409, "The movement chat isn’t available for a scene with several characters yet. Redraw a drawing with a note instead.");
-    guardChatRequest(request);
+    await guardChatRequest(request);
     const proposal = await proposeChange({ flipbook, ...parsed.data, signal: request.signal });
     return Response.json(proposal, { headers: { "Cache-Control": "no-store" } });
   } catch (error) {

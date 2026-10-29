@@ -82,15 +82,21 @@ export function cookieHeader(name: string, value: string, maxAgeSeconds: number)
 export const sessionCookie = (token: string) => cookieHeader(SESSION_COOKIE, token, SESSION_DAYS * 86_400);
 export const clearCookie = (name: string) => cookieHeader(name, "", 0);
 
+const anonymousRequests = new WeakMap<Request, { id: string; setCookie: string | null }>();
+
 /**
- * The anonymous visitor id that free edits are counted against. Returns the
+ * The anonymous visitor id that free generations are counted against. Returns the
  * cookie to set when the visitor had none.
  */
 export function anonymousId(request: Request): { id: string; setCookie: string | null } {
+  const cached = anonymousRequests.get(request);
+  if (cached) return cached;
   const existing = readCookie(request, ANON_COOKIE);
   if (existing && /^[0-9a-f-]{36}$/.test(existing)) return { id: existing, setCookie: null };
   const id = randomUUID();
-  return { id, setCookie: cookieHeader(ANON_COOKIE, id, 365 * 86_400) };
+  const fresh = { id, setCookie: cookieHeader(ANON_COOKIE, id, 365 * 86_400) };
+  anonymousRequests.set(request, fresh);
+  return fresh;
 }
 
 /** Random, URL-safe; ties the Facebook redirect back to the browser that started it. */

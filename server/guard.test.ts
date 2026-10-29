@@ -1,5 +1,7 @@
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { clientKey, guardAiRequest, guardUpload, readJsonBody, resetRateLimits, takeSlot } from "./guard";
+
+vi.mock("./quota", () => ({ assertGenerationAvailable: vi.fn(), consumeGeneration: vi.fn() }));
 
 const request = (headers: Record<string, string> = {}, body?: string) => new Request("http://focus.test/api", { method: "POST", headers, body });
 const saved = { ...process.env };

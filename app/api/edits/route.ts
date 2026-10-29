@@ -4,15 +4,14 @@ import { AppError, errorResponse } from "../../../server/errors";
 import { guardAiRequest, readJsonBody } from "../../../server/guard";
 import { createJob } from "../../../server/jobs";
 import { attachJob } from "../../../server/projects";
-import { consumeFreeEdit } from "../../../server/quota";
 import { anonymousId } from "../../../server/auth/session";
 import { jsonWithCookies } from "../../../server/auth/routes";
 import { currentUser } from "../../../server/auth/users";
 import { getVideo } from "../../../server/videos";
 
 // Explicit, user-triggered processing. Returns the job immediately; the
-// editor polls /api/jobs/:id for progress. Without an account, each new edit
-// spends one of the free edits; a signed-in edit is saved to the clip's project.
+// editor polls /api/jobs/:id for progress. Each new generation spends one
+// lifetime use; a signed-in edit is saved to the clip's project.
 export async function POST(request: Request) {
   try {
     const parsed = EditRequestSchema.safeParse(await readJsonBody(request));
@@ -22,10 +21,9 @@ export async function POST(request: Request) {
     if (!effectEnabled(parsed.data.effect)) throw new AppError("effect_disabled", 400, "That effect isn’t available.");
     const user = await currentUser(request);
     const anon = user ? null : anonymousId(request);
+    // Only new paid work counts: a repeated instruction reuses its job for free.
     const job = await createJob(parsed.data, async (cost) => {
-      await guardAiRequest(request, cost);
-      // Only new paid work counts: a repeated instruction reuses its job for free.
-      if (anon) await consumeFreeEdit(request, anon.id);
+      await guardAiRequest(request, cost, { models: ["planner", "segmentation"] });
     });
     if (user) {
       const video = await getVideo(job.videoId);

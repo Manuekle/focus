@@ -32,14 +32,14 @@ export const META_DEFAULTS = {
 export function readMetaConfig(env: Readonly<Record<string, string | undefined>> = process.env): MetaConfig | null {
   // MODEL_API_KEY is the documented name; META_API_KEY is what the existing
   // local .env uses.
-  const apiKey = env.MODEL_API_KEY ?? env.META_API_KEY;
+  const apiKey = env.MODEL_API_KEY?.trim() || env.META_API_KEY?.trim();
   if (!apiKey) return null;
   return {
     apiKey,
-    baseUrl: env.META_BASE_URL ?? META_DEFAULTS.baseUrl,
-    plannerModel: env.META_PLANNER_MODEL ?? META_DEFAULTS.plannerModel,
-    segmentationModel: env.META_SEGMENTATION_MODEL ?? META_DEFAULTS.segmentationModel,
-    imageModel: env.META_IMAGE_MODEL ?? META_DEFAULTS.imageModel,
+    baseUrl: env.META_BASE_URL?.trim() || META_DEFAULTS.baseUrl,
+    plannerModel: env.META_PLANNER_MODEL?.trim() || META_DEFAULTS.plannerModel,
+    segmentationModel: env.META_SEGMENTATION_MODEL?.trim() || META_DEFAULTS.segmentationModel,
+    imageModel: env.META_IMAGE_MODEL?.trim() || META_DEFAULTS.imageModel,
   };
 }
 
@@ -54,10 +54,11 @@ export function requireMetaConfig(): MetaConfig {
 let cached: { key: string; client: OpenAI } | null = null;
 
 export function metaClient(config: MetaConfig = requireMetaConfig()): OpenAI {
-  if (cached?.key === config.apiKey) return cached.client;
+  const key = `${config.baseUrl}\0${config.apiKey}`;
+  if (cached?.key === key) return cached.client;
   // Retries are ours (withRetry), so they stay bounded and visible in usage.
   const client = new OpenAI({ apiKey: config.apiKey, baseURL: config.baseUrl, maxRetries: 0, timeout: 180_000 });
-  cached = { key: config.apiKey, client };
+  cached = { key, client };
   return client;
 }
 
@@ -76,6 +77,7 @@ export function metaError(error: unknown, what: string): AppError {
   }
   if (error instanceof OpenAI.APIError) {
     const status = error.status ?? 502;
+    console.warn(JSON.stringify({ event: "provider_request_failed", step: what, status, code: error.code, requestId: error.requestID }));
     if (status === 401) return new AppError("meta_unauthorized", 502, "Meta AI rejected the API key. Check MODEL_API_KEY.");
     if (status === 402 || status === 403) return new AppError("meta_forbidden", 502, "The Meta AI account doesn’t have access or enough credits for this action.");
     if (status === 404) return new AppError("meta_model_not_found", 502, "This Meta AI model isn’t available for the connected account.");

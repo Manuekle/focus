@@ -257,14 +257,14 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
               )}
             </nav>
           ) : session?.quota ? (
-            <section className={styles.guest} aria-label="Free edits">
-              <p className="text-sm font-medium text-foreground">Free edits</p>
+            <section className={styles.guest} aria-label="Free generations">
+              <p className="text-sm font-medium text-foreground">Free generations</p>
               <div className="flex items-baseline justify-between text-xs text-muted-foreground tabular-nums">
                 <span>{session.quota.remaining === 0 ? "None left" : `${session.quota.remaining} left`}</span>
                 <span>{session.quota.used}/{session.quota.limit} used</span>
               </div>
-              <ProgressMeter size="sm" value={Math.round((session.quota.used / Math.max(1, session.quota.limit)) * 100)} aria-label="Free edits used" />
-              <p className="text-xs leading-5 text-muted-foreground">Sign in to keep editing without limits and save every clip as a project.</p>
+              <ProgressMeter size="sm" value={Math.round((session.quota.used / Math.max(1, session.quota.limit)) * 100)} aria-label="Free generations used" />
+              <p className="text-xs leading-5 text-muted-foreground">Sign in to save every clip and its versions. The generation allowance stays the same.</p>
               <FacebookButton next={here} label="Sign in with Facebook" className="h-9 whitespace-nowrap px-3 text-[13px]" />
             </section>
           ) : null}
@@ -274,7 +274,7 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
 
         <main className={styles.main}>
           {authNotice ? (
-            <EditorNotice status="info" title={authNotice === "canceled" ? "Sign-in canceled" : "Sign-in didn’t finish"} description="You can keep using your free edits, or try signing in again." duration={6000} />
+            <EditorNotice status="info" title={authNotice === "canceled" ? "Sign-in canceled" : "Sign-in didn’t finish"} description="You can keep using your free generations, or try signing in again." duration={6000} />
           ) : null}
 
           {!videoId ? (
@@ -309,7 +309,7 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
                 onReset={() => router.push("/editor")}
                 initialJob={openJob}
                 autostart={autostart && !openJob}
-                onLoginRequired={() => setLogin("quota")}
+                onLoginRequired={() => setLogin("save")}
                 onJobChange={onJobChange}
               />
               {detail && detail.jobs.length > 0 ? (

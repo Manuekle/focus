@@ -51,7 +51,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
   const [importError, setImportError] = useState<string | null>(null);
   const sourcePath = characterSource ? `/flipbook?${together ? "together=1&" : ""}character=${characterSource.characterId}&version=${characterSource.versionId}` : together ? "/flipbook?together=1" : "/flipbook";
   const here = flipbook ? `/flipbook?f=${flipbook.id}` : sourcePath;
-  const outOfFreeEdits = Boolean(session && !session.user && session.quota?.remaining === 0);
+  const outOfFreeEdits = session?.quota?.remaining === 0;
   const owned = Boolean(user && flipbook?.ownerId === user.id);
 
   useEffect(() => {
@@ -111,7 +111,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
       }
       void refreshSession();
     } catch (error) {
-      if (error instanceof FlipbookApiError && error.code === "login_required") setLogin("quota");
+      if (error instanceof FlipbookApiError && error.code === "login_required") setLogin("save");
       else toast({ title: "Couldn’t start the animation", description: error instanceof Error ? error.message : "Try again.", status: "error" });
     } finally {
       setCreating(false);
@@ -119,9 +119,11 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
   };
 
   const createTogether = async (request: CreateEnsembleRequest) => {
+    if (outOfFreeEdits) return setLogin("quota");
     setCreating(true);
     try {
       setFlipbook(await flipbookApi.createEnsemble(request));
+      void refreshSession();
     } catch (error) {
       if (error instanceof FlipbookApiError && error.code === "login_required") setLogin("save");
       else toast({ title: "Couldn’t start the scene", description: error instanceof Error ? error.message : "Try again.", status: "error" });
@@ -235,14 +237,14 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
               )}
             </nav>
           ) : session?.quota ? (
-            <section className={shell.guest} aria-label="Free edits">
-              <p className="text-sm font-medium text-foreground">Free edits</p>
+            <section className={shell.guest} aria-label="Free generations">
+              <p className="text-sm font-medium text-foreground">Free generations</p>
               <div className="flex items-baseline justify-between text-xs text-muted-foreground tabular-nums">
                 <span>{session.quota.remaining === 0 ? "None left" : `${session.quota.remaining} left`}</span>
                 <span>{session.quota.used}/{session.quota.limit} used</span>
               </div>
-              <ProgressMeter size="sm" value={Math.round((session.quota.used / Math.max(1, session.quota.limit)) * 100)} aria-label="Free edits used" />
-              <p className="text-xs leading-5 text-muted-foreground">Sign in to keep animating without limits and save every animation.</p>
+              <ProgressMeter size="sm" value={Math.round((session.quota.used / Math.max(1, session.quota.limit)) * 100)} aria-label="Free generations used" />
+              <p className="text-xs leading-5 text-muted-foreground">Sign in to save your animations. The generation allowance stays the same.</p>
               <FacebookButton next={here} label="Sign in with Facebook" className="h-9 whitespace-nowrap px-3 text-[13px]" />
             </section>
           ) : null}
@@ -280,7 +282,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
                 initialCharacter={imported ?? undefined}
                 onCreate={(image, prompt, options) => void create(image, prompt, options)}
                 creating={creating}
-                blockedReason={outOfFreeEdits ? "You’ve used your free edits. Sign in with Facebook to keep going." : undefined}
+                blockedReason={outOfFreeEdits ? "You’ve used all your free generations. Your saved work is still available." : undefined}
               />}
             </>
           )}

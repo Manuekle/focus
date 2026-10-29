@@ -12,6 +12,7 @@ import {
 } from "../../shared/characters";
 import { characterActivity, discoverCharacters, observeCharacter } from "../_activity/activity-adapters";
 import { getActivityVersion, trackActivity } from "../_activity/activity-store";
+import { generationFeedback } from "../_auth/generation-feedback";
 
 export class CharacterApiError extends Error {
   constructor(
@@ -36,6 +37,7 @@ async function call<T>(
     },
   );
   const body = await response.json().catch(() => null);
+  generationFeedback(response, body, init.method);
   if (!response.ok)
     throw new CharacterApiError(
       body?.error?.message ?? "This change couldn’t be saved. Try again.",

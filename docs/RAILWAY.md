@@ -2,7 +2,7 @@
 
 ## Decisión
 
-Railway permite conservar la arquitectura actual: un contenedor con Next.js, FFmpeg/FFprobe, Sharp, trabajos de IA en segundo plano y archivos en un volumen. No hace falta agregar una base de datos ni separar el frontend para este primer despliegue.
+Railway permite conservar la arquitectura actual: un contenedor con Next.js, FFmpeg/FFprobe, Sharp, trabajos de IA en segundo plano y archivos en un volumen. El contador de generaciones usa SQLite en ese volumen; no necesita un servicio de base de datos externo.
 
 | Plataforma | Encaje con esta versión |
 | --- | --- |
@@ -39,6 +39,18 @@ El healthcheck de Docker usa `PORT`, incluido cuando Railway lo asigna dinámica
 
 `FOCUS_PROVIDER_CONNECTIVITY_CHECK=1` consulta al arrancar, como usuario `node`, el catálogo de Meta Model API con la clave configurada y Graph API sin credenciales. Registra el estado HTTP, los modelos disponibles, un identificador hash de la clave y los errores de acceso; nunca registra la clave, envía prompts ni ejecuta modelos. El catálogo debe responder 200 con una clave válida; Graph puede responder 400 por no llevar un token. La prueba no bloquea el arranque si la red está restringida. Puede desactivarse después de verificarla.
 
+Un HTTP 200 con `models: []` no confirma que la cuenta pueda generar. El diagnóstico muestra `missingModels` y `ready`; comprobar `ready: true`. Antes de cada nueva generación en producción, el servidor verifica los modelos requeridos con el catálogo autenticado (éxitos en caché durante 60 segundos). Si falta acceso, rechaza el inicio sin descontar una generación. Los errores de solicitudes al proveedor registran paso, estado HTTP, código e identificador de solicitud, sin prompts ni claves.
+
+## Límite de generaciones
+
+`FOCUS_FREE_EDITS=3` fija un límite total por usuario, también después de iniciar sesión. Una solicitud explícita de animación, versión de personaje, edición de video o redibujo usa un turno; los fotogramas iniciales pendientes de una animación ya iniciada y el reintento de su preparación forman parte de ese mismo turno. Las vistas previas automáticas no descuentan turnos. Los límites de dibujos por animación, de concurrencia, de almacenamiento y de solicitudes por hora siguen aplicándose.
+
+El contador se guarda en `/data/quota/generations.sqlite`, con transacciones que impiden usar el último turno dos veces. Las cuentas se identifican por su ID autenticado, independientemente de la IP; los visitantes conservan el control por cookie e IP. El primer acceso de una cuenta incorpora el uso anónimo de ese navegador y cerrar sesión no devuelve sus turnos. Los contadores JSON anteriores se importan sin reiniciar su uso. El uso histórico de cuentas que antes eran ilimitadas no se reconstruye: reciben la asignación al primer acceso tras esta actualización.
+
+Al intentar otra generación con saldo cero aparece “No generations left”, sin prometer que iniciar sesión aumentará el límite. Ver proyectos, restaurar versiones y exportar siguen disponibles. La tercera animación puede terminar sus dibujos iniciales aunque su inicio haya consumido el último turno. No se descuentan rechazos de las comprobaciones previas (incluido el acceso a modelos); una operación aceptada consume el turno aunque falle después de empezar. No restaurar automáticamente turnos cuyo consumo en el proveedor sea incierto.
+
+Respaldar el volumen completo o usar la API de backup de SQLite para el contador; copiar solo el archivo SQLite mientras hay escrituras no es una copia consistente. Mantener una sola réplica y el runtime Node 24 del Dockerfile. Al ampliar a varias instancias con almacenamiento separado, migrar estos contadores a una base compartida antes del despliegue.
+
 ## Configurar la cuenta y el servicio
 
 1. Conectar la integración de Railway o iniciar sesión con `pnpm dlx @railway/cli login`.
@@ -64,7 +76,7 @@ El healthcheck de Docker usa `PORT`, incluido cuando Railway lo asigna dinámica
    - `MODEL_API_KEY`: una clave de producción de Meta Model API.
    - `FOCUS_SESSION_SECRET`: valor aleatorio de 32+ caracteres. Se puede generar con `openssl rand -base64 48`; guardarlo únicamente como secreto.
    - `FOCUS_ADMIN_TOKEN`: otro secreto aleatorio para consultar `/api/usage`.
-   - `FACEBOOK_APP_ID` y `FACEBOOK_APP_SECRET`: necesarios para iniciar sesión después de las tres ediciones gratuitas. Mantener `FOCUS_AUTH_SIMULATED=0`.
+   - `FACEBOOK_APP_ID` y `FACEBOOK_APP_SECRET`: necesarios para iniciar sesión y guardar proyectos. Iniciar sesión no reinicia el límite de generaciones. Mantener `FOCUS_AUTH_SIMULATED=0`.
 
    No pegar secretos en Git, archivos de configuración versionados, argumentos del build ni capturas. No hace falta usar las claves locales de desarrollo.
 

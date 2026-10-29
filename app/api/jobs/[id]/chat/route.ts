@@ -12,7 +12,7 @@ export async function POST(request: Request, { params }: Context) {
     const parsed = ChatRequestSchema.safeParse(await readJsonBody(request));
     if (!parsed.success) throw new AppError("invalid_chat", 400, "Describe what you want to change (2 to 300 characters).");
     if ("restore" in parsed.data) return Response.json(await restoreChatTurn(id, parsed.data.restore), { status: 202 });
-    guardChatRequest(request);
+    await guardChatRequest(request);
     return Response.json(await chatEdit(id, parsed.data.message), { status: 202 });
   } catch (error) {
     return errorResponse(error);

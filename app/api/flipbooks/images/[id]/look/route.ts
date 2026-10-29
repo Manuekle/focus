@@ -15,9 +15,9 @@ export async function POST(request: Request, { params }: Context) {
   try {
     assertFlipbookEnabled();
     const { id } = await params;
-    const gate = paidGate(request);
+    const gate = paidGate(request, { charge: false });
     const look = await readUploadedImage(id, async (cost) => {
-      guardChatRequest(request);
+      await guardChatRequest(request);
       await gate(cost);
     });
     return Response.json(look, { headers: { "Cache-Control": "no-store" } });

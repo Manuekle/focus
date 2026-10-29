@@ -1,6 +1,8 @@
 import { AppError } from "./errors";
 import { samFramesSince } from "./ai/usage";
 import { assertStorageAvailable } from "./storage-budget";
+import { assertGenerationAvailable, consumeGeneration } from "./quota";
+import { assertModelsAvailable, type ModelCapability } from "./ai/availability";
 
 // Abuse and cost protection for a public deployment. Everything is in-process
 // (single container); limits are configured with environment variables.
@@ -77,7 +79,7 @@ export async function guardUpload(request: Request): Promise<void> {
  * Checks every limit before paid Meta AI work starts. `estimatedFrames` is the
  * SAM cost of the request (billed with a 50-frame minimum).
  */
-export async function guardAiRequest(request: Request, input: { activeJobs: number; estimatedFrames: number }): Promise<void> {
+export async function guardAiRequest(request: Request, input: { activeJobs: number; estimatedFrames: number }, options: { charge?: boolean; continuation?: boolean; models?: readonly ModelCapability[] } = {}): Promise<void> {
   const config = guardConfig();
   if (config.aiDisabled) {
     throw new AppError("ai_disabled", 503, "AI editing is temporarily paused. Try again later.");
@@ -94,19 +96,23 @@ export async function guardAiRequest(request: Request, input: { activeJobs: numb
       throw new AppError("budget_exhausted", 503, "The daily AI processing limit has been reached. Try again tomorrow.");
     }
   }
+  if (!options.continuation) await assertGenerationAvailable(request);
   const wait = takeSlot("ai", clientKey(request), config.aiPerHour);
   if (wait !== null) throw tooMany(wait, "AI edits");
+  if (process.env.NODE_ENV === "production") await assertModelsAvailable(options.models ?? ["planner", "image", "segmentation"]);
+  if (options.charge !== false && !options.continuation) await consumeGeneration(request);
 }
 
 /**
  * AI editor turns: one small Muse Spark call each, never SAM, so they have
  * their own hourly window instead of spending the edit allowance.
  */
-export function guardChatRequest(request: Request): void {
+export async function guardChatRequest(request: Request): Promise<void> {
   const config = guardConfig();
   if (config.aiDisabled) {
     throw new AppError("ai_disabled", 503, "AI editing is temporarily paused. Try again later.");
   }
+  await assertGenerationAvailable(request);
   const wait = takeSlot("chat", clientKey(request), config.chatPerHour);
   if (wait !== null) throw tooMany(wait, "AI editor messages");
 }

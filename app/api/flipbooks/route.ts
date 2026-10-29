@@ -1,7 +1,6 @@
 import { CreateEnsembleRequestSchema, CreateFlipbookRequestSchema } from "../../../shared/flipbook";
 import { AppError, errorResponse } from "../../../server/errors";
 import { guardAiRequest, readJsonBody } from "../../../server/guard";
-import { consumeFreeEdit } from "../../../server/quota";
 import { anonymousId } from "../../../server/auth/session";
 import { jsonWithCookies } from "../../../server/auth/routes";
 import { currentUser } from "../../../server/auth/users";
@@ -21,8 +20,8 @@ export async function GET(request: Request) {
 }
 
 // Starts a flipbook: analysis, pose plan, reference, then the drawings, in the
-// background. Signed in, it is saved to the account from the start; without an
-// account it spends one free AI edit, like a video edit. A body with a `cast`
+// background. Each request spends one lifetime generation, including signed-in
+// users, whose work is saved to the account. A body with a `cast`
 // is a scene of several saved characters, for as many seconds as it asks.
 export async function POST(request: Request) {
   try {
@@ -44,7 +43,6 @@ export async function POST(request: Request) {
     const anon = user ? null : anonymousId(request);
     const flipbook = await createFlipbook({ ...parsed.data, ownerId: user?.id ?? null }, async (cost) => {
       await guardAiRequest(request, cost);
-      if (anon) await consumeFreeEdit(request, anon.id);
     });
     return jsonWithCookies(flipbook, [anon?.setCookie ?? null], { status: 202 });
   } catch (error) {

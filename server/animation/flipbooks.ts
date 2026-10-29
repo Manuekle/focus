@@ -211,16 +211,20 @@ function patchInbetween(current: Flipbook, inbetweenId: InbetweenId, change: (en
  * Past the budget, only an explicit confirmation lets the work through, and
  * it extends the budget by exactly what was confirmed.
  */
+function assertImageAllowance(current: Flipbook, count: number, confirmExtra: boolean): void {
+  if (current.budget.used + count > current.budget.limit && !confirmExtra) {
+    throw new AppError(
+      "budget_reached",
+      402,
+      `This animation has used ${current.budget.used} of its ${current.budget.limit} drawings. Confirm to draw ${count} more.`,
+    );
+  }
+}
+
 async function reserveImages(id: string, count: number, confirmExtra: boolean): Promise<void> {
   await updateFlipbook(id, (current) => {
+    assertImageAllowance(current, count, confirmExtra);
     const next = current.budget.used + count;
-    if (next > current.budget.limit && !confirmExtra) {
-      throw new AppError(
-        "budget_reached",
-        402,
-        `This animation has used ${current.budget.used} of its ${current.budget.limit} drawings. Confirm to draw ${count} more.`,
-      );
-    }
     return { ...current, budget: { limit: Math.max(current.budget.limit, next), used: next } };
   });
 }
@@ -1053,6 +1057,7 @@ export async function enhanceFlagged(id: string, confirmExtra: boolean, gate?: P
   assertDrawable(source);
   const targets = repairableFrames(source).map((frame) => frame.id);
   if (!targets.length) throw new AppError("nothing_to_enhance", 409, "There are no unapproved drawings with warnings to fix.");
+  assertImageAllowance(await getFlipbook(id), targets.length, confirmExtra);
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: targets.length });
   await reserveImages(id, targets.length, confirmExtra);
   return startVisible(id, markGenerating(targets, `Fixing ${targets.length} flagged drawings with Muse Image`), (signal) => drawFrames(id, signal, targets, { withNeighbor: true, repair: true }));
@@ -1069,6 +1074,7 @@ export async function generateMissing(id: string, confirmExtra: boolean, gate?: 
     return frame.version && ["extraction_failed", "no_subject", "canceled", "interrupted"].includes(frame.error?.code ?? "");
   });
   const redraw = targets.filter((frameId) => !recut.includes(frameId));
+  assertImageAllowance(await getFlipbook(id), redraw.length, confirmExtra);
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: targets.length });
   await reserveImages(id, redraw.length, confirmExtra);
   return startVisible(id, markGenerating(targets, "Drawing the poses with Muse Image"), async (signal) => {
@@ -1136,6 +1142,7 @@ export async function applyFrameAction(id: string, frameId: FrameId, action: Fra
   assertDrawable(flipbook);
   const repair = action.action === "enhance";
   if (repair && !frame.version) throw new AppError("nothing_to_enhance", 409, "This frame has no drawing to improve yet. Draw it first.");
+  assertImageAllowance(await getFlipbook(id), 1, action.confirmExtra === true);
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 });
   await reserveImages(id, 1, action.confirmExtra === true);
   return startVisible(id, markGenerating([frameId], `${repair ? "Repairing" : "Redrawing"} “${frame.label}” with Muse Image`), (signal) => drawFrames(id, signal, [frameId], { note: action.note || undefined, withNeighbor: true, repair }));
@@ -1160,6 +1167,7 @@ export async function applyPoseChanges(id: string, changes: NonNullable<ApplyPos
     if (frame.approved) throw new AppError("frame_approved", 409, `“${frame.label}” is approved. Unapprove it before changing it.`);
     return frame;
   });
+  assertImageAllowance(await getFlipbook(id), frames.length, options.confirmExtra === true);
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: frames.length });
   await reserveImages(id, frames.length, options.confirmExtra === true);
   const frameIds = frames.map((frame) => frame.id);
@@ -1197,6 +1205,7 @@ export async function drawInbetweens(id: string, confirmExtra: boolean, gate?: P
     ? denseInbetweenTargets(flipbook, drawingFps)
     : inbetweenTargets(flipbook).map((from) => ({ id: inbetweenAfter(from), from, position: 0.5 }));
   if (!targets.length) throw new AppError("nothing_to_generate", 409, "Every in-between is already drawn for the current drawings.");
+  assertImageAllowance(await getFlipbook(id), targets.length, confirmExtra);
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: targets.length });
   await reserveImages(id, targets.length, confirmExtra);
   const detail = `Drawing ${targets.length} ${targets.length === 1 ? "in-between" : "in-betweens"} with Muse Image`;
@@ -1336,6 +1345,7 @@ export async function changeReference(id: string, kind: "original" | "clean" | "
   if (!flipbook.plan) throw new AppError("flipbook_not_ready", 409, "The pose plan isn’t ready yet.");
   if (kind === "uploaded" && !options.upload) throw new AppError("empty_file", 400, "We didn’t receive a file.");
   if (kind === "uploaded") await decodeImage(options.upload!);
+  if (kind === "clean") assertImageAllowance(flipbook, 1, options.confirmExtra === true);
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 });
   if (kind === "clean") await reserveImages(id, 1, options.confirmExtra === true);
   const reason = kind === "clean" ? "A clean full-body reference in the selected camera view." : kind === "uploaded" ? "The reference image you uploaded." : "Your original illustration.";
@@ -1380,6 +1390,7 @@ export async function createScene(id: string, confirmExtra: boolean, gate?: Paid
   assertScenelessCycle(flipbook, "Keeping the uploaded scene");
   if (flipbook.analysis?.background === "plain") throw new AppError("scene_unavailable", 409, "Your illustration has a plain background, so there is no scene to keep. Choose a color or upload a background.");
   // The plate, SAM on the upload to keep it around the character, then SAM on the strip for the depth layers.
+  assertImageAllowance(await getFlipbook(id), 1, confirmExtra);
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 2 + FAR_CONCEPTS.length });
   await reserveImages(id, 1, confirmExtra);
   let depth: boolean;
@@ -1426,6 +1437,7 @@ export async function generateBackground(id: string, input: { prompt?: string; c
   assertFlipbookEnabled();
   const flipbook = await getFlipbook(id);
   // The drawing, then SAM on its strip for the depth layers.
+  assertImageAllowance(await getFlipbook(id), 1, input.confirmExtra);
   await gate?.({ activeJobs: activeWorkCount(), estimatedFrames: 1 + FAR_CONCEPTS.length });
   await reserveImages(id, 1, input.confirmExtra);
   let depth: boolean;

@@ -5,6 +5,7 @@ import { ACTIVE_JOB_STATUSES, ApiErrorBodySchema, EditJobSchema, type EditJob } 
 import type { RenderParamsInput } from "../../shared/render";
 import { TrackingSchema, type Tracking } from "../../shared/tracking";
 import { editorErrorMessage } from "./messages";
+import { generationFeedback } from "../_auth/generation-feedback";
 import { editActivity, observeEdit } from "../_activity/activity-adapters";
 import { getActivityVersion, trackActivity } from "../_activity/activity-store";
 
@@ -23,6 +24,7 @@ async function call<T>(url: string, init: RequestInit | undefined, parse: (value
     throw new ApiRequestError("We couldn’t reach the server. Check your connection and try again.", "network");
   }
   const body = await response.json().catch(() => null);
+  generationFeedback(response, body, init?.method);
   if (!response.ok) {
     const error = ApiErrorBodySchema.safeParse(body);
     throw new ApiRequestError(error.success ? editorErrorMessage(error.data.error.code) : "The server couldn’t complete your request. Try again.", error.success ? error.data.error.code : `http_${response.status}`);

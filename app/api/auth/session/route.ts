@@ -1,7 +1,7 @@
 import { errorResponse } from "../../../../server/errors";
 import { jsonWithCookies, sessionInfo } from "../../../../server/auth/routes";
 
-/** Who is signed in, or how many free edits an anonymous visitor has left. */
+/** Who is signed in, or how many free generations an anonymous visitor has left. */
 export async function GET(request: Request) {
   try {
     const { info, setCookie } = await sessionInfo(request);

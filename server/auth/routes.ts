@@ -1,5 +1,5 @@
 import { safeNextPath, type SessionInfo } from "../../shared/account";
-import { anonymousQuota } from "../quota";
+import { anonymousQuota, generationQuota } from "../quota";
 import { authMode } from "./facebook";
 import { OAUTH_STATE_COOKIE, anonymousId, clearCookie, cookieHeader, createSessionToken, readCookie, sameState, sessionCookie } from "./session";
 import { currentUser, publicUser, upsertFacebookUser, type FacebookProfile } from "./users";
@@ -22,7 +22,7 @@ export function redirectWithCookies(location: string, cookies: readonly (string 
 
 export async function sessionInfo(request: Request): Promise<{ info: SessionInfo; setCookie: string | null }> {
   const user = await currentUser(request);
-  if (user) return { info: { user: publicUser(user), quota: null, authMode: authMode() }, setCookie: null };
+  if (user) return { info: { user: publicUser(user), quota: await generationQuota(request), authMode: authMode() }, setCookie: null };
   const anon = anonymousId(request);
   return { info: { user: null, quota: await anonymousQuota(request, anon.id), authMode: authMode() }, setCookie: anon.setCookie };
 }
