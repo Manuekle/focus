@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { PanelLeftCloseIcon, PanelLeftOpenIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
@@ -15,6 +15,13 @@ const COLLAPSE_BELOW = SIDEBAR_MIN - 60;
 const WIDTH_KEY = "focus.sidebar.width";
 const COLLAPSED_KEY = "focus.sidebar.collapsed";
 const STEP = 16;
+/** Below this the sidebar is a drawer over the page instead of a column beside it (studio.module.css). */
+const NARROW = "(max-width: 860px)";
+const subscribeNarrow = (notify: () => void) => {
+  const query = window.matchMedia(NARROW);
+  query.addEventListener("change", notify);
+  return () => query.removeEventListener("change", notify);
+};
 
 const clamp = (value: number) => Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Math.round(value)));
 
@@ -22,11 +29,28 @@ const clamp = (value: number) => Math.min(SIDEBAR_MAX, Math.max(SIDEBAR_MIN, Mat
  * The studio sidebar: its width, dragged or keyed by the person, and whether
  * it is folded away. Remembered in this browser and shared by both studio
  * pages. Storage is a convenience only: every read and write may fail.
+ *
+ * On a narrow screen the sidebar is a drawer, closed until asked for; that choice is
+ * the visit's own and never stored, so the column's saved state stays what it was on desktop.
  */
 export function useSidebar() {
   const [width, setWidth] = useState(SIDEBAR_DEFAULT);
   const [collapsed, setCollapsed] = useState(false);
   const [dragging, setDragging] = useState(false);
+  const narrow = useSyncExternalStore(subscribeNarrow, () => window.matchMedia(NARROW).matches, () => false);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+  const drawer = narrow && drawerOpen;
+
+  // Back on a wide screen the drawer is forgotten; Escape puts it away on a narrow one.
+  useEffect(() => {
+    if (!narrow) setDrawerOpen(false);
+  }, [narrow]);
+  useEffect(() => {
+    if (!drawer) return;
+    const onKey = (event: globalThis.KeyboardEvent) => { if (event.key === "Escape") setDrawerOpen(false); };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [drawer]);
 
   useEffect(() => {
     try {
@@ -53,13 +77,24 @@ export function useSidebar() {
     remember(COLLAPSED_KEY, "0");
   }, []);
   const commitCollapsed = useCallback((next: boolean) => {
+    if (narrow) {
+      setDrawerOpen(!next);
+      return;
+    }
     setCollapsed(next);
     remember(COLLAPSED_KEY, next ? "1" : "0");
-  }, []);
+  }, [narrow]);
+
+  /** A tap on the dimmed page, or on something in the drawer, puts the drawer away. */
+  const onBodyClick = (event: MouseEvent<HTMLElement>) => {
+    if (!drawer) return;
+    const target = event.target as HTMLElement;
+    if (target === event.currentTarget || target.closest("aside a, aside button")) setDrawerOpen(false);
+  };
 
   return {
     width,
-    collapsed,
+    collapsed: narrow ? !drawerOpen : collapsed,
     dragging,
     setDragging,
     previewWidth: (next: number) => setWidth(clamp(next)),
@@ -69,7 +104,9 @@ export function useSidebar() {
     /** Spread on the studio body: the grid column reads the width from here. */
     bodyProps: {
       style: { "--sidebar-width": collapsed ? "0px" : `${width}px` } as CSSProperties,
-      "data-collapsed": collapsed || undefined,
+      "data-collapsed": (!narrow && collapsed) || undefined,
+      "data-drawer": drawer || undefined,
+      onClick: onBodyClick,
     },
   };
 }

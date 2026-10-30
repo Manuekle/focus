@@ -1,0 +1,227 @@
+/* Rotoscope: Flipbook's studio and editor (app/flipbook/flipbook.module.css)
+   with the few pieces only a rotoscope run has. */
+
+/* ── Create ─────────────────────────────────────────────────────────────── */
+/* The shared player, flush inside the preview card instead of a card of its own. */
+.createVideo.createVideo { width: 100%; max-width: 100%; border: 0; border-radius: 0; background: transparent; }
+.createVideo video { max-height: min(62vh, 620px); background: transparent; }
+.characterRow { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: start; gap: 14px; }
+.fullRow { grid-column: 1 / -1; }
+.uploading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted-foreground); font-size: 12px; }
+
+/* Inside the dock the stage sits flat on the panel, with no table surface around it. */
+.compactTable.compactTable { padding: 0; border-radius: 0; background: none; }
+
+/* ── Light table ────────────────────────────────────────────────────────── */
+/* One or two 2:3 stages side by side, as tall as Flipbook's stage allows. */
+.stagePair {
+  --stage-height: min(56vh, 600px);
+  display: grid;
+  grid-template-columns: repeat(var(--panes), minmax(0, 1fr));
+  gap: 12px;
+  width: min(100%, calc(var(--stage-height) * 2 / 3 * var(--panes) + 12px * (var(--panes) - 1)));
+  margin-inline: auto;
+}
+.stagePair > * { max-height: none; }
+.stagePane { position: relative; display: grid; aspect-ratio: 2 / 3; place-items: center; }
+.stagePane img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.stagePane > span:not([aria-hidden]) { max-width: 100%; padding: 0 16px; text-align: center; text-wrap: balance; }
+.stagePane[data-background="white"] { background: #fff; }
+.stagePane[data-background="dark"] { background: #111214; }
+.speedRow { display: flex; width: 100%; flex-direction: column; gap: 8px; }
+
+/* Frames not drawn yet show their video frame, dimmed: the strip reads as the clip from the start. */
+.ghost { opacity: 0.28; filter: grayscale(1); }
+
+/* ── Inspector ──────────────────────────────────────────────────────────── */
+/* Scales with the window so the drawing never hides the checks below it on a short screen. */
+.inspectFrame.inspectFrame { height: clamp(280px, 46dvh, 440px); }
+.liveRow { display: flex; align-items: center; gap: 8px; color: var(--foreground); font-size: 12px; }
+.checkRows { display: flex; flex-direction: column; gap: 8px; font-size: 12px; line-height: 1.5; }
+.checkRows li { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 8px; }
+.checkIcon { display: grid; width: 16px; height: 16px; margin-top: 1px; place-items: center; border-radius: 999px; background: var(--status-success-bg); color: var(--status-success-fg); box-shadow: var(--shadow-inset); font-size: 11px; }
+.checkRows li[data-passed="false"] .checkIcon { background: var(--status-failed-bg); color: var(--status-failed-fg); }
+.checkRows li[data-passed="skipped"] .checkIcon { background: #ffffff0a; color: var(--muted-foreground); }
+.checkName { display: block; color: var(--foreground); font-weight: 500; }
+.checkDetail { display: block; color: var(--muted-foreground); overflow-wrap: anywhere; }
+.log { max-height: 220px; overflow: auto; scrollbar-width: none; color: var(--muted-foreground); font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+
+
+
+/* ── Canvas workspace ───────────────────────────────────────────────────── */
+/* The frame sheet fills the surface; the light table floats over it and the
+   inspector docks on the right. A fixed height keeps the canvas usable while
+   the page itself still scrolls on narrow screens. */
+.workspace {
+  --dock-w: 344px;
+  /** How much of the canvas a floating inspector covers; the canvas's own controls step aside by this much. */
+  --dock-covered: 0px;
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: clamp(560px, 72dvh, 920px);
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+}
+/* The preview tab needs room for two stages side by side. */
+.workspace[data-wide="true"] { --dock-w: 440px; }
+.stage { position: relative; display: flex; min-width: 0; min-height: 0; flex: 1; }
+
+.dock {
+  position: relative;
+  width: var(--dock-w);
+  min-height: 0;
+  flex-shrink: 0;
+  overflow: hidden;
+  border-left: 1px solid var(--border);
+  background: var(--card);
+  transition:
+    width 320ms var(--ease-smooth-out),
+    border-color 320ms var(--ease-smooth-out);
+}
+
+/* The inner column keeps its width while the shell collapses, so content clips instead of reflowing. */
+.dockInner {
+  display: flex;
+  width: var(--dock-w);
+  height: 100%;
+  min-height: 0;
+  flex-direction: column;
+  transition: opacity 220ms var(--ease-smooth-out), translate 320ms var(--ease-smooth-out), width 320ms var(--ease-smooth-out);
+}
+.dock[data-open="false"] {
+  width: 0;
+  border-left-color: transparent;
+  visibility: hidden;
+  transition:
+    width 320ms var(--ease-smooth-out),
+    border-color 320ms var(--ease-smooth-out),
+    visibility 0s linear 320ms;
+}
+.dock[data-open="false"] .dockInner { opacity: 0; translate: 32px 0; }
+.dockHead { display: flex; align-items: center; gap: 8px; padding: 10px 12px; border-bottom: 1px solid var(--border); }
+/* Equal-width segments with the pill the same height as the buttons, so the bar never reads lopsided. */
+.dockTabs { min-width: 0; flex: 1; }
+.dockTabs :global(.t-tab) { height: 28px; min-width: 0; flex: 1 1 0; padding-inline: 10px; overflow: hidden; text-overflow: ellipsis; }
+.dockTabs :global(.t-tabs-pill) { height: 28px; }
+.dockScroll { min-height: 0; flex: 1; }
+.dockViewport.dockViewport { overflow-y: auto; scrollbar-gutter: auto; scrollbar-width: none; }
+.dockViewport::-webkit-scrollbar, .log::-webkit-scrollbar { display: none; }
+.dockContent { display: flex; flex-direction: column; gap: 20px; padding: 14px 16px 22px; }
+/* Content that changes meaning (another tab, another frame) eases in from just below, so the swap reads as new content. */
+.swap { display: flex; flex-direction: column; gap: 20px; animation: swap-in 260ms var(--ease-smooth-out) backwards; }
+.arrive { animation: arrive-in 220ms var(--ease-smooth-out) backwards; }
+@keyframes swap-in { from { opacity: 0; translate: 0 8px; } }
+@keyframes arrive-in { from { opacity: 0; scale: 1.02; } }
+.runPanels { display: flex; flex-direction: column; gap: 20px; }
+
+.skeletonCanvas { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: 0; box-shadow: none; }
+
+/* Below the three-column breakpoint the inspector floats over the canvas,
+   the way Flipbook's own side panels do. */
+@container flipbook-workspace (min-width: 1081px) {
+  .workspace { height: auto; flex: 1 1 0; }
+}
+
+@container flipbook-workspace (max-width: 1080px) {
+  .workspace { height: clamp(520px, 66dvh, 780px); }
+  .workspace[data-dock="true"] { --dock-covered: min(var(--dock-w), 100%); }
+  .dock {
+    position: absolute;
+    inset-block: 0;
+    right: 0;
+    z-index: 30;
+    width: min(var(--dock-w), 100%);
+    box-shadow: var(--shadow-float);
+    transition:
+      translate 320ms var(--ease-smooth-out),
+      opacity 220ms var(--ease-smooth-out),
+      box-shadow 320ms var(--ease-smooth-out);
+  }
+  .dockInner { width: 100%; }
+  /* Floating, the whole sheet slides off the edge rather than collapsing in width. */
+  .dock[data-open="false"] {
+    width: min(var(--dock-w), 100%);
+    translate: 100% 0;
+    opacity: 0;
+    box-shadow: none;
+    transition:
+      translate 320ms var(--ease-smooth-out),
+      opacity 220ms var(--ease-smooth-out),
+      box-shadow 320ms var(--ease-smooth-out),
+      visibility 0s linear 320ms;
+  }
+  .dock[data-open="false"] .dockInner { opacity: 1; translate: none; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .dock, .dockInner { transition: none !important; }
+  .swap, .arrive { animation: none; }
+}
+/* Pencil note: red marks drawn over the drawing at its own pixels. */
+.pencil { display: flex; flex-direction: column; gap: 10px; }
+.pencilBox { position: relative; height: 100%; max-width: 100%; aspect-ratio: 2 / 3; }
+.pencilCanvas { position: absolute; inset: 0; width: 100%; height: 100%; cursor: crosshair; touch-action: none; }
+.stagePane canvas { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.optionRow { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; font-size: 12px; line-height: 1.5; }
+.optionRow > span { min-width: 0; }
+
+/* Status text inside the canvas's drawing controls. */
+.barStatus { display: inline-flex; height: 32px; align-items: center; gap: 8px; padding-inline: 14px; border-radius: 999px; background: color-mix(in srgb, var(--card) 88%, transparent); box-shadow: var(--shadow-float); backdrop-filter: blur(12px); font-size: 12px; font-variant-numeric: tabular-nums; }
+
+/* ── Compare: video, pose guide and drawing side by side, over the canvas ── */
+.panelActions { display: flex; align-items: center; gap: 4px; }
+.compare {
+  position: absolute;
+  inset: 12px calc(12px + var(--dock-covered, 0px)) 12px 12px;
+  z-index: 24;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px 14px 12px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--card) 94%, transparent);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(14px);
+  animation: compare-in 280ms var(--ease-smooth-out) backwards;
+}
+.compareHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.compareTitle { font-size: 13px; font-weight: 600; }
+.compareTitle span { color: var(--muted-foreground); font-weight: 400; font-variant-numeric: tabular-nums; }
+.compareNav { display: flex; align-items: center; gap: 2px; }
+.compareBody { display: grid; min-height: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.comparePane { display: flex; min-width: 0; min-height: 0; flex-direction: column; gap: 8px; margin: 0; }
+.compareImage {
+  position: relative;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  border-radius: 12px;
+  background: #ffffff04;
+  box-shadow: inset 0 0 0 1px #ffffff0a;
+}
+.compareImage[data-transparent] {
+  background-color: #1d1f27;
+  background-image: linear-gradient(45deg, #ffffff0a 25%, transparent 25%), linear-gradient(-45deg, #ffffff0a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ffffff0a 75%), linear-gradient(-45deg, transparent 75%, #ffffff0a 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+.compareImage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.compareEmpty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted-foreground); font-size: 12px; }
+.comparePane figcaption { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted-foreground); font-size: 12px; line-height: 16px; }
+.compareVerdict { display: inline-flex; align-items: center; gap: 3px; padding: 0 7px; border-radius: 999px; background: var(--status-success-bg); color: var(--status-success-fg); font-size: 11px; }
+.compareVerdict[data-passed="false"] { background: var(--status-failed-bg); color: var(--status-failed-fg); }
+.compareFoot { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; }
+.compareUse { margin-left: 8px; }
+.compareFootLabel { margin-right: 4px; color: var(--muted-foreground); font-size: 12px; }
+@keyframes compare-in { from { opacity: 0; scale: 0.98; translate: 0 12px; } }
+@media (max-width: 720px) {
+  .compareBody { grid-template-columns: 1fr; grid-auto-rows: minmax(0, 1fr); overflow-y: auto; scrollbar-width: none; }
+  .compareImage { min-height: 220px; }
+}
+@media (prefers-reduced-motion: reduce) { .compare { animation: none; } }

@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { AiPaintbrushIcon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
-import { Alert } from "../../components/ui/alert";
+import { Alert, useDismissedNotices } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { MediaLightbox } from "../../components/ui/media-lightbox";
@@ -18,6 +18,8 @@ import {
   type BackgroundMedia,
   flipbookUrls,
   flipbookTitle,
+  importedFromLabel,
+  importedFromUrl,
   orderedFrames,
   frameNeedsAttention,
   repairableFrames,
@@ -53,6 +55,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   const { toast } = useToast();
   const router = useRouter();
   const frames = useMemo(() => orderedFrames(flipbook), [flipbook]);
+  const { isDismissed, dismiss } = useDismissedNotices(flipbook.id);
   const [selected, setSelected] = useState(0);
   const [seekNonce, setSeekNonce] = useState(0);
   // A saved animation reopens with the settings and background it was left with.
@@ -304,6 +307,17 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   const rejectedVideo = flipbook.status === "unsupported" && videoMotion && flipbook.motionReference && flipbook.analysis && flipbook.analysis.characterCount > 0;
   const canRetryPreparation = !scene && !flipbook.reference && (flipbook.status === "failed" || flipbook.status === "canceled" || rejectedVideo);
 
+  // One notice at a time, most urgent first. Informational ones can be closed, and the next one in line takes their place.
+  const terminal = flipbook.status === "unsupported" || (flipbook.status === "failed" && !flipbook.reference) || flipbook.status === "canceled";
+  const reviewKey = `review:${flipbook.review?.summary ?? ""}`;
+  const noticeKind = confirm ? "confirm"
+    : requestError ? "request"
+      : terminal ? (flipbook.status === "canceled" && isDismissed("canceled") ? null : "status")
+        : flipbook.error && !active ? "error"
+          : flagged.length > 0 && !active ? "flagged"
+            : flipbook.review && !active && !isDismissed(reviewKey) ? "review"
+              : null;
+
   return (
     <div className={styles.editor}>
       <div className={styles.editorHead}>
@@ -311,6 +325,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
           <p className={styles.sectionLabel}>Flipbook · {motionLabel}</p>
           <h1 className={styles.editorTitle} title={title}>{title}</h1>
           {scene ? <p className="mt-2 text-xs text-muted-foreground">{flipbook.cast.map((member, position) => <span key={`${member.characterId}:${member.versionId}`}>{position ? " · " : ""}<Link href={`/characters?c=${member.characterId}`} className="text-primary hover:underline">{member.name}</Link></span>)}<span className="ml-2">{flipbook.plan?.durationSeconds ?? "—"} s · {total} drawings</span></p> : flipbook.characterSource ? <p className="mt-2 text-xs text-muted-foreground"><Link href={`/characters?c=${flipbook.characterSource.characterId}`} className="text-primary hover:underline">{flipbook.characterSource.name}</Link> · {flipbook.characterSource.versionName}<span className="ml-2">Saved character version</span></p> : null}
+          {flipbook.importedFrom ? <p className="mt-1 text-xs text-muted-foreground">Made in <Link href={importedFromUrl(flipbook.importedFrom)} className="text-primary hover:underline">{flipbook.importedFrom.kind === "rotoscope" ? "a Rotoscope run" : "a Motion render"}</Link>{flipbook.importedFrom.kind === "rotoscope" ? ": go back to redraw or approve more frames." : ": go back to render it again."}</p> : null}
         </div>
         <div className={styles.headActions}>
           <Badge title="Muse Image drawings used by this animation">Drawings {flipbook.budget.used}/{flipbook.budget.limit}</Badge>
@@ -337,7 +352,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
         </div>
       ) : null}
 
-      {confirm ? (
+      {noticeKind === "confirm" && confirm ? (
         <Alert tone="warning" title="Drawing budget reached" action={
           <div className={styles.buttonRow}>
             <Button size="sm" disabled={locked} onClick={() => { const pending = confirm; setConfirm(null); void run(() => pending.run(), true); }}>Draw anyway</Button>
@@ -346,34 +361,34 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
         }>{confirm.message} Each drawing is one paid Muse Image request.</Alert>
       ) : null}
 
-      {requestError ? (
+      {noticeKind === "request" && requestError ? (
         <Alert tone="error" role="alert" title="The change couldn’t be completed" onDismiss={() => setRequestError(null)} action={<Button size="sm" variant="outline" disabled={locked} onClick={() => { void run(requestError.request); }}>Try again</Button>}>
           {requestError.message}
         </Alert>
       ) : null}
 
-      {flipbook.status === "unsupported" || (flipbook.status === "failed" && !flipbook.reference) || flipbook.status === "canceled" ? (
-        <Alert tone={flipbook.status === "canceled" ? "info" : "error"} role={flipbook.status === "canceled" ? "status" : "alert"} title={flipbook.status === "unsupported" ? "This animation isn’t supported yet" : flipbook.status === "canceled" ? "Canceled" : "This animation couldn’t be made"} action={<>
+      {noticeKind === "status" ? (
+        <Alert tone={flipbook.status === "canceled" ? "info" : "error"} role={flipbook.status === "canceled" ? "status" : "alert"} onDismiss={flipbook.status === "canceled" ? () => dismiss("canceled") : undefined} title={flipbook.status === "unsupported" ? "This animation isn’t supported yet" : flipbook.status === "canceled" ? "Canceled" : "This animation couldn’t be made"} action={<>
           {canRetryPreparation ? <Button size="sm" disabled={locked} onClick={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "retry", confirmExtra }))}>Retry preparation</Button> : null}
           <Button size="sm" variant="outline" onClick={onStartOver}>Start over</Button>
         </>}>
           {flipbook.error ? messageFor(flipbook.error.code, flipbook.error.message) : "Start again with another illustration or instruction."}
         </Alert>
-      ) : flipbook.error && !active ? (
+      ) : noticeKind === "error" && flipbook.error ? (
         <Alert tone="error" role="alert" size="sm">{messageFor(flipbook.error.code, flipbook.error.message)}</Alert>
       ) : null}
 
-      {flagged.length > 0 && !active ? (
-        <Alert tone="warning" title={`${flagged.length} ${flagged.length === 1 ? "drawing needs" : "drawings need"} attention`} action={repairable.length ? <Button size="sm" variant="ai" disabled={locked || !flipbook.plan || !flipbook.reference} onClick={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "enhance_flagged", confirmExtra }))}>Fix all {repairable.length} {repairable.length === 1 ? "drawing" : "drawings"}</Button> : undefined}>
-          {repairable.length ? `AI will use each drawing’s warnings to fix it while keeping its pose. This uses ${repairable.length} new ${repairable.length === 1 ? "drawing" : "drawings"}; previous versions stay in history.` : "Select a marked drawing to review its warnings or retry it."}
+      {noticeKind === "flagged" ? (
+        <Alert tone="warning" title={`${flagged.length} ${flagged.length === 1 ? "drawing needs" : "drawings need"} attention`} action={repairable.length && !flipbook.importedFrom ? <Button size="sm" variant="ai" disabled={locked || !flipbook.plan || !flipbook.reference} onClick={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "enhance_flagged", confirmExtra }))}>Fix all {repairable.length} {repairable.length === 1 ? "drawing" : "drawings"}</Button> : undefined}>
+          {flipbook.importedFrom ? `These frames came from ${importedFromLabel(flipbook.importedFrom)}. Select a marked frame to review its warnings or replace it with your own drawing${flipbook.importedFrom.kind === "reference-motion" ? ", or render the motion again" : ""}.` : repairable.length ? `AI will use each drawing’s warnings to fix it while keeping its pose. This uses ${repairable.length} new ${repairable.length === 1 ? "drawing" : "drawings"}; previous versions stay in history.` : "Select a marked drawing to review its warnings or retry it."}
           {approvedFlagged ? ` ${approvedFlagged} approved ${approvedFlagged === 1 ? "drawing stays" : "drawings stay"} unchanged. Unapprove ${approvedFlagged === 1 ? "it" : "them"} to include ${approvedFlagged === 1 ? "it" : "them"} in a fix.` : ""}
           {flagged.some((entry) => entry.status === "failed") ? " Use Generate missing drawings to retry failed drawings." : ""}
           {flagged.some((entry) => entry.warnings.some((warning) => warning.code === "exposure_too_long")) ? " For long exposures, add in-between drawings or create a continuous sequence at 8 or more drawings/s; redrawing alone does not change the timing." : ""}
         </Alert>
       ) : null}
 
-      {flipbook.review && !active ? (
-        <Alert tone={flipbook.review.recognizableWalk ? "info" : "warning"} size="sm" title={videoMotion ? `AI review: ${flipbook.review.recognizableWalk ? "movement looks coherent" : "movement needs review"}` : `AI review: ${flipbook.review.recognizableWalk ? "reads as" : "may not read as"} a ${spec.label}`}>
+      {noticeKind === "review" && flipbook.review ? (
+        <Alert tone={flipbook.review.recognizableWalk ? "info" : "warning"} size="sm" onDismiss={() => dismiss(reviewKey)} title={videoMotion ? `AI review: ${flipbook.review.recognizableWalk ? "movement looks coherent" : "movement needs review"}` : `AI review: ${flipbook.review.recognizableWalk ? "reads as" : "may not read as"} a ${spec.label}`}>
           {flipbook.review.summary} This is Muse Spark’s opinion; trust your eyes on the preview.
         </Alert>
       ) : null}
@@ -437,7 +452,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             audioUrl={flipbook.audio ? `/api/flipbooks/${flipbook.id}/audio?v=${flipbook.audio.version}` : undefined}
             strip={<FrameStrip flipbook={flipbook} frames={frames} selected={selectedIndex} onSelect={select} onMove={move} disabled={editingLocked} scene={scene || finite} />}
           />
-          {scene ? null : <ChatPanel
+          {scene || flipbook.importedFrom ? null : <ChatPanel
             flipbook={flipbook}
             settings={settings}
             busy={editingLocked}
@@ -469,10 +484,10 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
             disabled={editingLocked}
             onDraw={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "inbetweens", drawingFps: flipbook.plan?.drawingFps ?? settings.drawingFps, confirmExtra }))}
           />}
-          {!scene ? <SequenceControls key={JSON.stringify(flipbook.sequence)} flipbook={flipbook} disabled={editingLocked} onPlan={(settings) => void run(() => flipbookApi.action(flipbook.id, { action: "sequence", settings }))} onRestore={(id) => void run(() => flipbookApi.action(flipbook.id, { action: "revision", id }))} /> : null}
+          {!scene && !flipbook.importedFrom ? <SequenceControls key={JSON.stringify(flipbook.sequence)} flipbook={flipbook} disabled={editingLocked} onPlan={(settings) => void run(() => flipbookApi.action(flipbook.id, { action: "sequence", settings }))} onRestore={(id) => void run(() => flipbookApi.action(flipbook.id, { action: "revision", id }))} /> : null}
           <AudioPanel key={flipbook.audio?.version ?? "no-audio"} flipbook={flipbook} disabled={editingLocked} onUpload={(file) => void run(() => flipbookApi.uploadAudio(flipbook.id, file))} onSave={(settings) => void run(() => flipbookApi.audioSettings(flipbook.id, settings))} onRemove={() => void run(() => flipbookApi.removeAudio(flipbook.id))} />
-          {!scene ? <DuplicatePanel flipbook={flipbook} disabled={editingLocked} onCreated={(copy) => router.push(`/flipbook?f=${copy.id}`)} /> : null}
-          {!scene ? <MotionReferencePanel key={flipbook.motionDraft?.version ?? flipbook.motionReference?.version ?? "no-motion"} flipbook={flipbook} disabled={locked || (!prepared && !videoMotion)} onUpload={(file) => void run(() => flipbookApi.uploadMotion(flipbook.id, file))} onAttach={(input) => void run(() => flipbookApi.attachMotion(flipbook.id, input))} /> : null}
+          {!scene && !flipbook.importedFrom ? <DuplicatePanel flipbook={flipbook} disabled={editingLocked} onCreated={(copy) => router.push(`/flipbook?f=${copy.id}`)} /> : null}
+          {!scene && !flipbook.importedFrom ? <MotionReferencePanel key={flipbook.motionDraft?.version ?? flipbook.motionReference?.version ?? "no-motion"} flipbook={flipbook} disabled={locked || (!prepared && !videoMotion)} onUpload={(file) => void run(() => flipbookApi.uploadMotion(flipbook.id, file))} onAttach={(input) => void run(() => flipbookApi.attachMotion(flipbook.id, input))} /> : null}
           <ExportPanel
             flipbook={flipbook}
             settings={settings}

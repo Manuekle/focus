@@ -20,3 +20,6 @@ playwright-report
 !public/demo/*.mp4
 *.mov
 PHASES
+
+# The GPU worker is its own image (services/animation-worker/Dockerfile).
+services/

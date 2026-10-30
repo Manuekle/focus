@@ -65,7 +65,7 @@ export function ExportPanel({
   readonly onSendToEditor: () => void;
 }) {
   const scene = flipbook.cast.length > 0 || Boolean(flipbook.sequence);
-  const { drawings, holds } = exposureSheet(playbackCycle(flipbook, settings.inbetweens !== false), settings.drawingFps, settings.cycleSeconds);
+  const { drawings, holds } = exposureSheet(playbackCycle(flipbook, settings.inbetweens !== false), settings.drawingFps, settings.cycleSeconds, settings.durationSeconds * EXPOSURE_FPS);
   const actualFps = Math.round((drawings.length * EXPOSURE_FPS) / holds.reduce((sum, hold) => sum + hold, 0));
   const [shortest, longest] = [Math.min(...holds), Math.max(...holds)];
   const timed = format === "mp4" || (format === "gif" && (settings.motion !== "in_place" || backgroundMoves(background)));
@@ -132,10 +132,10 @@ export function ExportPanel({
       <div className={styles.handoff}>
         <Button variant="outline" onClick={onSendToEditor} disabled={!exportable.ok || sending} aria-busy={sending || undefined}>
           {sending ? <Spinner className="size-4" /> : <HugeiconsIcon icon={Video01Icon} size={16} strokeWidth={1.75} />}
-          {sending ? "Preparing the clip…" : "Animate in the video editor"}
+          {sending ? "Preparing the clip…" : "Open in video editor"}
         </Button>
         <p className={styles.hint}>
-          Opens this animation as a {settings.durationSeconds} s clip in the editor, where you can track it and add effects.
+          Optional last step: opens this animation as a {settings.durationSeconds} s clip in the video editor, where you can track it and add effects. Exporting above is enough if you only need the animation.
           {background.kind === "transparent" ? " The editor needs a background, so it goes on white." : ""}
         </p>
       </div>

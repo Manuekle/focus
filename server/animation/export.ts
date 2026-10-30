@@ -232,7 +232,7 @@ export async function renderExport(input: {
   const { settings } = request;
   const cell = cellOf(alignment);
   // Keys hold by the exposure sheet; an in-between takes a frame from the key before it.
-  const { drawings: frames, holds } = exposureSheet(input.frames, settings.drawingFps, settings.cycleSeconds);
+  const { drawings: frames, holds } = exposureSheet(input.frames, settings.drawingFps, settings.cycleSeconds, settings.durationSeconds * EXPOSURE_FPS);
   // Strides and pans are measured per cycle of keys, whatever plays between them.
   const count = frames.filter((frame) => !frame.inbetween).length;
   if (!count) throw new AppError("export_not_ready", 409, "There are no frames to export yet.");

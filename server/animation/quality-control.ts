@@ -43,7 +43,7 @@ export type QcResult = { readonly warnings: FrameWarning[]; readonly relativeSca
 
 const GRID = 96;
 
-async function silhouette(sprite: Buffer): Promise<{ mask: Uint8Array; comX: number }> {
+export async function silhouette(sprite: Buffer): Promise<{ mask: Uint8Array; comX: number }> {
   const { data, info } = await sharp(sprite).ensureAlpha().extractChannel(3).resize(GRID, GRID, { fit: "fill" }).raw().toBuffer({ resolveWithObject: true });
   const mask = new Uint8Array(GRID * GRID);
   let sum = 0, count = 0;
@@ -53,7 +53,7 @@ async function silhouette(sprite: Buffer): Promise<{ mask: Uint8Array; comX: num
   return { mask, comX: count ? sum / count / GRID : 0.5 };
 }
 
-function iou(a: Uint8Array, b: Uint8Array): number {
+export function iou(a: Uint8Array, b: Uint8Array): number {
   let both = 0, either = 0;
   for (let index = 0; index < a.length; index++) {
     if (a[index] || b[index]) either++;
@@ -104,6 +104,7 @@ export async function checkFrames(entries: readonly QcEntry[], referenceHistogra
     if ((colorDistance !== null && colorDistance > 0.38) || localColorShift) warnings.push({ code: "color_shift", message: "Its colors differ noticeably from the reference character." });
     if (measure.method !== "alpha" && measure.backgroundUniformity < 0.85) warnings.push({ code: "background_not_plain", message: "Muse Image drew a background here; the cut-out may include part of it." });
     if (measure.method === "key") warnings.push({ code: "key_extraction", message: "Cut out by its flat background color (SAM found no match). Check the edges." });
+    if ((measure.leakShare ?? 0) > 0.06) warnings.push({ code: "cutout_leak", message: `The background fill got through a gap in the outline and removed about ${Math.round((measure.leakShare ?? 0) * 100)}% of the character (light clothes on a light background). Replace this frame, or open the render with SAM 3.1.` });
     if (measure.multiple && !group) warnings.push({ code: "multiple_subjects", message: "More than one figure was found in this drawing; the largest was kept." });
     const previous = (index - 1 + entries.length) % entries.length;
     if (!finite && !spec.subtle && entries.length > 1 && previous !== index && iou(shapes[index].mask, shapes[previous].mask) > 0.95) {

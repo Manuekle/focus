@@ -1,9 +1,10 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent } from "react";
-import { ArrowLeftRightIcon, PauseIcon, PlayIcon, VolumeHighIcon, VolumeOffIcon } from "@hugeicons/core-free-icons";
+import { ArrowLeftRightIcon, PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
+import { VolumeControl, applySound, useSound } from "../../components/ui/volume-control";
 import { formatSeconds } from "../../shared/media";
 import type { RenderResult } from "../../shared/render";
 
@@ -26,7 +27,7 @@ export function CompareStage({
   const [mode, setMode] = useState<Mode>("compare");
   const [split, setSplit] = useState(50);
   const [playing, setPlaying] = useState(false);
-  const [muted, setMuted] = useState(true);
+  const { sound, setVolume, toggleMute } = useSound();
   const [time, setTime] = useState(0);
   const compareRef = useRef<HTMLVideoElement>(null);
   const editedRef = useRef<HTMLVideoElement>(null);
@@ -36,6 +37,12 @@ export function CompareStage({
   const duration = render.durationSeconds;
 
   const active = () => (mode === "compare" ? compareRef.current : editedRef.current);
+
+  // The edited clip carries the sound; the hidden "before" stream does only when the edit is temporal and plays from it.
+  useEffect(() => {
+    applySound(editedRef.current, sound);
+    applySound(compareRef.current, render.temporal ? sound : { ...sound, muted: true });
+  }, [sound, render.temporal, mode]);
 
   useEffect(() => {
     splitRef.current = split;
@@ -146,7 +153,7 @@ export function CompareStage({
             </span>
           </div>
         ) : null}
-        <video ref={compareRef} src={render.urls.compare} muted={render.temporal ? muted : true} playsInline loop preload="auto" className="hidden" {...mediaEvents} />
+        <video ref={compareRef} src={render.urls.compare} playsInline loop preload="auto" className="hidden" {...mediaEvents} />
         {mode === "compare" ? (
           <div
             className="relative max-w-full cursor-ew-resize touch-none select-none"
@@ -188,7 +195,6 @@ export function CompareStage({
           <video
             ref={editedRef}
             src={render.urls.video}
-            muted={muted}
             playsInline
             loop
             preload="auto"
@@ -226,17 +232,7 @@ export function CompareStage({
           style={{ "--scrub": `${(time / duration) * 100}%` } as CSSProperties}
         />
         </div>
-        {render.hasAudio && (mode === "edited" || render.temporal) ? (
-          <button
-            type="button"
-            onClick={() => setMuted((value) => !value)}
-            aria-label={muted ? "Unmute" : "Mute"}
-            aria-pressed={!muted}
-            className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <HugeiconsIcon icon={muted ? VolumeOffIcon : VolumeHighIcon} size={17} strokeWidth={1.75} />
-          </button>
-        ) : null}
+        {render.hasAudio && (mode === "edited" || render.temporal) ? <VolumeControl sound={sound} onVolume={setVolume} onToggle={toggleMute} /> : null}
         <SlidingTabs
           tabs={[
             { id: "compare", label: "Before / after" },

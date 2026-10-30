@@ -11,3 +11,6 @@ e2e/.fixtures/
 test-results/
 playwright-report/
 .claude/worktrees/
+services/animation-worker/.venv/
+services/animation-worker/.pytest_cache/
+__pycache__/

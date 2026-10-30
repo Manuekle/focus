@@ -1,12 +1,14 @@
 "use client";
 
 import { useRef, useState } from "react";
+import Link from "next/link";
 import { Checkbox } from "radix-ui";
 import { Tick02Icon } from "@hugeicons/core-free-icons";
 import { Button } from "../../components/ui/button";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Input } from "../../components/ui/input";
 import { VideoPlayer } from "../../components/ui/video-player";
+import { rotoscopeEnabled } from "../../shared/features";
 import type { Flipbook } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
 
@@ -19,7 +21,8 @@ export function MotionReferencePanel({ flipbook, disabled, onUpload, onAttach }:
   const valid = Boolean(reference && Number.isFinite(start) && start >= 0 && Number.isInteger(seconds) && seconds >= 1 && seconds <= 20 && start + seconds <= reference.sourceSeconds + 0.001);
   return <section className={styles.panel} aria-labelledby="motion-reference-title">
     <h2 className={styles.panelTitle} id="motion-reference-title">Video movement reference</h2>
-    <p className={styles.hint}>Upload yourself dancing or performing an action. The video guides posture and timing; your illustration defines the character.</p>
+    <p className={styles.hint}>Upload yourself dancing or performing an action. The video guides posture and timing; your illustration defines the character. You keep an editable animation, not a frame-by-frame copy of the video.</p>
+    {rotoscopeEnabled() ? <p className={styles.hint}>Prefer to check the character frame by frame first? <Link href="/rotoscope" className="text-primary hover:underline">Test the video in Rotoscope</Link>, then open its approved frames here.</p> : null}
     <Button size="sm" variant="outline" disabled={disabled} onClick={() => input.current?.click()}>{reference ? "Replace reference video" : "Upload reference video"}</Button>
     <input ref={input} type="file" accept="video/mp4,video/quicktime,.mp4,.mov" className="sr-only" tabIndex={-1} aria-hidden onChange={(event) => { const file = event.currentTarget.files?.[0]; event.currentTarget.value = ""; if (file) onUpload(file); }} />
     {reference ? <>

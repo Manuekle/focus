@@ -5,6 +5,7 @@ import { CharacterSourceSchema } from "./characters";
 import { CameraViewSchema, ViewPreferenceSchema } from "./animation-view";
 import { MAX_SEQUENCE_FRAMES, SequenceSettingsSchema, FlipbookAudioSchema, MotionReferenceSchema, sequenceTicks } from "./sequence";
 import { parseLimit } from "./media-limits";
+import { TimingChartSchema, timeline } from "./timing-chart";
 
 // Focus Flipbook: one character illustration becomes a short cycle of real,
 // distinct drawings. Contracts shared by the studio, the API routes and the
@@ -341,12 +342,20 @@ export function tickCount(durationSeconds: number, drawingFps: DrawingFps): numb
 
 /**
  * The exposure sheet: exposure frames each drawing stays on screen, in
- * playback order. Phases with anime timing (PoseSpec.hold) keep it; a cycle
+ * playback order. Sequence drawings hold until the next one's tick, the last
+ * until `totalTicks`. Phases with anime timing (PoseSpec.hold) keep it; a cycle
  * whose holds don't add up to the even total (a partial or foreign set)
  * falls back to even holds, so every length is still a whole number of cycles.
  */
-export function exposures(phases: readonly string[], drawingFps: DrawingFps): number[] {
+export function exposures(phases: readonly string[], drawingFps: DrawingFps, totalTicks?: number): number[] {
   const even = holdFrames(drawingFps);
+  // A sequence's drawings sit at their own ticks: each stays until the next
+  // one, the last until the clip ends. Even sequences get even holds; a timing
+  // chart gets its holds, eases and ones or twos.
+  const ticks = phases.map((phase) => /^sample_\d+$/.test(phase) ? Number(phase.slice(7)) : NaN);
+  if (ticks.length && ticks.every((tick, index) => Number.isInteger(tick) && (index === 0 || tick > ticks[index - 1]))) {
+    return ticks.map((tick, index) => (ticks[index + 1] ?? Math.max(tick + even, totalTicks ?? 0)) - tick);
+  }
   const holds = phases.map((phase) => {
     const hold = POSES_BY_PHASE.get(phase)?.hold;
     return hold ? drawingFps === 4 ? hold[0] * 2 : hold[drawingFps === 8 ? 0 : 1] : even;
@@ -374,8 +383,8 @@ export function drawingAtFrame(outputFrame: number, holds: readonly number[]): {
  * set fills every slot at 24 drawings/s; partial or legacy sets hold where
  * drawings are missing. Every set keeps the key cycle's original length.
  */
-export function exposureSheet<T extends { readonly phase: string; readonly inbetween?: boolean; readonly position?: number }>(drawings: readonly T[], drawingFps: DrawingFps, cycleSeconds?: number): { drawings: T[]; holds: number[] } {
-  const keyHolds = exposures(drawings.filter((drawing) => !drawing.inbetween).map((drawing) => drawing.phase), drawingFps);
+export function exposureSheet<T extends { readonly phase: string; readonly inbetween?: boolean; readonly position?: number }>(drawings: readonly T[], drawingFps: DrawingFps, cycleSeconds?: number, totalTicks?: number): { drawings: T[]; holds: number[] } {
+  const keyHolds = exposures(drawings.filter((drawing) => !drawing.inbetween).map((drawing) => drawing.phase), drawingFps, totalTicks);
   const originalLength = keyHolds.reduce((sum, hold) => sum + hold, 0);
   const shown: T[] = [];
   const holds: number[] = [];
@@ -646,7 +655,9 @@ export const FlipbookPlanSchema = z
     drawingFps: DrawingFpsSchema,
     durationSeconds: PlaybackSecondsSchema,
     loop: z.boolean(),
-    poses: z.array(AnimationPoseSchema).min(WALK_FRAME_COUNT).max(MAX_SEQUENCE_FRAMES),
+    /** Pose to pose: the keys and timing chart the drawings follow. Absent in straight-ahead sequences and cycles. */
+    timing: TimingChartSchema.optional(),
+    poses: z.array(AnimationPoseSchema).min(2).max(MAX_SEQUENCE_FRAMES),
   })
   .superRefine((plan, context) => {
     if (plan.mode === "sequence") {
@@ -655,12 +666,15 @@ export const FlipbookPlanSchema = z
         context.addIssue({ code: "custom", message: "A sequence needs 8, 12 or 24 drawings/s, finite timing and a fixed stage." });
         return;
       }
-      const ticks = sequenceTicks(settings.data);
+      // Pose to pose: one drawing per key and in-between, each at its tick on the timing chart.
+      const ticks = plan.timing ? timeline(plan.timing).map((drawing) => drawing.tick) : sequenceTicks(settings.data);
+      if (plan.timing && plan.timing.durationSeconds !== plan.durationSeconds) context.addIssue({ code: "custom", path: ["timing"], message: "The timing chart must last as long as the sequence." });
       if (plan.poses.length !== ticks.length || plan.poses.some((pose, index) => pose.index !== index || pose.phase !== `sample_${ticks[index]}`)) {
         context.addIssue({ code: "custom", path: ["poses"], message: "Every sequence drawing must have its own ordered absolute timestamp." });
       }
       return;
     }
+    if (plan.timing) context.addIssue({ code: "custom", path: ["timing"], message: "Only a sequence is timed pose to pose." });
     if (!plan.loop || plan.drawingFps === 24) context.addIssue({ code: "custom", message: "Legacy cycles retain their original pace and loop." });
     if (plan.action === ENSEMBLE_ACTION) {
       // A scene is one drawing per beat: its length is its duration at the fixed pace.
@@ -742,6 +756,11 @@ export const FrameWarningCodeSchema = z.enum([
   "multiple_subjects",
   "key_extraction",
   "alpha_extraction",
+  "cutout_leak",
+  /** Video movement: the drawing's silhouette doesn't match the guide's at its tick. */
+  "pose_mismatch",
+  /** Video movement: the drawing changes much more from its neighbor than the guide does. */
+  "motion_jump",
 ]);
 export type FrameWarningCode = z.infer<typeof FrameWarningCodeSchema>;
 export const FrameWarningSchema = z.object({ code: FrameWarningCodeSchema, message: z.string().max(240) });
@@ -756,7 +775,8 @@ export type FrameReview = z.infer<typeof FrameReviewSchema>;
 
 export const FrameVersionSchema = z.object({
   id: VersionIdSchema,
-  source: z.enum(["generated", "uploaded", "enhanced"]),
+  /** "imported": a frame of a Reference Motion render, never drawn by Muse Image. */
+  source: z.enum(["generated", "uploaded", "enhanced", "imported"]),
   createdAt: z.iso.datetime(),
   /** The user's correction note for a redraw. */
   note: z.string().max(240).optional(),
@@ -954,7 +974,41 @@ export const CastMemberSchema = CharacterSourceSchema.extend({
 });
 export type CastMember = z.infer<typeof CastMemberSchema>;
 
+/**
+ * Frames that came from outside Muse Image: they can be replaced or reordered,
+ * not redrawn. A Reference Motion render, or a Rotoscope run used as the
+ * sandbox before Flipbook.
+ */
+export const ImportedFromSchema = z.discriminatedUnion("kind", [
+  z.object({
+    kind: z.literal("reference-motion"),
+    jobId: z.uuid(),
+    engine: z.string().max(40),
+    /** The test engine's output: a pipeline check, not an animation. */
+    synthetic: z.boolean(),
+  }),
+  z.object({
+    kind: z.literal("rotoscope"),
+    runId: z.uuid(),
+    /** The run's frame rate; the frames were resampled to Flipbook's 24ths. */
+    fps: z.number().int().min(1).max(24),
+  }),
+]);
+
+export type ImportedFrom = z.infer<typeof ImportedFromSchema>;
+
+/** What the frames were imported from, for copy and error messages. */
+export function importedFromLabel(importedFrom: ImportedFrom): string {
+  return importedFrom.kind === "rotoscope" ? "Rotoscope" : "Reference Motion";
+}
+
+/** Where an imported animation came from, to go back to it. */
+export function importedFromUrl(importedFrom: ImportedFrom): string {
+  return importedFrom.kind === "rotoscope" ? `/rotoscope?run=${importedFrom.runId}` : `/animate?job=${importedFrom.jobId}`;
+}
+
 export const FlipbookSchema = z.object({
+  importedFrom: ImportedFromSchema.optional(),
   motionSource: z.literal("video").optional(),
   motionNote: z.string().max(400).optional(),
   requestedKeepScene: z.boolean().optional(),

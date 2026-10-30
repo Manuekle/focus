@@ -5,7 +5,7 @@ import { HugeiconsIcon } from "../icons/icon";
 import {
   AlertCircleIcon,
   Cancel01Icon,
-  CheckmarkCircle02Icon,
+  CheckIcon,
   CloudUploadIcon,
   File02Icon,
   FileArchiveIcon,
@@ -240,7 +240,7 @@ function StatusIcon({
         className={cn("grid h-6 w-6 place-items-center", STATUS_TONE[status])}
       >
         {status === "success" ? (
-          <HugeiconsIcon icon={CheckmarkCircle02Icon} strokeWidth={1.75} className={iconClassName} />
+          <HugeiconsIcon icon={CheckIcon} strokeWidth={1.75} className={iconClassName} />
         ) : status === "error" ? (
           <HugeiconsIcon icon={AlertCircleIcon} strokeWidth={1.75} className={iconClassName} />
         ) : status === "uploading" ? (

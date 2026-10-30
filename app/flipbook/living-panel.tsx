@@ -477,7 +477,7 @@ export function LivingPanel({ image, onPreview }: { readonly image: FlipbookImag
               </Button>
             ) : null}
             {error ? <p className={styles.hint} data-invalid="" role="alert">{error}</p> : null}
-            {result && !stale ? <p className={styles.hint}>Opening it in the video editor keeps it: signed in, it’s saved to your projects.</p> : null}
+            {result && !stale ? <p className={styles.hint}>Optional: opening it in the video editor keeps it there; signed in, it’s saved to your projects.</p> : null}
             {result && !stale ? (
               <div className={styles.buttonRow}>
                 <Button type="button" variant="ghost" size="sm" onClick={() => void openInEditor(result.key)} disabled={opening}>

@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Switch } from "../../components/ui/switch";
 import { VideoPlayer } from "../../components/ui/video-player";
+import { rotoscopeEnabled } from "../../shared/features";
 import { MAX_DURATION_SECONDS, MAX_UPLOAD_BYTES, formatBytes } from "../../shared/media";
 import styles from "./flipbook.module.css";
 
@@ -34,7 +36,8 @@ export function MotionVideoInput({ value, disabled, onChange }: { value: MotionV
     onChange({ file, sourceSeconds: 0, start: 0, durationSeconds: 4, useAudio: false });
   };
   return <div className={styles.controlField}>
-    <p className={styles.hint}>Use one clearly visible person. The selected segment supplies the movement, timing and orientation; your illustration supplies the character.</p>
+    <p className={styles.hint}>Use one clearly visible person. The selected segment supplies the movement, timing and orientation; your illustration supplies the character. The result stays editable: this is not a frame-by-frame copy of the video.</p>
+    {rotoscopeEnabled() ? <p className={styles.hint}>Not sure the character will hold up? <Link href="/rotoscope" className="text-primary hover:underline">Test it in Rotoscope first</Link>, a frame-by-frame sandbox that opens its result here.</p> : null}
     <div className={styles.buttonRow}>
       <Button type="button" size="sm" variant="outline" disabled={disabled} onClick={() => input.current?.click()}>{value ? "Replace reference video" : "Choose reference video"}</Button>
       {value ? <Button type="button" size="sm" variant="ghost" disabled={disabled} onClick={() => { onChange(undefined); setError(undefined); }}>Remove video</Button> : null}

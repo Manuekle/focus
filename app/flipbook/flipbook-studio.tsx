@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { Add01Icon, Delete02Icon, UserGroupIcon, UserMultiple02Icon } from "@hugeicons/core-free-icons";
+import { Add01Icon, Delete02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { confirmAction } from "../../components/ui/confirm-dialog";
@@ -30,6 +30,9 @@ import { characterApi } from "../characters/character-client";
 import { characterUrls, type CharacterSource } from "../../shared/characters";
 import shell from "../editor/studio.module.css";
 import styles from "./flipbook.module.css";
+import { AnimateNav } from "../_editor/animate-nav";
+import { RecentRuns } from "../rotoscope/recent-runs";
+import { rotoscopeEnabled } from "../../shared/features";
 
 /**
  * Focus Flipbook: a creation mode next to video editing, in the same shell
@@ -184,7 +187,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
           ) : null}
           {owned ? <span className={shell.saved}>Saved to your animations</span> : null}
         </div>
-        <ModeSwitch current="flipbook" />
+        <ModeSwitch current="animate" />
         <div className={shell.headerEnd}><AccountButton session={session} next={here} /></div>
       </header>
 
@@ -197,20 +200,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
             New animation
           </Button>
 
-          <nav className={shell.sidebarNav} aria-label="Library">
-            <Button asChild variant="ghost" size="sm" className="w-full justify-start font-normal text-muted-foreground hover:text-foreground">
-              <Link href="/characters">
-                <HugeiconsIcon icon={UserGroupIcon} size={14} strokeWidth={1.75} />
-                My characters
-              </Link>
-            </Button>
-            <Button asChild variant="ghost" size="sm" className="w-full justify-start font-normal text-muted-foreground hover:text-foreground">
-              <Link href="/flipbook?together=1" aria-current={together && !flipbook ? "page" : undefined} className="aria-[current=page]:bg-accent aria-[current=page]:text-accent-foreground">
-                <HugeiconsIcon icon={UserMultiple02Icon} size={14} strokeWidth={1.75} />
-                Animate together
-              </Link>
-            </Button>
-          </nav>
+          <AnimateNav current={together && !flipbook ? "together" : "flipbook"} />
 
           {user ? (
             <nav className={shell.projects} aria-label="Animations">
@@ -226,9 +216,9 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
                       <Link href={`/flipbook?f=${entry.id}`} className={shell.projectLink} aria-current={entry.id === flipbook?.id ? "page" : undefined}>
                         {/* eslint-disable-next-line @next/next/no-img-element -- the illustration, from the media route */}
                         <img src={entry.posterUrl} alt="" className={cn(shell.poster, styles.posterContain)} />
-                        <span className="min-w-0">
-                          <span className="block truncate text-xs text-foreground">{entry.title}</span>
-                          <span className="block text-[11px] text-muted-foreground">
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs text-foreground" title={entry.title}>{entry.title}</span>
+                          <span className="block truncate text-[11px] text-muted-foreground">
                             {entry.action ? `${ACTION_SPECS[entry.action].label} · ` : ""}{entry.frames}/{entry.total} frames · {ago(entry.updatedAt)}
                           </span>
                         </span>
@@ -253,6 +243,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
               <FacebookButton next={here} label="Sign in with Facebook" className="h-9 whitespace-nowrap px-3 text-[13px]" />
             </section>
           ) : null}
+          {user && rotoscopeEnabled() ? <RecentRuns /> : null}
           </ScrollArea>
           <SidebarActivity />
         </aside>

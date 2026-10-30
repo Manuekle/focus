@@ -8,7 +8,6 @@ import { useRouter } from "next/navigation";
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
   Add01Icon,
-  ArrowLeft01Icon,
   ArrowRight01Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
@@ -33,6 +32,7 @@ import { CharacterApiError, characterApi } from "./character-client";
 import { CharacterEditor } from "./character-editor";
 import shell from "../editor/studio.module.css";
 import styles from "./characters.module.css";
+import { AnimateNav } from "../_editor/animate-nav";
 
 export function CharactersStudio({
   initialId,
@@ -181,7 +181,7 @@ export function CharactersStudio({
           </Link>
           <span className={styles.headerLabel}>My characters</span>
         </div>
-        <ModeSwitch current="flipbook" />
+        <ModeSwitch current="characters" />
         <div className={shell.headerEnd}>
           <AccountButton session={session} next={here} />
         </div>
@@ -207,22 +207,7 @@ export function CharactersStudio({
             <HugeiconsIcon icon={Add01Icon} size={14} />
             New character
           </Button>
-          <nav className={shell.sidebarNav} aria-label="Library">
-            <Button asChild variant="ghost" size="sm" className="w-full justify-between font-normal text-muted-foreground hover:text-foreground aria-[current=page]:bg-accent aria-[current=page]:text-accent-foreground">
-              <Link
-                href="/characters"
-                aria-current={!initialId ? "page" : undefined}
-              >
-                My characters <span>{list?.length ?? ""}</span>
-              </Link>
-            </Button>
-            <Button asChild variant="ghost" size="sm" className="w-full justify-start font-normal text-muted-foreground hover:text-foreground">
-              <Link href="/flipbook">
-                <HugeiconsIcon icon={ArrowLeft01Icon} size={14} />
-                Back to Flipbook
-              </Link>
-            </Button>
-          </nav>
+          <AnimateNav current={!initialId ? "characters" : null} />
           {user ? (
             <div className={styles.sideList}>
               <p className={shell.sideLabel}>Characters</p>

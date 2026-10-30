@@ -10,7 +10,7 @@ import {
   ArrowRight01Icon,
   Cancel01Icon,
   Delete02Icon,
-  Download04Icon,
+  Download02Icon,
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
@@ -231,18 +231,18 @@ export function CharacterEditor({
                 <a
                   href={characterUrls.version(character.id, selected.id, true)}
                 >
-                  <HugeiconsIcon icon={Download04Icon} size={14} />
+                  <HugeiconsIcon icon={Download02Icon} size={14} />
                   PNG
                 </a>
               </Button>
               <Button size="sm" disabled={locked} asChild={!locked}>
                 {locked ? (
-                  <span>Use in Flipbook</span>
+                  <span>Animate</span>
                 ) : (
                   <Link
                     href={`/flipbook?character=${character.id}&version=${selected.id}`}
                   >
-                    Use in Flipbook
+                    Animate
                     <HugeiconsIcon icon={ArrowRight01Icon} size={14} />
                   </Link>
                 )}

@@ -15,6 +15,7 @@ export type DuplicateTarget = z.infer<typeof DuplicateTargetSchema>;
 
 export async function duplicateFlipbook(source: Flipbook, target: DuplicateTarget, ownerId: string | null): Promise<Flipbook> {
   if (!source.plan || source.cast.length) throw new AppError("duplicate_not_ready", 409, "Prepare a single character's motion before duplicating it.");
+  if (source.importedFrom) throw new AppError("imported_frames", 409, "These frames come from a Reference Motion render. Replace or reorder them, or render the motion again.");
   const parsed = DuplicateTargetSchema.parse(target);
   const saved = parsed.characterSource ? await animationCharacterSource(parsed.characterSource, ownerId) : null;
   const uploaded = saved ? null : await getCharacterImage(parsed.imageId!);

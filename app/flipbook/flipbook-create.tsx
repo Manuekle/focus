@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
-import { AiPaintbrushIcon, AiSearch02Icon, ArrowLeftRightIcon, Cancel01Icon } from "@hugeicons/core-free-icons";
+import { AiPaintbrushIcon, AiSearch02Icon, ArrowLeftRightIcon, ArrowRight01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
 import { Skeleton } from "../../components/ui/skeleton";
 import { SuggestionChip } from "../../components/ui/suggestion-chip";
@@ -32,6 +32,8 @@ import { livingUrls } from "../../shared/living";
 import { FlipbookApiError, flipbookApi, uploadCharacter, type UploadHandle } from "./flipbook-client";
 import { Select } from "../../components/ui/select";
 import { CharacterPicker } from "./character-picker";
+import { handoffUrl } from "../characters/character-client";
+import { referenceMotionEnabled, rotoscopeEnabled } from "../../shared/features";
 import { SequenceFields } from "./sequence-controls";
 import { MotionVideoInput, validMotionVideo, type MotionVideoSelection } from "./motion-video-input";
 import { descriptionAnimationPrompt, videoAnimationPrompt } from "../../shared/animation-prompt";
@@ -47,6 +49,18 @@ type Direction = "left" | "in_place" | "right";
 
 /** Redraw the character in new poses, or keep the picture exactly as it is and move its own pixels. */
 type Mode = "sequence" | "cycle" | "living";
+
+/**
+ * Following a video, three results: an editable Flipbook animation made
+ * here, every frame copied exactly (Rotoscope) or a GPU render of the
+ * movement (Motion). All three end in the Flipbook editor.
+ */
+type VideoResult = "editable" | "exact" | "motion";
+const VIDEO_RESULTS = [
+  { id: "editable", label: "Editable", note: "Flipbook plans keys and in-betweens from the video's movement: fast, and every drawing stays editable.", path: null, title: "", detail: "", cta: "" },
+  ...(rotoscopeEnabled() ? [{ id: "exact", label: "Exact copy", note: "Rotoscope redraws every video frame with your character, checked frame by frame, then opens in Flipbook.", path: "/rotoscope", title: "Copy the video frame by frame", detail: "Rotoscope cuts the video into frames, redraws each one in the same pose and stops on any frame that fails its checks. Approve at least one second, then open it in Flipbook to edit and export.", cta: "Continue in Rotoscope" }] as const : []),
+  ...(referenceMotionEnabled() ? [{ id: "motion", label: "Motion render", note: "Motion renders the character following the video on a GPU, then opens it in Flipbook.", path: "/animate", title: "Render the movement", detail: "Motion renders your character following the video on a GPU worker. Open the render in Flipbook to review, edit and export it.", cta: "Continue in Motion" }] as const : []),
+] as const satisfies readonly { id: VideoResult; label: string; note: string; path: "/rotoscope" | "/animate" | null; title: string; detail: string; cta: string }[];
 
 const MODES: readonly { id: Mode; label: string; note: string }[] = [
   { id: "sequence", label: "Continuous sequence", note: "Draw the whole action across your chosen duration, with a drawing for every moment." },
@@ -157,6 +171,8 @@ export function FlipbookCreate({
   const [motionSource, setMotionSource] = useState<"description" | "video">("description");
   const [motionVideo, setMotionVideo] = useState<MotionVideoSelection>();
   const [videoDetail, setVideoDetail] = useState("");
+  // Following a video: an editable Flipbook here, or another way of animating that ends in Flipbook too.
+  const [videoResult, setVideoResult] = useState<VideoResult>("editable");
   const [living, setLiving] = useState<LivingPreview>({ video: null, busy: false, highlight: null });
   const touched = useRef(false);
   const handle = useRef<UploadHandle | null>(null);
@@ -227,7 +243,8 @@ export function FlipbookCreate({
   /** The side to face when a motion stays on the spot: the drawing's own, when it has one. */
   const facing = look?.analysis.facing === "left" ? "left" : "right";
   const lateralView = cameraView === "side" || cameraView === "three_quarter" || (cameraView === "original" && Boolean(look && ["side", "three_quarter"].includes(look.analysis.view)));
-  const fromVideo = mode === "sequence" && motionSource === "video";
+  const otherWay = mode === "sequence" && motionSource === "video" && videoResult !== "editable" ? VIDEO_RESULTS.find((entry) => entry.id === videoResult)! : null;
+  const fromVideo = mode === "sequence" && motionSource === "video" && !otherWay;
   const sequenceSettings = { ...sequence, ...(fromVideo && motionVideo ? { durationSeconds: motionVideo.durationSeconds } : {}) };
   const motionInstruction = instruction(action, direction, detail, facing, cameraView, lateralView);
   const prompt = fromVideo ? videoAnimationPrompt({ settings: sequenceSettings, start: motionVideo?.start ?? 0, note: videoDetail }) : descriptionAnimationPrompt(motionInstruction, mode === "sequence" ? sequence : undefined);
@@ -341,12 +358,32 @@ export function FlipbookCreate({
             {mode === "sequence" ? <>
               <fieldset className={composer.effects}>
                 <legend className={composer.label}>Movement source</legend>
-                <SlidingTabs className={composer.tabs} tabs={[{ id: "description", label: "Describe motion" }, { id: "video", label: "From a video" }]} value={motionSource} onValueChange={(id) => setMotionSource(id as typeof motionSource)} />
+                <SlidingTabs className={composer.tabs} tabs={[{ id: "description", label: "Describe motion" }, { id: "video", label: "Guided by video" }]} value={motionSource} onValueChange={(id) => setMotionSource(id as typeof motionSource)} />
               </fieldset>
+              {motionSource === "video" && VIDEO_RESULTS.length > 1 ? (
+                <fieldset className={composer.effects}>
+                  <legend className={composer.label}>What you get</legend>
+                  <SlidingTabs className={composer.tabs} tabs={VIDEO_RESULTS.map((entry) => ({ id: entry.id, label: entry.label }))} value={videoResult} onValueChange={(id) => setVideoResult(id as VideoResult)} />
+                  <p className={composer.summary} aria-live="polite">{VIDEO_RESULTS.find((entry) => entry.id === videoResult)!.note}</p>
+                </fieldset>
+              ) : null}
               {fromVideo ? <MotionVideoInput value={motionVideo} disabled={creating} onChange={setMotionVideo} /> : null}
-              <div className={fromVideo ? styles.controlField : styles.createTiming}><SequenceFields value={sequence} onChange={setSequence} disabled={creating} compact videoDuration={fromVideo ? motionVideo?.durationSeconds ?? sequence.durationSeconds : undefined} /></div>
+              {otherWay ? null : <div className={fromVideo ? styles.controlField : styles.createTiming}><SequenceFields value={sequence} onChange={setSequence} disabled={creating} compact videoDuration={fromVideo ? motionVideo?.durationSeconds ?? sequence.durationSeconds : undefined} /></div>}
             </> : null}
           </section>
+          {otherWay ? (
+            <section className={styles.createCard} aria-labelledby="other-way-title">
+              <h2 id="other-way-title" className={styles.panelTitle}>{otherWay.title}</h2>
+              <p className={styles.hint}>{otherWay.detail}</p>
+              <Button asChild variant="ai" className="w-full">
+                <Link href={handoffUrl(otherWay.path!, fromCharacter ? { characterId: initialCharacter!.source.characterId, versionId: initialCharacter!.source.versionId } : image ? { imageUrl: image.url } : null)}>
+                  {otherWay.cta}
+                  <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.75} />
+                </Link>
+              </Button>
+              <p className={styles.hint}>{image ? "Your character goes with you; pick the video there." : "Add your character here first, or pick it there."}</p>
+            </section>
+          ) : null}
 
           {mode === "living" ? <section className={styles.createCard} aria-label="Picture motion"><LivingPanel image={image} onPreview={setLiving} /></section> : <>
           {fromVideo ? <section className={styles.createCard} aria-labelledby="video-movement-title">

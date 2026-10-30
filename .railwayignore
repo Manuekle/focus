@@ -22,3 +22,6 @@ playwright-report/
 *.mp4
 !public/demo/*.mp4
 *.mov
+
+# The GPU worker is deployed separately (Hugging Face Space or GPU host).
+services/

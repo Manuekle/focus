@@ -1,0 +1,388 @@
+/* The Rotoscope canvas: a pan/zoom surface of frame cards, modelled on the
+   automation canvas in Oruka but wearing Focus's tokens (soft borders, card
+   surfaces, semantic status colours) rather than its own palette. */
+
+.canvas {
+  position: relative;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  overflow: hidden;
+  background:
+    radial-gradient(120% 80% at 50% 0%, color-mix(in srgb, var(--primary) 4%, transparent), transparent 70%),
+    color-mix(in srgb, var(--background) 60%, var(--card));
+}
+
+.viewport {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+  outline: none;
+  cursor: grab;
+  touch-action: none;
+}
+/* The sheet is a focus target, not a control: the current card carries the focus state, so no ring around the whole canvas. */
+.viewport:focus, .viewport:focus-visible { outline: none; }
+.grab { cursor: grab; }
+.grabbing { cursor: grabbing; }
+
+.dots {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  background-image: radial-gradient(circle, color-mix(in srgb, var(--foreground) 14%, transparent) 1px, transparent 1.4px);
+  background-repeat: repeat;
+}
+
+.world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  transform-origin: 0 0;
+}
+
+/* ── Frame cards ────────────────────────────────────────────────────────── */
+.card {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  padding: 5px;
+  border: 1px solid var(--border);
+  border-radius: 13px;
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: grab;
+  outline: none;
+  touch-action: none;
+}
+.card:hover:not([data-dragging="true"], [data-selected="true"]) {
+  border-color: color-mix(in srgb, var(--primary) 38%, var(--border));
+  box-shadow: var(--shadow-elevated);
+}
+.card[data-selected="true"] {
+  border-color: var(--primary);
+  box-shadow:
+    0 0 0 1px var(--primary),
+    0 0 0 4px color-mix(in srgb, var(--primary) 22%, transparent),
+    var(--shadow-elevated);
+}
+.card[data-dragging="true"] {
+  z-index: 10;
+  cursor: grabbing;
+  translate: none;
+  border-color: color-mix(in srgb, var(--primary) 60%, var(--border));
+  box-shadow: var(--shadow-float);
+}
+/* The selected card is the focus indicator, so the keyboard adds no second ring on top of it. */
+.card:focus, .card:focus-visible { outline: none; }
+.card:focus-visible:not([data-selected="true"]) {
+  box-shadow:
+    0 0 0 2px var(--card),
+    0 0 0 4px color-mix(in srgb, var(--primary) 70%, transparent);
+}
+
+.thumb {
+  position: relative;
+  display: grid;
+  width: 100%;
+  flex-shrink: 0;
+  aspect-ratio: 2 / 3;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 9px;
+  background-color: color-mix(in srgb, var(--foreground) 4%, transparent);
+  background-image: repeating-conic-gradient(
+    color-mix(in srgb, var(--foreground) 5%, transparent) 0% 25%,
+    transparent 0% 50%
+  );
+  background-size: 12px 12px;
+}
+.thumb img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.ghost { opacity: 0.26; filter: grayscale(1); }
+.working { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; box-shadow: none; }
+.checking {
+  opacity: 1;
+}
+
+.block {
+  position: absolute;
+  inset: 12%;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--foreground) 10%, transparent);
+}
+.card[data-state="approved"] .block { background: color-mix(in srgb, var(--status-success-fg) 28%, transparent); }
+.card[data-state="drawing"] .block { background: color-mix(in srgb, var(--primary) 34%, transparent); }
+.card[data-state="halted"] .block,
+.card[data-state="rejected"] .block { background: color-mix(in srgb, var(--status-pending-fg) 30%, transparent); }
+
+
+.liveFlag {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  color: var(--primary);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 14px;
+  backdrop-filter: blur(4px);
+}
+
+.index { font-variant-numeric: tabular-nums; font-weight: 600; letter-spacing: -0.01em; }
+
+/* A card is its drawing and nothing else: the number sits on it, and one dot says where the frame stands. */
+.frameIndex {
+  position: absolute;
+  bottom: 6px;
+  left: 6px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: #000000a6;
+  color: #fff;
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 600;
+  line-height: 16px;
+  backdrop-filter: blur(4px);
+}
+.status {
+  position: absolute;
+  right: 8px;
+  bottom: 10px;
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: transparent;
+  box-shadow: 0 0 0 1.5px #ffffff59;
+  transition: background-color 200ms var(--ease-smooth-out), box-shadow 200ms var(--ease-smooth-out);
+}
+.status[data-state="approved"] { background: var(--status-success-fg); box-shadow: 0 0 0 2px #00000073; }
+.status[data-state="drawing"] { background: var(--primary); box-shadow: 0 0 0 2px #00000073; animation: status-pulse 1.4s ease-in-out infinite; }
+.status[data-state="halted"], .status[data-state="rejected"] { background: var(--status-pending-fg); box-shadow: 0 0 0 2px #00000073; }
+@keyframes status-pulse { 50% { opacity: 0.35; } }
+
+/* ── Empty state ────────────────────────────────────────────────────────── */
+.empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 22px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  pointer-events: none;
+}
+.empty p { display: inline-flex; align-items: center; gap: 8px; margin: 0; line-height: 16px; }
+/* Eight cards in the shape of the real ones, shimmering left to right. */
+.ghosts { display: grid; width: min(100% - 48px, 440px); grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; animation: arrive 320ms var(--ease-smooth-out) backwards; }
+.ghosts > span { width: 100%; aspect-ratio: 2 / 3; border: 1px solid var(--border); border-radius: 13px; background-color: color-mix(in srgb, var(--foreground) 5%, var(--card)); box-shadow: none; }
+
+/* ── Floating chrome ────────────────────────────────────────────────────── */
+.hint {
+  position: absolute;
+  bottom: 14px;
+  left: 16px;
+  margin: 0;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: 0.02em;
+  pointer-events: none;
+}
+
+.toolbar {
+  position: absolute;
+  top: 12px;
+  right: calc(12px + var(--dock-covered, 0px));
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 4px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(12px);
+}
+.tool { width: 30px; height: 30px; }
+.zoomValue {
+  min-width: 46px;
+  height: 28px;
+  padding: 0 4px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted-foreground);
+  font: inherit;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  cursor: pointer;
+}
+.zoomValue:hover { background: var(--btn-ghost-hover-bg, #0000000a); color: var(--foreground); }
+.zoomValue:focus-visible { outline: 2px solid var(--primary); outline-offset: 1px; }
+.divider { width: 1px; height: 18px; margin-inline: 3px; background: var(--border); }
+
+.minimapWrap {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  z-index: 20;
+}
+.minimap {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(12px);
+}
+.minimapSvg { display: block; cursor: pointer; touch-action: none; }
+
+@media (max-width: 1080px) {
+  /* Inside a scrolling page the canvas must not eat a vertical swipe. */
+  .viewport { touch-action: pan-y; }
+}
+
+@media (max-width: 720px) {
+  .hint { display: none; }
+  .minimapWrap { display: none; }
+}
+
+/* ── Attempts tray ──────────────────────────────────────────────────────── */
+/* A sheet that rises from the bottom of the canvas, above the drawing controls. Its attempts sit in one row that
+   scrolls sideways, so ten or fifty of them still read as a strip. `--dock-covered` keeps it clear of a floating inspector. */
+.tray {
+  position: absolute;
+  right: calc(16px + var(--dock-covered, 0px));
+  bottom: 62px;
+  left: 16px;
+  z-index: 22;
+  display: flex;
+  /* As wide as its attempts need, up to a cap; past the cap the row scrolls. */
+  width: fit-content;
+  max-width: min(760px, 100%);
+  margin-inline: auto;
+  flex-direction: column;
+  padding: 12px 0 8px;
+  border: 1px solid var(--border);
+  border-radius: 16px;
+  background: color-mix(in srgb, var(--card) 92%, transparent);
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(12px);
+  transform-origin: bottom center;
+  animation: tray-in 300ms var(--ease-smooth-out) backwards;
+  transition: opacity 180ms var(--ease-smooth-out), translate 240ms var(--ease-smooth-out), scale 240ms var(--ease-smooth-out);
+}
+.tray[data-open="false"] { opacity: 0; scale: 0.98; translate: 0 18px; pointer-events: none; }
+/* The row says how many attempts there are by being that long; the close button hangs off the corner. */
+.trayClose { position: absolute; top: -9px; right: -9px; z-index: 1; width: 22px; height: 22px; border-radius: 999px; box-shadow: var(--shadow-float); }
+.trayRow {
+  display: flex;
+  min-width: 0;
+  gap: 8px;
+  padding-inline: 14px;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  scroll-snap-type: x proximity;
+  scrollbar-width: none;
+  mask-image: linear-gradient(to right, transparent, #000 14px, #000 calc(100% - 14px), transparent);
+}
+.trayRow::-webkit-scrollbar { display: none; }
+
+.attempt {
+  display: flex;
+  width: 76px;
+  flex-shrink: 0;
+  flex-direction: column;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 0 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  scroll-snap-align: center;
+  animation: attempt-in 340ms var(--ease-smooth-out) backwards;
+  animation-delay: calc(var(--i) * 45ms + 80ms);
+}
+.attemptThumb {
+  position: relative;
+  display: grid;
+  width: 100%;
+  aspect-ratio: 2 / 3;
+  place-items: center;
+  overflow: hidden;
+  border-radius: 10px;
+  box-shadow: inset 0 0 0 1px var(--border);
+  background-color: color-mix(in srgb, var(--foreground) 4%, transparent);
+  transition: box-shadow 160ms var(--ease-smooth-out), translate 160ms var(--ease-smooth-out);
+}
+.attemptThumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; animation: arrive 240ms var(--ease-smooth-out) backwards; }
+.attempt:hover .attemptThumb { translate: 0 -2px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 55%, var(--border)); }
+.attempt:focus-visible { outline: none; }
+.attempt:focus-visible .attemptThumb { box-shadow: inset 0 0 0 2px var(--primary); }
+.attempt[data-kind="approved"] .attemptThumb { box-shadow: inset 0 0 0 1.5px var(--status-success-fg); }
+.attempt[data-kind="live"] .attemptThumb { box-shadow: inset 0 0 0 1.5px var(--primary); }
+.attempt[data-current="true"][data-kind] .attemptThumb { box-shadow: inset 0 0 0 2px var(--primary), 0 0 0 3px color-mix(in srgb, var(--primary) 22%, transparent); }
+.attemptBadge { position: absolute; top: 5px; left: 5px; display: grid; width: 16px; height: 16px; place-items: center; border-radius: 999px; box-shadow: var(--shadow-inset); }
+.attempt[data-kind="approved"] .attemptBadge, .attempt[data-kind="passed"] .attemptBadge { background: var(--status-success-bg); color: var(--status-success-fg); }
+.attempt[data-kind="rejected"] .attemptBadge { background: var(--status-failed-bg); color: var(--status-failed-fg); }
+.attempt[data-kind="live"] .attemptBadge { background: var(--card); color: var(--primary); }
+.attemptNumber { color: var(--muted-foreground); font-size: 11px; font-variant-numeric: tabular-nums; font-weight: 600; line-height: 14px; }
+.attempt[data-current="true"] .attemptNumber { color: var(--primary); }
+
+/* The card the tray belongs to lifts a little, so the two read as one thing. */
+.card[data-expanded="true"] { z-index: 5; }
+
+@keyframes tray-in { from { opacity: 0; scale: 0.97; translate: 0 28px; } }
+@keyframes attempt-in { from { opacity: 0; scale: 0.88; translate: 0 18px; } }
+@keyframes arrive { from { opacity: 0; scale: 1.04; } }
+
+/* Cards answer a change of state instead of snapping to it. */
+.card { transition: border-color 180ms var(--ease-smooth-out), box-shadow 220ms var(--ease-smooth-out); }
+.checking { animation: arrive 260ms var(--ease-smooth-out) backwards; }
+
+@media (prefers-reduced-motion: reduce) {
+  .tray, .attempt, .attemptThumb img, .checking, .status { animation: none; }
+  .tray, .attemptThumb, .card, .status { transition: none; }
+}
+
+/* ── Drawing controls ───────────────────────────────────────────────────── */
+/* Bottom centre, where the hand already is while working the sheet. It rises in when there is something to do. */
+.actionBar {
+  position: absolute;
+  bottom: 14px;
+  left: calc((100% - var(--dock-covered, 0px)) / 2);
+  z-index: 21;
+  display: flex;
+  max-width: calc(100% - 32px);
+  align-items: center;
+  gap: 8px;
+  translate: -50% 0;
+  animation: bar-in 280ms var(--ease-smooth-out) backwards;
+}
+/* No bar around them: each control floats on the sheet with its own shadow. */
+.actionBar > button { box-shadow: var(--shadow-float); }
+@keyframes bar-in { from { opacity: 0; translate: -50% 10px; } }
+@media (prefers-reduced-motion: reduce) { .actionBar { animation: none; } }

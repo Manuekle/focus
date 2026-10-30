@@ -241,9 +241,9 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
                       <Link href={`/editor?v=${project.videoId}`} className={styles.projectLink} aria-current={project.videoId === videoId ? "page" : undefined}>
                         {/* eslint-disable-next-line @next/next/no-img-element -- poster served by the media route */}
                         <img src={project.posterUrl} alt="" className={styles.poster} />
-                        <span className="min-w-0">
-                          <span className="block truncate text-xs text-foreground">{project.title}</span>
-                          <span className="block text-[11px] text-muted-foreground">
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-xs text-foreground" title={project.title}>{project.title}</span>
+                          <span className="block truncate text-[11px] text-muted-foreground">
                             {project.edits} {project.edits === 1 ? "edit" : "edits"} · {ago(project.updatedAt)}
                           </span>
                         </span>

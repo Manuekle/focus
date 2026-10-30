@@ -48,7 +48,9 @@ export type PlayerBackground =
   /** One picture, slowly zooming in and back out over the length. */
   | { readonly kind: "zoom"; readonly src: string; readonly fit?: BackgroundFit };
 
-const RATES = [0.5, 1, 2] as const;
+/** Preview speed presets; the slider covers 0.1× to 4× in 0.05× steps between them. */
+const RATES = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4] as const;
+const RATE_RANGE = { min: 0.1, max: 4, step: 0.05 } as const;
 const mod = (value: number, size: number) => ((value % size) + size) % size;
 
 /**
@@ -111,7 +113,7 @@ export function SequencePlayer({
   const smoothingCanvas = useRef<HTMLCanvasElement | null>(null);
   const images = useRef(new Map<string, HTMLImageElement>());
   // The drawings that play at this pace, and how long each holds.
-  const { drawings, holds } = useMemo(() => exposureSheet(frames, settings.drawingFps, settings.cycleSeconds), [frames, settings.drawingFps, settings.cycleSeconds]);
+  const { drawings, holds } = useMemo(() => exposureSheet(frames, settings.drawingFps, settings.cycleSeconds, settings.durationSeconds * EXPOSURE_FPS), [frames, settings.drawingFps, settings.cycleSeconds, settings.durationSeconds]);
   // Key position of each shown drawing (an in-between counts as the key before it), and back.
   const keyIndex = useMemo(() => {
     let key = -1;
@@ -123,7 +125,7 @@ export function SequencePlayer({
   const [tick, setTick] = useState(() => drawingOfKey(selectedIndex));
   const [playing, setPlaying] = useState(false);
   const [loop, setLoop] = useState(!finite);
-  const [rate, setRate] = useState<(typeof RATES)[number]>(1);
+  const [rate, setRate] = useState(1);
   const [audioEnabled, setAudioEnabled] = useState(false);
   const syncAudio = useTimelineAudio(audio, audioUrl, playing, rate, audioEnabled, settings.durationSeconds);
   const [onion, setOnion] = useState(false);
@@ -416,7 +418,16 @@ export function SequencePlayer({
           </div>
         ) : null}
         <div className={styles.controlRow}>
-          <span className={styles.controlLabel}>Preview speed</span>
+          <span className={styles.controlLabel}>Preview speed <span className="tabular-nums">{rate.toFixed(2)}× · {Number((OUTPUT_FPS * rate).toFixed(2))} fps</span></span>
+          <Slider
+            min={RATE_RANGE.min}
+            max={RATE_RANGE.max}
+            step={RATE_RANGE.step}
+            value={[rate]}
+            onValueChange={([value]) => setRate(Math.round(value * 100) / 100)}
+            aria-label="Preview speed"
+            aria-valuetext={`${rate.toFixed(2)} times normal speed`}
+          />
           <div className={styles.chips}>
             {RATES.map((value) => (
               <ToggleChip key={value} size="xs" selected={rate === value} onClick={() => setRate(value)}>{value}×</ToggleChip>

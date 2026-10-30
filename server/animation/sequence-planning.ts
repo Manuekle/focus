@@ -10,7 +10,16 @@ import { planWaveSequence } from "./wave-sequence";
 import { motionContinuityRules } from "./motion-continuity";
 
 export function sequenceSkeleton(settings: SequenceSettings): FlipbookFrame[] {
-  return sequenceTicks(settings).map((tick, index) => ({ id: sequenceFrameId(tick), poseIndex: index, phase: `sample_${tick}`, label: `${(tick / 24).toFixed(2)} s`, status: "pending", approved: false, version: null, originalVersion: null, versions: [], metrics: null, warnings: [], review: null, error: null }));
+  return ticksSkeleton(sequenceTicks(settings));
+}
+
+/** The frames of a planned sequence: at its own ticks, which a timing chart spaces unevenly. */
+export function planSkeleton(plan: FlipbookPlan): FlipbookFrame[] {
+  return ticksSkeleton(plan.poses.map((pose) => Number(pose.phase.slice(7)))).map((frame, index) => ({ ...frame, label: plan.poses[index].label }));
+}
+
+function ticksSkeleton(ticks: readonly number[]): FlipbookFrame[] {
+  return ticks.map((tick, index) => ({ id: sequenceFrameId(tick), poseIndex: index, phase: `sample_${tick}`, label: `${(tick / 24).toFixed(2)} s`, status: "pending", approved: false, version: null, originalVersion: null, versions: [], metrics: null, warnings: [], review: null, error: null }));
 }
 
 const PoseOutput = z.object({ tick: z.number().int(), label: z.string().trim().min(1).max(40), description: z.string().trim().min(1).max(900) });

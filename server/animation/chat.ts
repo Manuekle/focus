@@ -211,6 +211,7 @@ export async function proposeChange(input: {
   readonly signal?: AbortSignal;
 }): Promise<FlipbookProposal> {
   if (!input.flipbook.plan) throw new AppError("flipbook_not_ready", 409, "The pose plan isn’t ready yet.");
+  if (input.flipbook.importedFrom) throw new AppError("imported_frames", 409, "These frames come from a Reference Motion render. Replace or reorder them, or render the motion again.");
   if (input.flipbook.sequence) {
     const all = orderedFrames(input.flipbook);
     const changes: PoseChange[] = [], skipped: SkippedFrame[] = [];

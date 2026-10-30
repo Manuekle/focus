@@ -1,8 +1,9 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
-import { PauseIcon, PlayIcon, VolumeHighIcon, VolumeOffIcon } from "@hugeicons/core-free-icons";
+import { PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
+import { VolumeControl, applySound, useSound } from "../../components/ui/volume-control";
 import { formatSeconds } from "../../shared/media";
 import type { VideoAsset } from "../../shared/schemas";
 import { EditorNotice } from "./editor-notice";
@@ -28,11 +29,12 @@ export function VideoStage({
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
-  const [muted, setMuted] = useState(true);
+  const { sound, setVolume, toggleMute } = useSound();
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(video.normalized.durationSeconds);
   const [failed, setFailed] = useState(false);
   const { width, height, fps, hasAudio } = video.normalized;
+  useEffect(() => { applySound(ref.current, sound); }, [sound]);
 
   useEffect(() => {
     const element = ref.current;
@@ -73,7 +75,6 @@ export function VideoStage({
           poster={video.urls.poster}
           width={width}
           height={height}
-          muted={muted}
           playsInline
           loop
           preload="auto"
@@ -130,17 +131,7 @@ export function VideoStage({
           className="editor-scrubber min-w-0 flex-1"
           style={{ "--scrub": `${progress}%` } as CSSProperties}
         /> : <span className="min-w-0 flex-1 text-right text-xs text-muted-foreground">Choose a moment in the original clip</span>}
-        {hasAudio ? (
-          <button
-            type="button"
-            onClick={() => setMuted((value) => !value)}
-            aria-label={muted ? "Unmute" : "Mute"}
-            aria-pressed={!muted}
-            className="grid size-8 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors outline-none hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring"
-          >
-            <HugeiconsIcon icon={muted ? VolumeOffIcon : VolumeHighIcon} size={17} strokeWidth={1.75} />
-          </button>
-        ) : null}
+        {hasAudio ? <VolumeControl sound={sound} onVolume={setVolume} onToggle={toggleMute} /> : null}
         {tools}
         {freeze ? <FreezeTimeline media={video.normalized} time={time} control={freeze} onSeek={(value) => { ref.current?.pause(); seek(value); }} /> : null}
       </figcaption>

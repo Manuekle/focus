@@ -18,6 +18,7 @@ import { flipbookEnabled } from "../../shared/features";
 import { AccountButton } from "../_auth/account-button";
 import { useSession } from "../_auth/session-client";
 import { EditorNotice } from "./editor-notice";
+import { VideoColored24 } from "../../components/icons/VideoColored24";
 import { ClipboardColored24 } from "../../components/icons/ClipboardColored24";
 import { FeatherSparkleColored24 } from "../../components/icons/FeatherSparkleColored24";
 import { ShapesColored24 } from "../../components/icons/ShapesColored24";
@@ -29,10 +30,12 @@ import { StudioUpload } from "./studio-upload";
 import { useClipUpload } from "./use-clip-upload";
 import styles from "./workspace.module.css";
 
+/** The work in order, as the header tabs show it; any step can be the first. */
 const HOW_STEPS = [
-  { n: "01", title: "Bring a character", copy: "Start with a single illustration or one of your saved characters.", Icon: ShapesColored24 },
-  { n: "02", title: "Give it a little life", copy: "Describe a movement or bring a video for inspiration.", Icon: FeatherSparkleColored24 },
-  { n: "03", title: "Make it yours", copy: "Fine-tune the drawings, add sound, and export your little story.", Icon: ClipboardColored24 },
+  { n: "01", title: "Bring a character", copy: "Design one, or start from a single illustration of your own.", Icon: ShapesColored24, href: "/characters", cta: "My characters" },
+  { n: "02", title: "Give it a little life", copy: "Describe a movement, or follow a video: editable, or copied frame by frame.", Icon: FeatherSparkleColored24, href: "/flipbook", cta: "Animate" },
+  { n: "03", title: "Make it yours", copy: "Every way ends in the Flipbook editor: fine-tune the drawings and export.", Icon: ClipboardColored24, href: "/flipbook", cta: null },
+  { n: "04", title: "Put it in a video", copy: "Optional: track it in a clip, add effects and sound in the video editor.", Icon: VideoColored24, href: "/editor", cta: "Video editor" },
 ] as const;
 
 // The composer (and zod with it) only matters once a clip exists, so it stays
@@ -145,7 +148,8 @@ export function Workspace() {
         <nav className={styles.nav} aria-label="Main navigation">
           <Button asChild size="sm" variant="ghost" className={styles.navLink}><a href="#how-it-works">How it works</a></Button>
           <Button asChild size="sm" variant="ghost" className={styles.navLink}><a href="#video-effects">Video effects</a></Button>
-          {hasFlipbook ? <Button asChild size="sm" variant="ghost" className={styles.navLink}><Link href="/flipbook">Flipbook</Link></Button> : null}
+          {hasFlipbook ? <Button asChild size="sm" variant="ghost" className={styles.navLink}><Link href="/characters">Characters</Link></Button> : null}
+          {hasFlipbook ? <Button asChild size="sm" variant="ghost" className={styles.navLink}><Link href="/flipbook">Animate</Link></Button> : null}
           <AccountButton session={session} next={hasFlipbook ? "/flipbook" : "/editor"} />
         </nav>
       </motion.header>
@@ -157,8 +161,8 @@ export function Workspace() {
               <h1 id="home-title" className={styles.title}><span className={styles.titleLine}><span className={styles.titleWhite}>Your drawings.</span></span><br /><span className={styles.titleLine}><span className={styles.titleAccent}>In motion.</span></span></h1>
               <p className={styles.intro}>A wave, a dance, a whole little story.<br /><span>Bring your characters to life, one frame at a time.</span></p>
               <div className={styles.cta}>
-                <Button asChild>{hasFlipbook ? <Link href="/flipbook">Create a flipbook <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.75} /></Link> : <a href="#flipbook-demo">Explore flipbook <HugeiconsIcon icon={ArrowDown01Icon} size={14} strokeWidth={1.75} /></a>}</Button>
-                <Button asChild variant="outline"><a href="#video-effects">Explore video effects</a></Button>
+                <Button asChild>{hasFlipbook ? <Link href="/characters">Create a character <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.75} /></Link> : <a href="#flipbook-demo">Explore flipbook <HugeiconsIcon icon={ArrowDown01Icon} size={14} strokeWidth={1.75} /></a>}</Button>
+                {hasFlipbook ? <Button asChild variant="outline"><Link href="/flipbook">Animate a drawing</Link></Button> : <Button asChild variant="outline"><a href="#video-effects">Explore video effects</a></Button>}
               </div>
             </div>
             <div className={styles.heroVisual}><FlipbookDemo /></div>
@@ -168,11 +172,12 @@ export function Workspace() {
           <section id="how-it-works" className={styles.how} aria-labelledby="how-title">
             <h2 id="how-title" className={styles.sectionTitle}>From a still to a story.</h2>
             <ol className={styles.footerSteps}>
-              {HOW_STEPS.map(({ n, title, copy, Icon }) => (
+              {HOW_STEPS.map(({ n, title, copy, Icon, href, cta }) => (
                 <li key={n} className={styles.footerStep}>
                   <Icon className={styles.stepIcon} width={48} height={48} aria-hidden="true" />
                   <h3>{title}</h3>
                   <p>{copy}</p>
+                  {cta && (hasFlipbook || href === "/editor") ? <Link href={href} className={styles.stepLink}>{cta} <HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.75} /></Link> : null}
                 </li>
               ))}
             </ol>

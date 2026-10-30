@@ -121,7 +121,7 @@ describe("real job states", () => {
     expect(editActivity({ ...job, status: "ready_to_render" }).state).toBe("waiting");
   });
   it("counts only measured animation work and distinguishes ready references", () => {
-    const book = { id, updatedAt, title: "Dance", status: "generating", detail: null, error: null, progress: { done: 3, total: 12 }, plan: null } as Flipbook;
+    const book = { id, updatedAt, title: "Dance", prompt: "A character dancing", status: "generating", detail: null, error: null, progress: { done: 3, total: 12 }, plan: null } as Flipbook;
     expect(flipbookActivity(book)).toMatchObject({ state: "running", progress: 0.25 });
     expect(flipbookActivity({ ...book, progress: null }).progress).toBe(null);
     expect(flipbookActivity({ ...book, status: "reference_ready" }).state).toBe("waiting");

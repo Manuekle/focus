@@ -14,6 +14,8 @@ const config: NextConfig = {
   env: {
     NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS: process.env.NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS === "true" ? "true" : "false",
     NEXT_PUBLIC_ENABLE_FLIPBOOK: process.env.NEXT_PUBLIC_ENABLE_FLIPBOOK === "true" ? "true" : "false",
+    NEXT_PUBLIC_ENABLE_REFERENCE_MOTION: process.env.NEXT_PUBLIC_ENABLE_REFERENCE_MOTION === "true" ? "true" : "false",
+    NEXT_PUBLIC_ENABLE_ROTOSCOPE: process.env.NEXT_PUBLIC_ENABLE_ROTOSCOPE === "true" ? "true" : "false",
     NEXT_PUBLIC_FOCUS_MAX_VIDEO_DURATION_SECONDS: String(limits.maxDurationSeconds),
     NEXT_PUBLIC_FOCUS_MAX_UPLOAD_MB: String(limits.maxUploadMb),
     NEXT_PUBLIC_FOCUS_MAX_IMAGE_UPLOAD_MB: String(parseLimit(process.env.FOCUS_MAX_IMAGE_UPLOAD_MB, 15, [1, 15])),

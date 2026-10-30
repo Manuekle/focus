@@ -1,0 +1,19 @@
+Metadata-Version: 2.4
+Name: focus-animation-worker
+Version: 0.1.0
+Summary: Focus Reference Motion GPU worker: DWPose, animation engines, export.
+Requires-Python: <3.13,>=3.11
+Requires-Dist: fastapi==0.115.12
+Requires-Dist: uvicorn[standard]==0.34.2
+Requires-Dist: httpx==0.28.1
+Requires-Dist: pydantic==2.11.4
+Requires-Dist: numpy<2.3,>=1.26
+Requires-Dist: opencv-python-headless==4.11.0.86
+Requires-Dist: pillow==11.2.1
+Provides-Extra: pose
+Requires-Dist: rtmlib==0.0.13; extra == "pose"
+Requires-Dist: onnxruntime==1.21.1; extra == "pose"
+Requires-Dist: tqdm>=4.66; extra == "pose"
+Provides-Extra: dev
+Requires-Dist: pytest==8.3.5; extra == "dev"
+Requires-Dist: pytest-asyncio==0.26.0; extra == "dev"

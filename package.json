@@ -21,13 +21,16 @@
     "test:deployment": "node scripts/verify-deployment.mjs",
     "test:live": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run --config vitest.live.config.ts",
     "test:live:temporal": "node --env-file-if-exists=.env ./node_modules/vitest/vitest.mjs run --config vitest.live.config.ts server/video/temporal.live.test.ts",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "rotoscope": "node --env-file-if-exists=.env --env-file-if-exists=.env.local --import ./scripts/ts-loader.mjs server/rotoscope/cli.ts",
+    "higgsfield:example": "node --env-file-if-exists=.env.local --import ./scripts/ts-loader.mjs scripts/higgsfield-example.ts"
   },
   "peerDependencies": {
     "react": "^19.0.0",
     "react-dom": "^19.0.0"
   },
   "dependencies": {
+    "@higgsfield/client": "^0.2.6",
     "@hugeicons/core-free-icons": "4.3.0",
     "@hugeicons/react": "1.1.10",
     "@lucasmarkes/hairline": "0.3.0",

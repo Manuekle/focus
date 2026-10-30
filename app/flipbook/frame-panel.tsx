@@ -3,14 +3,13 @@
 import { useRef, useState } from "react";
 import { AiDrawingIcon, ArrowLeft01Icon, ArrowRight01Icon, Refresh01Icon, Undo02Icon, Upload01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
-import { Alert } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
 import { Disclosure } from "../../components/ui/disclosure";
 import { MediaLightbox, ZoomButton } from "../../components/ui/media-lightbox";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Switch } from "../../components/ui/switch";
 import { ToggleChip } from "../../components/ui/toggle-chip";
-import { IMAGE_ACCEPT_ATTRIBUTE, flipbookUrls, type Flipbook, type FlipbookFrame, type FrameAction } from "../../shared/flipbook";
+import { IMAGE_ACCEPT_ATTRIBUTE, flipbookUrls, importedFromLabel, type Flipbook, type FlipbookFrame, type FrameAction } from "../../shared/flipbook";
 import { messageFor } from "./flipbook-client";
 import { frameThumb } from "./frame-strip";
 import styles from "./flipbook.module.css";
@@ -101,7 +100,7 @@ export function FramePanel({
         {frame.versions.length > 1 ? <span className="text-xs text-muted-foreground">{frame.versions.length} versions</span> : null}
       </div>
 
-      {frame.error ? <Alert tone="error" size="sm">{messageFor(frame.error.code, frame.error.message)}</Alert> : null}
+      {frame.error ? <p className={styles.frameError} role="status">{messageFor(frame.error.code, frame.error.message)}</p> : null}
 
       {frame.warnings.length || (frame.review && frame.review.issues.length) ? (
         <div className={styles.checks}>
@@ -148,10 +147,10 @@ export function FramePanel({
           />
         </div>
         <div className={styles.buttonRow}>
-          <Button size="sm" variant="ai" disabled={locked || busy || !flipbook.reference || !frame.version} onClick={() => send("enhance")} title={flagged ? `Muse Image repairs this drawing and fixes ${flagged === 1 ? "the problem" : `the ${flagged} problems`} found above (1 drawing).` : "Muse Image repairs this drawing: anatomy, identity and line work, same pose (1 drawing)."}>
+          <Button size="sm" variant="ai" disabled={locked || busy || Boolean(flipbook.importedFrom) || !flipbook.reference || !frame.version} onClick={() => send("enhance")} title={flagged ? `Muse Image repairs this drawing and fixes ${flagged === 1 ? "the problem" : `the ${flagged} problems`} found above (1 drawing).` : "Muse Image repairs this drawing: anatomy, identity and line work, same pose (1 drawing)."}>
             <HugeiconsIcon icon={AiDrawingIcon} size={14} strokeWidth={1.75} />Improve with AI
           </Button>
-          <Button size="sm" variant="outline" disabled={locked || busy || !flipbook.reference} onClick={() => send("regenerate")} title="Muse Image draws this pose again from the reference (1 drawing).">
+          <Button size="sm" variant="outline" disabled={locked || busy || Boolean(flipbook.importedFrom) || !flipbook.reference} onClick={() => send("regenerate")} title="Muse Image draws this pose again from the reference (1 drawing).">
             <HugeiconsIcon icon={Refresh01Icon} size={14} strokeWidth={1.75} />Redraw
           </Button>
           <Button size="sm" variant="outline" disabled={locked || busy} onClick={() => fileRef.current?.click()}>
@@ -176,7 +175,7 @@ export function FramePanel({
             }}
           />
         </div>
-        {!locked && frame.version ? <p className={styles.hint}>Improve keeps this pose and fixes its mistakes. Redraw starts the pose over from the reference. Each is one drawing; the old version stays in this frame’s history.</p> : null}
+        {flipbook.importedFrom ? <p className={styles.hint}>This frame came from {importedFromLabel(flipbook.importedFrom)}. Replace it with your own drawing{flipbook.importedFrom.kind === "reference-motion" ? ", or render the motion again" : ""}.</p> : !locked && frame.version ? <p className={styles.hint}>Improve keeps this pose and fixes its mistakes. Redraw starts the pose over from the reference. Each is one drawing; the old version stays in this frame’s history.</p> : null}
         {canMove ? <div className={styles.buttonRow}>
           <Button size="xs" variant="ghost" disabled={busy || index === 0} onClick={() => onMove(-1)}><HugeiconsIcon icon={ArrowLeft01Icon} size={12} strokeWidth={1.75} />Move earlier</Button>
           <Button size="xs" variant="ghost" disabled={busy || index === count - 1} onClick={() => onMove(1)}>Move later<HugeiconsIcon icon={ArrowRight01Icon} size={12} strokeWidth={1.75} /></Button>

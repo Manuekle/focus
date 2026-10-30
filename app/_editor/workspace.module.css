@@ -38,7 +38,7 @@
 .sectionTitle { margin: 0; padding-inline: .12em; font-family: var(--font-porkys), sans-serif; font-size: clamp(30px, 3.7vw, 40px); font-weight: 400; line-height: 1.15; letter-spacing: -.035em; text-wrap: balance; }
 .sectionEyebrow { display: flex; align-items: center; gap: 8px; margin: 0 0 10px; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
 .sectionDescription { max-width: 48ch; margin: 10px 0 0; color: var(--muted-foreground); font-size: 13px; line-height: 1.7; text-wrap: pretty; }
-.footerSteps { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 30px; margin: 30px 0 0; padding: 0; list-style: none; }
+.footerSteps { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 30px; margin: 30px 0 0; padding: 0; list-style: none; }
 .footerStep { display: flex; min-width: 0; flex-direction: column; align-items: center; gap: 10px; }
 .stepIcon { --nc-gradient-1-color-1: #b6c9ff; --nc-gradient-1-color-2: var(--primary); --nc-gradient-2-color-1: #cfdcffcc; --nc-gradient-2-color-2: #6e8dffcc; --nc-light: #fff; display: block; width: 36px; height: 36px; overflow: visible; }
 .footerStep h3 { margin: 3px 0 0; color: var(--foreground); font-family: var(--font-porkys), sans-serif; font-size: 19px; font-weight: 400; line-height: 1.2; }
@@ -117,3 +117,7 @@
   .footerSocialLink:focus-visible { outline-color: Highlight; }
   .header, .videoSection, .concept, .footerBottom { border-color: CanvasText; }
 }
+.stepLink { display: inline-flex; align-items: center; gap: 2px; color: var(--primary); font-size: 12px; text-decoration: none; }
+.stepLink:hover { text-decoration: underline; text-underline-offset: 3px; }
+.stepLink:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; border-radius: 4px; }
+@media (min-width: 641px) and (max-width: 960px) { .footerSteps { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

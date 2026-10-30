@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState, type ComponentProps } from "react";
-import { MaximizeScreenIcon, MinimizeScreenIcon, PauseIcon, PlayIcon, VolumeHighIcon, VolumeOffIcon } from "@hugeicons/core-free-icons";
+import { MaximizeScreenIcon, MinimizeScreenIcon, PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../icons/icon";
 import { cn } from "../../lib/utils";
 import { formatSeconds } from "../../shared/media";
 import { Button } from "./button";
 import { Slider } from "./slider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
+import { VolumeControl, applySound, useSound } from "./volume-control";
 import styles from "./video-player.module.css";
 
 type VideoPlayerProps = {
@@ -29,7 +30,8 @@ function Player({ src, label, className, segment, hasAudio = true, onLoadedMetad
   const root = useRef<HTMLDivElement>(null);
   const video = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
-  const [muted, setMuted] = useState(true);
+  // Sound is on, at the volume the person last chose; it is the same for every player.
+  const { sound, setVolume, toggleMute } = useSound();
   const [time, setTime] = useState(0);
   const [duration, setDuration] = useState(0);
   const [fullscreen, setFullscreen] = useState(false);
@@ -47,6 +49,8 @@ function Player({ src, label, className, segment, hasAudio = true, onLoadedMetad
     document.addEventListener("fullscreenchange", sync);
     return () => document.removeEventListener("fullscreenchange", sync);
   }, []);
+
+  useEffect(() => { applySound(video.current, sound); }, [sound]);
 
   useEffect(() => {
     const element = video.current;
@@ -97,10 +101,9 @@ function Player({ src, label, className, segment, hasAudio = true, onLoadedMetad
   );
 
   return <div ref={root} className={cn(styles.player, className)} role="group" aria-label={`${label} player`}>
-    <video ref={video} src={src} className={styles.video} playsInline muted={muted} preload="metadata" aria-label={label}
+    <video ref={video} src={src} className={styles.video} playsInline preload="metadata" aria-label={label}
       onLoadedMetadata={(event) => { const value = event.currentTarget.duration; if (Number.isFinite(value) && value > 0) setDuration(value); onLoadedMetadata?.(event); }}
       onPlay={() => setPlaying(true)} onPause={(event) => { setPlaying(false); setTime(event.currentTarget.currentTime); }} onEnded={() => setPlaying(false)}
-      onVolumeChange={(event) => setMuted(event.currentTarget.muted || event.currentTarget.volume === 0)}
       onTimeUpdate={(event) => { const element = event.currentTarget; if (element.currentTime >= end && ready) { element.pause(); if (element.currentTime > end) element.currentTime = end; } setTime(element.currentTime); }}
       onError={(event) => { setPlaying(false); setError("This video could not be read. Replace it with an MP4 or MOV file."); onError?.(event); }} />
     <div className={styles.toolbar}>
@@ -109,7 +112,7 @@ function Player({ src, label, className, segment, hasAudio = true, onLoadedMetad
         {control(playing ? "Pause reference video" : "Play reference video", playing ? PauseIcon : PlayIcon, () => void toggle(), !ready || !length)}
         <span className={styles.time}>{ready ? <>{formatSeconds(position)}<span className={styles.separator}>/</span>{formatSeconds(length)}</> : error ? "Video unavailable" : "Loading video…"}</span>
         <div className={styles.actions}>
-          {hasAudio ? control(muted ? "Unmute reference video" : "Mute reference video", muted ? VolumeOffIcon : VolumeHighIcon, () => { if (video.current) { video.current.muted = !muted; if (video.current.volume === 0) video.current.volume = 1; } }, !ready) : null}
+          {hasAudio ? <VolumeControl sound={sound} onVolume={setVolume} onToggle={toggleMute} disabled={!ready} buttonClassName={styles.control} /> : null}
           {canFullscreen ? control(fullscreen ? "Exit fullscreen" : "Enter fullscreen", fullscreen ? MinimizeScreenIcon : MaximizeScreenIcon, () => void expand(), !ready) : null}
         </div>
       </div>

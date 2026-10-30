@@ -1,6 +1,6 @@
 "use client";
 
-import { Alert02Icon, AlertCircleIcon, Cancel01Icon, CheckmarkCircle02Icon, InformationCircleIcon } from "@hugeicons/core-free-icons";
+import { Alert02Icon, AlertCircleIcon, Cancel01Icon, CheckIcon, InformationCircleIcon } from "@hugeicons/core-free-icons";
 
 // The one inline "this happened" box: a warning above a form, a connected
 // account confirmed, a payment that failed.
@@ -11,7 +11,7 @@ import { Alert02Icon, AlertCircleIcon, Cancel01Icon, CheckmarkCircle02Icon, Info
 // glyph on a white chip, a wash fading from the top edge, and the words left
 // in foreground/muted so their contrast never rides on the tint.
 
-import type { ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { HugeiconsIcon } from "../icons/icon";
 
 import { useT } from "../../lib/i18n/provider";
@@ -31,7 +31,7 @@ export function AlertGlyph({ tone, size = 16 }: { readonly tone: AlertTone; read
   const icon = {
     error: Alert02Icon,
     warning: AlertCircleIcon,
-    success: CheckmarkCircle02Icon,
+    success: CheckIcon,
     info: InformationCircleIcon,
   }[tone];
   return (
@@ -103,46 +103,111 @@ export function Alert({
 }) {
   const t = useT();
   const small = size === "sm";
+  const [leaving, setLeaving] = useState(false);
+  const dismissRef = useRef(onDismiss);
+  dismissRef.current = onDismiss;
+
+  // Let the fold-away play, then tell the parent. The timer outlasts the 280ms transition,
+  // and a parent re-render in the meantime does not restart it.
+  useEffect(() => {
+    if (!leaving) return;
+    const timer = setTimeout(() => dismissRef.current?.(), 300);
+    return () => clearTimeout(timer);
+  }, [leaving]);
 
   return (
-    <div
-      role={role ?? undefined}
-      data-tone={tone}
-      className={cn(
-        "alert-surface flex items-start rounded-2xl border shadow-[var(--shadow-elevated),var(--shadow-inset)]",
-        small ? "gap-2.5 rounded-xl px-3 py-2.5" : "gap-3 p-4",
-        className,
-      )}
-    >
-      <AlertIconChip tone={tone} size={size} />
-      <div className="min-w-0 flex-1">
-        {title ? (
-          <p className={cn("font-medium text-foreground", small ? "text-xs leading-5" : "text-sm leading-5")}>
-            {title}
-          </p>
-        ) : null}
-        {children ? (
-          <div
-            className={cn(
-              small ? "text-xs leading-5" : "text-sm leading-5",
-              title ? "mt-0.5 text-muted-foreground" : "text-foreground",
-            )}
+    <div className="alert-shell" data-leaving={leaving ? "" : undefined}>
+      <div className="alert-shell-clip">
+      <div
+        role={role ?? undefined}
+        data-tone={tone}
+        className={cn(
+          "alert-surface flex items-start rounded-2xl border shadow-[var(--shadow-elevated),var(--shadow-inset)]",
+          small ? "gap-2.5 rounded-xl px-3 py-2.5" : "gap-3 p-4",
+          className,
+        )}
+      >
+        <AlertIconChip tone={tone} size={size} />
+        <div className="min-w-0 flex-1">
+          {title ? (
+            <p className={cn("font-medium text-foreground", small ? "text-xs leading-5" : "text-sm leading-5")}>
+              {title}
+            </p>
+          ) : null}
+          {children ? (
+            <div
+              className={cn(
+                small ? "text-xs leading-5" : "text-sm leading-5",
+                title ? "mt-0.5 text-muted-foreground" : "text-foreground",
+              )}
+            >
+              {children}
+            </div>
+          ) : null}
+          {action ? <div className="mt-3 flex flex-wrap items-center gap-2">{action}</div> : null}
+        </div>
+        {onDismiss ? (
+          <button
+            type="button"
+            onClick={() => setLeaving(true)}
+            aria-label={t("apiError.dismiss")}
+            className="-my-1 -mr-1 grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground"
           >
-            {children}
-          </div>
+            <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={1.75} />
+          </button>
         ) : null}
-        {action ? <div className="mt-3 flex flex-wrap items-center gap-2">{action}</div> : null}
       </div>
-      {onDismiss ? (
-        <button
-          type="button"
-          onClick={onDismiss}
-          aria-label={t("apiError.dismiss")}
-          className="-my-1 -mr-1 grid size-7 shrink-0 place-items-center rounded-lg text-muted-foreground transition-colors duration-150 hover:bg-foreground/5 hover:text-foreground"
-        >
-          <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={1.75} />
-        </button>
-      ) : null}
+      </div>
     </div>
   );
+}
+
+const NOTICE_STORAGE = "focus:closed-notices:";
+const noticeListeners = new Set<() => void>();
+/** Kept in memory too, so closing still works where storage is blocked (private windows). */
+const noticeMemory = new Map<string, string>();
+
+const readNotices = (scope: string): string => {
+  const kept = noticeMemory.get(scope);
+  if (kept !== undefined) return kept;
+  try {
+    return window.localStorage.getItem(NOTICE_STORAGE + scope) ?? "[]";
+  } catch {
+    return "[]";
+  }
+};
+const subscribeNotices = (listener: () => void) => {
+  noticeListeners.add(listener);
+  window.addEventListener("storage", listener);
+  return () => {
+    noticeListeners.delete(listener);
+    window.removeEventListener("storage", listener);
+  };
+};
+
+/** Which informational notices the user has closed, by key, remembered per `scope` (a run, a flipbook)
+ *  so a closed notice stays closed after a reload. A page shows one notice at a time, so closing one
+ *  lets the next in line take its place. */
+export function useDismissedNotices(scope: string) {
+  // The server renders with nothing closed; the browser's own list takes over once hydrated.
+  const raw = useSyncExternalStore(subscribeNotices, () => readNotices(scope), () => "[]");
+  const closed = useMemo<ReadonlySet<string>>(() => {
+    try {
+      const keys: unknown = JSON.parse(raw);
+      return new Set(Array.isArray(keys) ? keys.filter((key): key is string => typeof key === "string") : []);
+    } catch {
+      return new Set();
+    }
+  }, [raw]);
+  const dismiss = useCallback((key: string) => {
+    const next = JSON.stringify([...new Set([...JSON.parse(readNotices(scope)) as string[], key])]);
+    noticeMemory.set(scope, next);
+    try {
+      window.localStorage.setItem(NOTICE_STORAGE + scope, next);
+    } catch {
+      // Blocked storage: the memory copy still closes it for this visit.
+    }
+    noticeListeners.forEach((listener) => listener());
+  }, [scope]);
+  return { isDismissed: (key: string) => closed.has(key), dismiss };
 }

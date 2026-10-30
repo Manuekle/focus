@@ -101,7 +101,12 @@ function cleanName(name: string): string {
 export async function ingestCharacterImage(input: { readonly body: ReadableStream<Uint8Array> | null; readonly fileName: string; readonly declaredBytes?: number }): Promise<FlipbookImage> {
   const originalName = cleanName(input.fileName);
   if (!hasAcceptedImageExtension(originalName)) throw new AppError("unsupported_image", 415, "Unsupported format. Upload a PNG, JPEG or WebP image.");
-  const bytes = await readUpload(input.body, input.declaredBytes);
+  return storeCharacterImage(await readUpload(input.body, input.declaredBytes), originalName);
+}
+
+/** A character image Focus already holds (a Reference Motion upload), stored like an upload. */
+export async function storeCharacterImage(bytes: Buffer, fileName: string): Promise<FlipbookImage> {
+  const originalName = cleanName(fileName);
   const decoded = await decodeImage(bytes);
   const id = randomUUID();
   const dir = imageDir(id);

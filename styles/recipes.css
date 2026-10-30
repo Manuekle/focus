@@ -6553,6 +6553,30 @@ html.lenis body {
   --alert-wash: 14%;
 }
 
+/* Closing an alert: the row folds away (height, the parent's gap and opacity together) instead of vanishing.
+   `--alert-exit-gap` is the gap the parent keeps between its children. */
+.alert-shell {
+  display: grid;
+  grid-template-rows: 1fr;
+  animation: alert-in 260ms var(--ease-smooth-out) both;
+  transition:
+    grid-template-rows 280ms var(--ease-smooth-out),
+    margin-bottom 280ms var(--ease-smooth-out),
+    opacity 200ms var(--ease-smooth-out);
+}
+.alert-shell-clip { min-height: 0; }
+.alert-shell[data-leaving] {
+  grid-template-rows: 0fr;
+  margin-bottom: calc(var(--alert-exit-gap, 16px) * -1);
+  opacity: 0;
+  pointer-events: none;
+}
+.alert-shell[data-leaving] > .alert-shell-clip { overflow: hidden; }
+@keyframes alert-in { from { opacity: 0; translate: 0 -6px; } }
+@media (prefers-reduced-motion: reduce) {
+  .alert-shell { animation: none; transition: none; }
+}
+
 .alert-surface {
   --alert-tone: var(--muted-foreground);
   background-color: var(--card);

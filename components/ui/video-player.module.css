@@ -8,7 +8,12 @@
 .actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .error { margin: 0; padding: 0 12px; color: var(--muted-foreground); font-size: 12px; }
 .error:not(:empty) { padding-bottom: 10px; }
-.player:fullscreen { width: 100%; height: 100%; border: 0; border-radius: 0; }
-.player:fullscreen .video { flex: 1; min-height: 0; height: 0; max-height: none; }
-.player:fullscreen .toolbar { padding: 8px 20px 12px; }
+/* Fullscreen: the picture takes everything the controls leave. The player is used inside pages that cap every
+   <video> in their preview (editor-view, rotoscope create), and those selectors are more specific, so these win by force. */
+.player:fullscreen { width: 100%; height: 100%; border: 0; border-radius: 0; background: #000; }
+.player:fullscreen .video { flex: 1 1 0% !important; width: 100% !important; height: 0 !important; min-height: 0 !important; max-height: none !important; background: #000; }
+.player:fullscreen .toolbar { padding: 8px 20px max(12px, env(safe-area-inset-bottom)); }
+.player:-webkit-full-screen { width: 100%; height: 100%; border: 0; border-radius: 0; background: #000; }
+.player:-webkit-full-screen .video { flex: 1 1 0% !important; width: 100% !important; height: 0 !important; min-height: 0 !important; max-height: none !important; background: #000; }
+.player:-webkit-full-screen .toolbar { padding: 8px 20px max(12px, env(safe-area-inset-bottom)); }
 @media (pointer: coarse) { .control { width: 40px; height: 40px; } }

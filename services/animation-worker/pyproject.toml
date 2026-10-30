@@ -1,0 +1,30 @@
+[project]
+name = "focus-animation-worker"
+version = "0.1.0"
+description = "Focus Reference Motion GPU worker: DWPose, animation engines, export."
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "fastapi==0.115.12",
+  "uvicorn[standard]==0.34.2",
+  "httpx==0.28.1",
+  "pydantic==2.11.4",
+  "numpy>=1.26,<2.3",
+  "opencv-python-headless==4.11.0.86",
+  "pillow==11.2.1",
+]
+
+[project.optional-dependencies]
+# DWPose (COCO-WholeBody, 133 keypoints) through ONNX Runtime. On a GPU host
+# install onnxruntime-gpu instead of onnxruntime.
+pose = ["rtmlib==0.0.13", "onnxruntime==1.21.1", "tqdm>=4.66"]  # rtmlib imports tqdm without declaring it
+# Experimental engine: a public Hugging Face ZeroGPU demo of Wan2.2-Animate (no local GPU, free quota).
+zerogpu = ["gradio_client>=1.10,<2"]
+dev = ["pytest==8.3.5", "pytest-asyncio==0.26.0"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"
+testpaths = ["tests"]
+
+[tool.setuptools]
+packages = ["app", "app.providers", "app.pipeline", "app.infrastructure"]

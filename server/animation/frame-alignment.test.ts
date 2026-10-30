@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { WALK_POSES, type FrameId } from "../../shared/flipbook";
 import { AppError } from "../errors";
 import { DRIFT, walkerPng, walkerPose } from "./__fixtures__/walker";
-import { BASELINE_Y, CELL_HEIGHT, TARGET_HEIGHT, computeAlignment, despill, extractSubject, renderSprite, segmentation, segmentationConcepts, type AlignInput, type Extraction } from "./frame-alignment";
+import { BASELINE_Y, CELL_HEIGHT, TARGET_HEIGHT, computeAlignment, computeTimedAlignment, filledArea, despill, extractSubject, renderSprite, segmentation, segmentationConcepts, type AlignInput, type Extraction } from "./frame-alignment";
 import { contactSheet } from "./quality-control";
 
 // Cut-out and registration on deterministic drawings. SAM is switched off:
@@ -87,6 +87,45 @@ describe("character extraction", () => {
     const noise = await sharp(Buffer.from(Array.from({ length: 512 * 512 * 3 }, (_, index) => (index * 7919) % 251)), { raw: { width: 512, height: 512, channels: 3 } }).png().toBuffer();
     await expect(extractSubject({ png: noise, concept: "walker", flipbookId: "test", allowAlpha: false })).rejects.toMatchObject({ code: "extraction_failed" });
     await expect(extractSubject({ png: noise, concept: "walker", flipbookId: "test", allowAlpha: false })).rejects.toBeInstanceOf(AppError);
+  });
+});
+
+/**
+ * A white-shirted figure on a white background: a 3 px black outline around a
+ * white torso (80×120) over dark legs. `gap` opens the outline's right side.
+ */
+async function whiteShirtFrame(gap: number): Promise<Buffer> {
+  const width = 240, height = 360;
+  const data = Buffer.alloc(width * height * 3, 255);
+  const paint = (x0: number, y0: number, x1: number, y1: number, rgb: [number, number, number]) => {
+    for (let y = y0; y < y1; y++) for (let x = x0; x < x1; x++) data.set(rgb, (y * width + x) * 3);
+  };
+  paint(77, 57, 163, 183, [20, 20, 25]); // outline
+  paint(80, 60, 160, 180, [250, 250, 250]); // white shirt
+  paint(95, 180, 145, 330, [30, 30, 40]); // legs
+  if (gap) paint(160, 110, 163, 110 + gap, [255, 255, 255]);
+  return sharp(data, { raw: { width, height, channels: 3 } }).png().toBuffer();
+}
+
+describe("line-art cut-out (imported frames)", () => {
+  const cut = (png: Buffer, keyMode?: "lineart") => extractSubject({ png, concept: "character", flipbookId: "test", allowAlpha: false, useSegmentation: false, keyMode });
+
+  it("keeps a white shirt on a white background that the drawing key removes", async () => {
+    const png = await whiteShirtFrame(0);
+    const drawing = await cut(png);
+    const lineart = await cut(png, "lineart");
+    // The shirt is ~9,600 of the figure's ~17,000 pixels.
+    expect(lineart.measure.coverage).toBeGreaterThan(drawing.measure.coverage * 1.5);
+    expect(lineart.measure.leakShare).toBeLessThan(0.02);
+    expect(drawing.measure.leakShare).toBeUndefined();
+  });
+
+  it("measures a leak through a broken outline so it can be flagged", async () => {
+    const leaky = await cut(await whiteShirtFrame(3), "lineart");
+    expect(leaky.measure.leakShare).toBeGreaterThan(0.2);
+    // A one-pixel break is sealed by the line-art barrier.
+    const sealed = await cut(await whiteShirtFrame(1), "lineart");
+    expect(sealed.measure.leakShare).toBeLessThan(0.02);
   });
 });
 
@@ -241,5 +280,54 @@ describe("key color spill", () => {
     const data = picture(TINTED);
     despill(data, 12, 12, MAGENTA);
     expect(at(data, 1, 6)).toEqual([...TINTED]);
+  });
+});
+
+describe("computeTimedAlignment", () => {
+  const measure = (cropHeight: number, footY: number, torsoX: number, coverage: number): Extraction["measure"] => ({ rawWidth: 1024, rawHeight: 1536, crop: { left: 300, top: 100, width: 400, height: cropHeight }, topY: 0, footY, torsoX, lowerSpan: 120, coverage, touchesEdge: false, histogram: Array.from({ length: 64 }, (_, index) => index === 0 ? 1 : 0), method: "key", multiple: false, backgroundUniformity: 1 });
+  // Muse fills the image with every pose: the crouch is drawn 1.4× larger than the standing pose, so
+  // nearly as tall in the image, with twice the area. Squash keeps the volume: its real height is 0.7.
+  const entries = [
+    { frameId: "s0" as const, version: "a", phase: "sample_0", relativeRootY: 0, measure: measure(1200, 1199, 200, 0.1), lift: 0 },
+    { frameId: "s8" as const, version: "a", phase: "sample_8", relativeRootY: 0, measure: measure(1176, 1175, 190, 0.1 * 1.96), lift: 0 },
+    { frameId: "s20" as const, version: "a", phase: "sample_20", relativeRootY: 0, measure: measure(1210, 1209, 210, 0.1), lift: 0.6 },
+  ];
+  const placed = (transform: { scale: number; left: number; top: number }, entry: (typeof entries)[number]) => ({
+    foot: transform.top + (entry.measure.footY + 1) * transform.scale,
+    height: (entry.measure.footY - entry.measure.topY + 1) * transform.scale,
+    torso: transform.left + entry.measure.torsoX * transform.scale,
+  });
+
+  it("keeps one size by area and stands every drawing on one ground line, lifted as planned", () => {
+    const alignment = computeTimedAlignment(entries);
+    const [stand, crouch, apex] = entries.map((entry) => placed(alignment.transforms[entry.frameId]!, entry));
+    expect(crouch.height / stand.height).toBeCloseTo(0.7, 2);
+    expect(Math.abs(stand.height - alignment.targetHeight)).toBeLessThanOrEqual(1);
+    expect(Math.abs(stand.foot - BASELINE_Y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(crouch.foot - BASELINE_Y)).toBeLessThanOrEqual(1);
+    expect(Math.abs(apex.foot - (BASELINE_Y - 0.6 * stand.height))).toBeLessThanOrEqual(1);
+    for (const at of [stand, crouch, apex]) expect(Math.abs(at.torso - alignment.cellWidth / 2)).toBeLessThanOrEqual(1);
+  });
+
+  it("shrinks the whole action just enough to keep the apex inside the cell", () => {
+    const alignment = computeTimedAlignment(entries);
+    const apex = placed(alignment.transforms.s20!, entries[2]);
+    expect(alignment.targetHeight).toBeLessThan(TARGET_HEIGHT);
+    expect(apex.foot - apex.height).toBeGreaterThanOrEqual(0);
+    expect(alignment.cellHeight).toBe(CELL_HEIGHT);
+  });
+});
+
+describe("filledArea", () => {
+  it("counts what an outline encloses, not what is open to the page", () => {
+    // A 10×10 ring of line one pixel wide, and a 3-pixel stroke beside it.
+    const width = 20, alpha = new Uint8Array(width * 12);
+    for (let y = 1; y <= 10; y++) for (let x = 1; x <= 10; x++) if (y === 1 || y === 10 || x === 1 || x === 10) alpha[y * width + x] = 255;
+    for (let y = 4; y <= 6; y++) alpha[y * width + 15] = 255;
+    expect(filledArea(alpha, width, { left: 1, top: 1, right: 10, bottom: 10 })).toBe(100);
+    // An open ring (a gap in its line) leaves the inside open.
+    alpha[1 * width + 5] = 0;
+    expect(filledArea(alpha, width, { left: 1, top: 1, right: 10, bottom: 10 })).toBe(35);
+    expect(filledArea(alpha, width, { left: 15, top: 4, right: 15, bottom: 6 })).toBe(3);
   });
 });

@@ -18,12 +18,15 @@ import { ffmpeg } from "../ffmpeg";
 import { storeProposal, readProposal } from "./proposals";
 import { planWaveSequence, waveAnchorIndexes } from "./wave-sequence";
 import { sequenceAnchorIndexes } from "./motion-continuity";
+import { toSequencePlan } from "./pose-to-pose-planning";
+import { exposures } from "../../shared/flipbook";
+import { inbetweenTasks, keyIndexes, type TimingChart, type TimingKey } from "../../shared/timing-chart";
 
 let work: string, imageId: string, png: Buffer;
 let active = 0, peak = 0, drawings = 0;
 let blocked: Promise<void> | undefined;
 let blockAtIndex: number | undefined;
-const drawInputs: { index: number; neighbor: boolean; pair: boolean; action: string; from?: number; to?: number }[] = [];
+const drawInputs: { index: number; neighbor: boolean; pair: boolean; action: string; from?: number; to?: number; position?: number }[] = [];
 const analysis: CharacterAnalysis = { characterCount: 1, subject: "character", facing: "right", view: "side", fullBodyVisible: true, feetVisible: true, background: "plain", style: "flat", hair: "new red hair", clothing: "new blue shirt", accessories: [], palette: ["#3366aa"], proportions: "human", requestedAction: "dance" };
 const body = (buffer: Buffer) => Readable.toWeb(Readable.from(buffer)) as ReadableStream<Uint8Array>;
 async function settled(id: string): Promise<Flipbook> {
@@ -57,7 +60,7 @@ beforeAll(async () => {
     return FlipbookPlanSchema.parse({ mode: "sequence", action: "dance", direction: "right", view: "side", motion: "in_place", drawingFps: settings.drawingFps, durationSeconds: settings.durationSeconds, loop: false, poses: sequenceSkeleton(settings).map((frame) => ({ ...(old.get(frame.phase) ?? { label: frame.label, description: `Body turns gradually at ${frame.phase}`, relativeRootY: 0, lift: 0 }), index: frame.poseIndex, phase: frame.phase })) });
   };
   services.draw = async ({ signal, index, neighbor, temporalPair, plan }) => {
-    drawInputs.push({ index, neighbor: Boolean(neighbor), pair: Boolean(temporalPair), action: plan.action, from: temporalPair?.fromIndex, to: temporalPair?.toIndex });
+    drawInputs.push({ index, neighbor: Boolean(neighbor), pair: Boolean(temporalPair), action: plan.action, from: temporalPair?.fromIndex, to: temporalPair?.toIndex, position: temporalPair?.position });
     active++; peak = Math.max(peak, active); drawings++;
     try { if (blocked && (blockAtIndex === undefined || index === blockAtIndex)) await blocked; if (signal?.aborted) throw new Error("Canceled test request"); return { png, width: 160, height: 240 }; }
     finally { active--; }
@@ -279,6 +282,54 @@ describe("complete continuous workflow", () => {
     await applyFrameAction(source.id, complete.order[3], { action: "regenerate", note: "Keep the hand below the waist", confirmExtra: true });
     await settled(source.id);
     expect(drawInputs.at(-1)).toMatchObject({ index: 3, pair: true });
+  });
+  it("plans a described jump pose to pose, draws its keys first and its in-betweens by halves", async () => {
+    const key = (role: TimingKey["role"], hold = 0): TimingKey => ({ role, label: role, description: `The ${role} pose.`, hold, deform: { kind: role === "anticipation" ? "squash" : "none", amount: role === "anticipation" ? 0.2 : 0 }, lift: role === "action" ? 0.6 : 0 });
+    const chart: TimingChart = {
+      durationSeconds: 2,
+      keys: [key("idle"), key("anticipation"), key("breakdown"), key("action", 2), key("breakdown"), key("recoil"), key("settle")],
+      segments: [{ ease: "in", inbetweens: 1, exposure: 2 }, { ease: "none", inbetweens: 0, exposure: 2 }, { ease: "in", inbetweens: 3, exposure: 2 }, { ease: "out", inbetweens: 3, exposure: 2 }, { ease: "none", inbetweens: 0, exposure: 1 }, { ease: "in", inbetweens: 1, exposure: 2 }],
+    };
+    const straight = vi.spyOn(services, "planSequence");
+    const planner = vi.spyOn(services, "planPoseToPose").mockImplementation(async ({ settings }) => toSequencePlan({ chart, overview: "Crouch, jump, land, settle.", view: "side", direction: "right", action: "jump" }, settings));
+    vi.stubEnv("NEXT_PUBLIC_ENABLE_POSE_TO_POSE", "true");
+    try {
+      const source = await createFlipbook({ imageId, prompt: "Jump in place", action: "jump", sequence: { durationSeconds: 2, drawingFps: 12 } });
+      const prepared = await settled(source.id);
+      expect(prepared.error).toBeNull();
+      expect(planner).toHaveBeenCalledTimes(1);
+      expect(straight).not.toHaveBeenCalled();
+      // One frame per key and in-between, at the chart's ticks.
+      expect(prepared.frames.map((frame) => frame.phase)).toEqual(prepared.plan!.poses.map((pose) => pose.phase));
+      expect(prepared.order).toEqual(prepared.frames.map((frame) => frame.id));
+      expect(exposures(prepared.frames.map((frame) => frame.phase), 12, 48)).toEqual([2, 2, 2, 2, 2, 2, 2, 4, 2, 2, 2, 1, 2, 2, 19]);
+
+      const before = drawInputs.length;
+      await generateMissing(source.id, true);
+      const complete = await settled(source.id);
+      const calls = drawInputs.slice(before);
+      const keys = keyIndexes(chart);
+      expect(calls.slice(0, keys.length).map((call) => call.index)).toEqual(keys);
+      expect(calls.slice(0, keys.length).every((call) => !call.pair)).toBe(true);
+      // Every in-between between the two drawings its halving task names, after both exist.
+      const tasks = inbetweenTasks(chart);
+      const drawn = calls.filter((call) => call.pair);
+      expect(drawn).toHaveLength(tasks.length);
+      for (const task of tasks) expect(drawn.find((call) => call.index === task.index)).toMatchObject({ from: task.from, to: task.to, position: task.position });
+      const order = calls.map((call) => call.index);
+      for (const task of tasks) expect(order.indexOf(task.index)).toBeGreaterThan(Math.max(order.indexOf(task.from), order.indexOf(task.to)));
+      expect(complete.frames.every((frame) => frame.status === "ready")).toBe(true);
+      // The apex is registered above the ground line, the crouch on it.
+      const alignment = complete.alignment!;
+      const apex = complete.frames[keys[3]], crouch = complete.frames[keys[1]];
+      expect(alignment.transforms[apex.id]!.top).toBeLessThan(alignment.transforms[crouch.id]!.top);
+      // Holds are planned: no overlong-hold warnings.
+      expect(complete.frames.some((frame) => frame.warnings.some((warning) => warning.code === "overlong_hold"))).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+      planner.mockRestore();
+      straight.mockRestore();
+    }
   });
   it("flags a stationary garment recolor after extraction even inside the same histogram bin", async () => {
     const draw = services.draw;

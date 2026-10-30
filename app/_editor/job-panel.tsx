@@ -1,6 +1,6 @@
 "use client";
 
-import { Download04Icon, Tick02Icon } from "@hugeicons/core-free-icons";
+import { Download02Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { Disclosure } from "../../components/ui/disclosure";
@@ -392,7 +392,7 @@ export function DownloadButton({ url, className }: { readonly url: string; reado
   return (
     <div className={cn("flex flex-col gap-2", className)}>
       <Button size="lg" onClick={() => void start()} disabled={downloading} aria-busy={downloading}>
-        {downloading ? <Spinner /> : <HugeiconsIcon icon={Download04Icon} size={16} strokeWidth={1.75} />}
+        {downloading ? <Spinner /> : <HugeiconsIcon icon={Download02Icon} size={16} strokeWidth={1.75} />}
         {downloading ? (state.fraction === null ? "Downloading…" : `Downloading · ${Math.round(state.fraction * 100)}%`) : "Download MP4"}
       </Button>
       {state.kind === "error" ? (

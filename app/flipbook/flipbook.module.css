@@ -252,8 +252,6 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 @media (max-width: 860px) {
   .studio { height: auto; overflow: visible; }
   .body { grid-template-rows: auto; }
-  .sidebar { max-height: min(55dvh, 440px); }
-  .sidebarToggle { display: none; }
   .main { overflow: visible; }
   .mainViewport { overflow: visible; scrollbar-gutter: auto; }
   .columnMain { top: 76px; }
@@ -380,3 +378,7 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 @media (max-width: 420px) {
   .createTiming, .createFraming { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* A frame's own failure sits in its panel as plain text: the editor shows at most one alert at a time. */
+.frameError { color: var(--status-failed-fg); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
+.pickerItem[data-selected] { box-shadow: inset 0 0 0 1px var(--primary), inset 0 1px 0 #ffffff08; }

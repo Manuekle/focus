@@ -31,6 +31,8 @@ export const MeasureSchema = z.object({
   torsoX: z.number(),
   lowerSpan: z.number().nonnegative(),
   coverage: z.number().min(0).max(1),
+  /** Like coverage, with the holes inside the outline counted: a white body cut from a white page by its line art. Older measures have none. */
+  filled: z.number().min(0).max(1).optional(),
   touchesEdge: z.boolean(),
   /** 4×4×4 RGB histogram of the opaque subject pixels, sums to 1. */
   histogram: z.array(z.number()).length(64),
@@ -38,6 +40,8 @@ export const MeasureSchema = z.object({
   multiple: z.boolean(),
   /** Share of border pixels matching the dominant border color. */
   backgroundUniformity: z.number().min(0).max(1),
+  /** Line-art cut-outs only: share of the subject lost through gaps in the line art (see leakShare). */
+  leakShare: z.number().min(0).max(1).optional(),
 });
 export type Measure = z.infer<typeof MeasureSchema>;
 
@@ -128,19 +132,20 @@ export function despill(rgba: Buffer, width: number, height: number, key: readon
 }
 
 /** Background by flood fill from the border: only color connected to the edge counts as background. */
-function keyMask({ data, width, height }: Rgba, background: readonly [number, number, number]): Uint8Array {
+function keyMask({ data, width, height }: Rgba, background: readonly [number, number, number], options: { tolerance?: number; walls?: Uint8Array } = {}): Uint8Array {
   const total = width * height;
   const isBackground = new Uint8Array(total);
   const queue = new Int32Array(total);
   let head = 0;
   let tail = 0;
-  const tolerance = 52;
+  const tolerance = options.tolerance ?? 52;
+  const walls = options.walls;
   const near = (index: number) => {
     const offset = index * 4;
     return Math.hypot(data[offset] - background[0], data[offset + 1] - background[1], data[offset + 2] - background[2]) < tolerance;
   };
   const seed = (index: number) => {
-    if (!isBackground[index] && near(index)) { isBackground[index] = 1; queue[tail++] = index; }
+    if (!isBackground[index] && !walls?.[index] && near(index)) { isBackground[index] = 1; queue[tail++] = index; }
   };
   for (let x = 0; x < width; x++) { seed(x); seed((height - 1) * width + x); }
   for (let y = 0; y < height; y++) { seed(y * width); seed(y * width + width - 1); }
@@ -155,6 +160,55 @@ function keyMask({ data, width, height }: Rgba, background: readonly [number, nu
   const mask = new Uint8Array(total);
   for (let index = 0; index < total; index++) mask[index] = isBackground[index] ? 0 : 255;
   return mask;
+}
+
+const luma = (data: Buffer, index: number) => 0.2126 * data[index * 4] + 0.7152 * data[index * 4 + 1] + 0.0722 * data[index * 4 + 2];
+
+/**
+ * The drawing's line art as a barrier: pixels much darker than the
+ * background, grown by `grow` pixels so the border fill can't slip through
+ * the soft, broken lines of a compressed video frame. A white shirt on a
+ * white background is still enclosed by its outline.
+ */
+function lineWalls(image: Rgba, background: readonly [number, number, number], grow: number): Uint8Array {
+  const { data, width, height } = image;
+  const total = width * height;
+  const backgroundLuma = 0.2126 * background[0] + 0.7152 * background[1] + 0.0722 * background[2];
+  let walls = new Uint8Array(total);
+  for (let index = 0; index < total; index++) if (backgroundLuma - luma(data, index) > 70) walls[index] = 1;
+  for (let step = 0; step < grow; step++) {
+    const next = new Uint8Array(walls);
+    for (let index = 0; index < total; index++) {
+      if (!walls[index]) continue;
+      const x = index % width;
+      if (x > 0) next[index - 1] = 1;
+      if (x < width - 1) next[index + 1] = 1;
+      if (index >= width) next[index - width] = 1;
+      if (index < total - width) next[index + width] = 1;
+    }
+    walls = next;
+  }
+  return walls;
+}
+
+/**
+ * How much of the subject a line-art fill lost through gaps in the line
+ * art: the same fill with lines grown one pixel thicker, compared by area.
+ * Near 0 when the outline is closed; a white shirt drained through a broken
+ * line on a white background shows up as a large share.
+ */
+function leakShare(image: Rgba, background: readonly [number, number, number], mask: Uint8Array): number {
+  const thicker = lineWalls(image, background, 2);
+  const tighter = keyMask(image, background, { tolerance: 28, walls: thicker });
+  let lost = 0;
+  let sealed = 0;
+  for (let index = 0; index < mask.length; index++) {
+    if (tighter[index] < 128) continue;
+    sealed++;
+    // The thicker lines themselves are always kept by the tighter fill: only what lies beyond them counts.
+    if (mask[index] < 128 && !thicker[index]) lost++;
+  }
+  return sealed ? lost / sealed : 0;
 }
 
 /**
@@ -289,6 +343,16 @@ export async function extractSubject(input: {
   readonly concept: string;
   readonly flipbookId: string;
   readonly allowAlpha: boolean;
+  /** False skips SAM (a paid call per image): only real transparency or a flat key background. */
+  readonly useSegmentation?: boolean;
+  /**
+   * "lineart" for frames rendered elsewhere (Reference Motion): their
+   * background color can also be the character's (a white shirt on white),
+   * so the key fill is stopped by the line art and nothing inside the body
+   * is removed. "drawing" (default) is Muse Image's key, picked away from
+   * the character's palette.
+   */
+  readonly keyMode?: "drawing" | "lineart";
   /**
    * A drawing of several characters: every figure SAM finds is kept (the
    * union of its masks), not just the largest. It stops looking once it has
@@ -303,6 +367,7 @@ export async function extractSubject(input: {
   const border = borderStats(image);
 
   let mask: Uint8Array | null = null;
+  let leak: number | undefined;
   let method: Measure["method"] = "key";
   let multiple = false;
 
@@ -316,7 +381,7 @@ export async function extractSubject(input: {
     }
   }
 
-  if (!mask && segmentation.segment && readMetaConfig()) {
+  if (!mask && input.useSegmentation !== false && segmentation.segment && readMetaConfig()) {
     try {
       if (input.group) {
         const found = await segmentGroup({ png: input.png, width, height, concepts: input.group.concepts, expected: input.group.expected, flipbookId: input.flipbookId, signal: input.signal });
@@ -342,14 +407,17 @@ export async function extractSubject(input: {
     if (border.uniformity < 0.85) {
       throw new AppError("extraction_failed", 422, "We couldn’t separate the character from this drawing’s background. Redraw it, or upload a drawing on a plain background.");
     }
-    mask = keyMask(image, border.rgb);
+    const lineart = input.keyMode === "lineart";
+    mask = keyMask(image, border.rgb, lineart ? { tolerance: 28, walls: lineWalls(image, border.rgb, 1) } : {});
+    if (lineart) leak = leakShare(image, border.rgb, mask);
     method = "key";
   }
 
-  // With a known flat background, gaps enclosed by the body are background too.
-  const opened = method !== "alpha" && border.uniformity >= 0.85 ? removeEnclosedBackground(mask, image, border.rgb) : mask;
+  // With a known flat key away from the palette, gaps enclosed by the body are background too.
+  // Line-art cut-outs keep them: there the background color can be part of the character.
+  const opened = method !== "alpha" && border.uniformity >= 0.85 && input.keyMode !== "lineart" ? removeEnclosedBackground(mask, image, border.rgb) : mask;
   const cleaned = method === "alpha" ? mask : refineEdges(keepMainComponents(opened, width, height), width, height);
-  return measureAndCut(image, cleaned, { method, multiple, background: border });
+  return measureAndCut(image, cleaned, { method, multiple, background: border, leakShare: leak });
 }
 
 /** The union of the figures SAM finds for each concept, until `expected` figures were found. Null when it finds none. */
@@ -370,7 +438,7 @@ async function segmentGroup(input: { readonly png: Buffer; readonly width: numbe
   return union;
 }
 
-async function measureAndCut(image: Rgba, alpha: Uint8Array, info: { method: Measure["method"]; multiple: boolean; background: { rgb: [number, number, number]; uniformity: number } }): Promise<Extraction> {
+async function measureAndCut(image: Rgba, alpha: Uint8Array, info: { method: Measure["method"]; multiple: boolean; background: { rgb: [number, number, number]; uniformity: number }; leakShare?: number }): Promise<Extraction> {
   const { width, height, data } = image;
   let left = width, right = -1, top = height, bottom = -1, opaque = 0;
   const rowCounts = new Int32Array(height);
@@ -465,11 +533,13 @@ async function measureAndCut(image: Rgba, alpha: Uint8Array, info: { method: Mea
       torsoX: torsoX - crop.left,
       lowerSpan,
       coverage: opaque / (width * height),
+      filled: filledArea(alpha, width, { left, top, right, bottom }) / (width * height),
       touchesEdge: left < edge || top < edge || right >= width - edge || bottom >= height - edge,
       histogram: histogram.map((count) => (histTotal ? count / histTotal : 0)),
       method: info.method,
       multiple: info.multiple,
       backgroundUniformity: info.background.uniformity,
+      ...(info.leakShare !== undefined ? { leakShare: Number(info.leakShare.toFixed(4)) } : {}),
     },
   };
 }
@@ -563,6 +633,62 @@ export function computeEnsembleAlignment(entries: readonly AlignInput[]): Flipbo
     transforms[entry.frameId] = { version: entry.version, scale: Number(scale.toFixed(6)), left, top, key: transformKey([entry.version, scale.toFixed(6), left, top, cellWidth, CELL_HEIGHT]) };
   }
   return { cellWidth, cellHeight: CELL_HEIGHT, baselineY: CELL_HEIGHT, targetHeight: CELL_HEIGHT, strideX: 0, strideMeasured: false, transforms };
+}
+
+/**
+ * Pose to pose: one fixed ground line and one size for the whole action,
+ * whatever framing Muse Image drew each pose in. The size comes from the
+ * silhouette's filled area, which squash and stretch keep, so a crouch stays low
+ * and a stretch tall; the first drawing sets the standing height. Each
+ * drawing is raised by its planned lift, torso centered, so a jump leaves
+ * the ground. The whole action shrinks just enough to keep its highest
+ * pose inside the cell.
+ */
+export function computeTimedAlignment(entries: readonly (AlignInput & { readonly lift: number })[]): FlipbookAlignment {
+  const area = (entry: AlignInput) => Math.max(1, (entry.measure.filled ?? entry.measure.coverage) * entry.measure.rawWidth * entry.measure.rawHeight);
+  const areas = entries.map(area).sort((a, b) => a - b);
+  const typical = areas[Math.floor(areas.length / 2)] ?? 1;
+  // Cell pixels per drawn pixel, up to one factor k for the whole action.
+  const relative = entries.map((entry) => Math.sqrt(typical / area(entry)));
+  const drawn = entries.map((entry) => Math.max(1, entry.measure.footY - entry.measure.topY + 1));
+  const standing = drawn[0] * relative[0];
+  const reach = Math.max(1, ...entries.map((entry, index) => drawn[index] * relative[index] + entry.lift * standing));
+  const k = Math.min(TARGET_HEIGHT / standing, (BASELINE_Y - CELL_MARGIN) / reach);
+  const placed = entries.map((entry, index) => ({ entry, scale: k * relative[index] }));
+  const half = Math.max(MIN_CELL_WIDTH / 2 - CELL_MARGIN, ...placed.map(({ entry, scale }) => Math.max(entry.measure.torsoX, entry.measure.crop.width - entry.measure.torsoX) * scale));
+  const cellWidth = Math.min(MAX_CELL_WIDTH, Math.ceil((half + CELL_MARGIN) / 2) * 4);
+  const transforms: FlipbookAlignment["transforms"] = {};
+  for (const { entry, scale } of placed) {
+    const left = Math.round(cellWidth / 2 - entry.measure.torsoX * scale);
+    const top = Math.round(BASELINE_Y - entry.lift * standing * k - (entry.measure.footY + 1) * scale);
+    transforms[entry.frameId] = { version: entry.version, scale: Number(scale.toFixed(6)), left, top, key: transformKey(["timed", entry.version, scale.toFixed(6), left, top, cellWidth, CELL_HEIGHT]) };
+  }
+  return { cellWidth, cellHeight: CELL_HEIGHT, baselineY: BASELINE_Y, targetHeight: Math.max(1, Math.round(standing * k)), strideX: 0, strideMeasured: false, transforms };
+}
+
+/** Opaque pixels plus the transparent ones the outline encloses: everything in the box not reachable from its border. */
+export function filledArea(alpha: ArrayLike<number>, width: number, box: { left: number; top: number; right: number; bottom: number }): number {
+  const w = box.right - box.left + 3, h = box.bottom - box.top + 3;
+  // A one-pixel transparent margin around the box, so the outside is one connected region.
+  const outside = new Uint8Array(w * h);
+  const open = (x: number, y: number) => {
+    const sx = x + box.left - 1, sy = y + box.top - 1;
+    return sx < box.left || sx > box.right || sy < box.top || sy > box.bottom || alpha[sy * width + sx] < 128;
+  };
+  const stack = [0];
+  outside[0] = 1;
+  let reached = 0;
+  while (stack.length) {
+    const index = stack.pop()!;
+    reached++;
+    const x = index % w, y = (index - x) / w;
+    for (const [nx, ny] of [[x - 1, y], [x + 1, y], [x, y - 1], [x, y + 1]]) {
+      if (nx < 0 || ny < 0 || nx >= w || ny >= h) continue;
+      const next = ny * w + nx;
+      if (!outside[next] && open(nx, ny)) { outside[next] = 1; stack.push(next); }
+    }
+  }
+  return w * h - reached;
 }
 
 /** Places an image on a transparent canvas, clipping whatever falls outside. */
