@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { bodySpec, checkProportions, describeFace, fullLengths, onCanvas } from "./body-map";
+import { bodySpec, checkProportions, describeFace, fullLengths, onCanvas, sheetLengths } from "./body-map";
 import type { Pose } from "./pose-match";
 
 /** A standing figure facing the camera, canvas pixels: shoulders at y 400, hips 700, knees 950, ankles 1200. */
@@ -35,6 +35,14 @@ describe("bodySpec", () => {
     expect(bodySpec(standing(), marks, 140, fullLengths([standing()]))!.text).not.toContain("seen shortened");
   });
 
+  it("never takes a limb the clip keeps shortened for its full length", () => {
+    // The clip never extends the arms (0.5 of the sheet's length throughout); the sheet does.
+    const full = fullLengths([standing(0.5)], sheetLengths(standing(), [standing(0.5)]));
+    const spec = bodySpec(standing(0.5), marks, 140, full)!;
+    expect(spec.text).toContain("upper arm 0.72 cells (seen shortened: it points toward the viewer; fully extended it would be 1.20 cells)");
+    expect(spec.bones.find((bone) => bone.name === "thigh")!.clear).toBe(true);
+  });
+
   it("places source poses on the canvas", () => {
     const moved = onCanvas(standing(), { scale: 0.5, x: 10, y: 20 });
     expect(moved.keypoints[0]).toEqual([266, 170]);
@@ -52,6 +60,14 @@ describe("checkProportions", () => {
     const check = checkProportions(spec, standing(1.35), marks, marks);
     expect(check.passed).toBe(false);
     expect(check.feedback).toMatch(/upper arm on the LEFT of the image is 35 % too long: it must measure 1.41 cells/);
+  });
+
+  it("lets a shortened limb come out at the character's full length, never longer", () => {
+    const short = bodySpec(standing(0.5), marks, 140, fullLengths([standing(0.5)], sheetLengths(standing(), [standing(0.5)])))!;
+    expect(checkProportions(short, standing(0.8), marks, marks).passed).toBe(true);
+    const check = checkProportions(short, standing(1.2), marks, marks);
+    expect(check.passed).toBe(false);
+    expect(check.feedback).toMatch(/upper arm on the LEFT of the image is 41 % longer than the character's own: even fully extended it measures at most 1.20 cells/);
   });
 
   it("measures against the drawing's own height, whatever size it came out", () => {

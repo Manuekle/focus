@@ -37,14 +37,56 @@
 /* Scales with the window so the drawing never hides the checks below it on a short screen. */
 .inspectFrame.inspectFrame { height: clamp(280px, 46dvh, 440px); }
 .liveRow { display: flex; align-items: center; gap: 8px; color: var(--foreground); font-size: 12px; }
+/* The attempt being drawn: its video frame, dimmed, under a slow sweep, with where the work is. */
+.drawingNow { background: color-mix(in srgb, var(--foreground) 1.6%, transparent); }
+.drawingGhost.drawingGhost { opacity: 0.18; filter: grayscale(1) blur(1px); }
+.drawingSweep {
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(105deg, transparent 30%, color-mix(in srgb, var(--primary) 12%, transparent) 50%, transparent 70%) 0 0 / 300% 100%;
+  animation: drawing-sweep 2.4s linear infinite;
+}
+@keyframes drawing-sweep { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+.drawingStatus {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--background) 72%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.1%, transparent);
+  font-size: 12px;
+  backdrop-filter: blur(6px);
+}
+.drawingTry { padding-left: 8px; border-left: 1px solid color-mix(in srgb, var(--foreground) 7.8%, transparent); color: var(--muted-foreground); font-size: 11px; font-variant-numeric: tabular-nums; }
 .checkRows { display: flex; flex-direction: column; gap: 8px; font-size: 12px; line-height: 1.5; }
 .checkRows li { display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 8px; }
 .checkIcon { display: grid; width: 16px; height: 16px; margin-top: 1px; place-items: center; border-radius: 999px; background: var(--status-success-bg); color: var(--status-success-fg); box-shadow: var(--shadow-inset); font-size: 11px; }
 .checkRows li[data-passed="false"] .checkIcon { background: var(--status-failed-bg); color: var(--status-failed-fg); }
-.checkRows li[data-passed="skipped"] .checkIcon { background: #ffffff0a; color: var(--muted-foreground); }
+.checkRows li[data-passed="skipped"] .checkIcon { background: color-mix(in srgb, var(--foreground) 3.9%, transparent); color: var(--muted-foreground); }
 .checkName { display: block; color: var(--foreground); font-weight: 500; }
 .checkDetail { display: block; color: var(--muted-foreground); overflow-wrap: anywhere; }
-.log { max-height: 220px; overflow: auto; scrollbar-width: none; color: var(--muted-foreground); font-size: 11px; line-height: 1.55; white-space: pre-wrap; overflow-wrap: anywhere; }
+/* Activity: one row per attempt, newest first, on a thin line that ties the rows together. */
+.activity { position: relative; display: flex; flex-direction: column; gap: 14px; font-size: 12px; line-height: 1.5; }
+.activity::before { content: ""; position: absolute; top: 8px; bottom: 8px; left: 7.5px; width: 1px; background: color-mix(in srgb, var(--foreground) 5.9%, transparent); }
+.activity li { position: relative; display: grid; grid-template-columns: 16px minmax(0, 1fr); align-items: start; gap: 10px; }
+.activity li > span:last-child { display: flex; flex-direction: column; gap: 2px; }
+.activityDot { display: grid; width: 16px; height: 16px; margin-top: 1px; place-items: center; border-radius: 999px; background: var(--muted); color: var(--muted-foreground); box-shadow: 0 0 0 3px var(--background); }
+.activity li[data-tone="neutral"] .activityDot { scale: 0.45; }
+.activity li[data-tone="approved"] .activityDot { background: var(--status-success-bg); color: var(--status-success-fg); }
+.activity li[data-tone="rejected"] .activityDot { background: var(--status-failed-bg); color: var(--status-failed-fg); }
+.activity li[data-tone="warning"] .activityDot { background: var(--status-pending-bg); color: var(--status-pending-fg); }
+.activity li[data-tone="running"] .activityDot { background: color-mix(in srgb, var(--primary) 18%, transparent); color: var(--primary); }
+.activityHead { display: flex; align-items: baseline; gap: 6px; color: var(--foreground); }
+.activityFrame { color: var(--foreground); font-weight: 500; text-decoration: underline; text-decoration-color: transparent; text-underline-offset: 3px; transition: text-decoration-color 150ms; }
+.activityFrame:hover, .activityFrame:focus-visible { text-decoration-color: currentColor; outline: none; }
+.activityMeta { color: var(--muted-foreground); font-variant-numeric: tabular-nums; }
+.activityOutcome { margin-left: auto; color: var(--muted-foreground); font-size: 11px; }
+.activity li[data-tone="approved"] .activityOutcome { color: var(--status-success-fg); }
+.activity li[data-tone="rejected"] .activityOutcome { color: var(--status-failed-fg); }
+.activityFail { color: var(--muted-foreground); overflow-wrap: anywhere; }
+.activityNote { color: var(--muted-foreground); overflow-wrap: anywhere; }
 
 
 
@@ -110,7 +152,7 @@
 .dockTabs :global(.t-tabs-pill) { height: 28px; }
 .dockScroll { min-height: 0; flex: 1; }
 .dockViewport.dockViewport { overflow-y: auto; scrollbar-gutter: auto; scrollbar-width: none; }
-.dockViewport::-webkit-scrollbar, .log::-webkit-scrollbar { display: none; }
+.dockViewport::-webkit-scrollbar { display: none; }
 .dockContent { display: flex; flex-direction: column; gap: 20px; padding: 14px 16px 22px; }
 /* Content that changes meaning (another tab, another frame) eases in from just below, so the swap reads as new content. */
 .swap { display: flex; flex-direction: column; gap: 20px; animation: swap-in 260ms var(--ease-smooth-out) backwards; }
@@ -160,7 +202,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .dock, .dockInner { transition: none !important; }
-  .swap, .arrive { animation: none; }
+  .swap, .arrive, .drawingSweep { animation: none; }
 }
 /* Pencil note: red marks drawn over the drawing at its own pixels. */
 .pencil { display: flex; flex-direction: column; gap: 10px; }
@@ -171,6 +213,29 @@
 .optionRow > span { min-width: 0; }
 
 /* Status text inside the canvas's drawing controls. */
+/* Muse Spark's reading of the video frame, as the drawing's prompt got it. */
+.reading { margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.55; }
+
+/* What the AI learned: rules from rejected drawings; the ones in the prompt carry the accent dot. */
+.lessons { display: flex; flex-direction: column; gap: 10px; font-size: 12px; line-height: 1.5; }
+.lessons li { position: relative; display: flex; flex-direction: column; gap: 2px; padding-left: 12px; }
+.lessons li::before { position: absolute; top: 0.62em; left: 0; width: 5px; height: 5px; border-radius: 999px; background: var(--muted-foreground); content: ""; opacity: 0.6; }
+.lessons li[data-active="true"]::before { background: var(--primary); opacity: 1; }
+.lessonMeta { color: var(--muted-foreground); font-size: 11px; font-variant-numeric: tabular-nums; }
+.lessonFrame { padding: 0; border: 0; background: none; color: inherit; font: inherit; text-decoration: underline; text-decoration-color: color-mix(in srgb, currentColor 40%, transparent); text-underline-offset: 2px; cursor: pointer; }
+.lessonFrame:hover { color: var(--foreground); }
+
+/* How much of the video to add next: a segmented control on the floating bar's glass. */
+.stepTabs {
+  --tabs-radius: 999px;
+  --tabs-pill-radius: 999px;
+  --tabs-bar-bg: color-mix(in srgb, var(--card) 88%, transparent);
+  --tabs-bar-border: transparent;
+  height: 32px;
+  box-shadow: var(--shadow-float);
+  backdrop-filter: blur(12px);
+}
+.stepTabs :global(.t-tab) { padding-inline: 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .barStatus { display: inline-flex; height: 32px; align-items: center; gap: 8px; padding-inline: 14px; border-radius: 999px; background: color-mix(in srgb, var(--card) 88%, transparent); box-shadow: var(--shadow-float); backdrop-filter: blur(12px); font-size: 12px; font-variant-numeric: tabular-nums; }
 
 /* ── Compare: video, pose guide and drawing side by side, over the canvas ── */
@@ -202,12 +267,12 @@
   flex: 1;
   overflow: hidden;
   border-radius: 12px;
-  background: #ffffff04;
-  box-shadow: inset 0 0 0 1px #ffffff0a;
+  background: color-mix(in srgb, var(--foreground) 1.6%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 3.9%, transparent);
 }
 .compareImage[data-transparent] {
-  background-color: #1d1f27;
-  background-image: linear-gradient(45deg, #ffffff0a 25%, transparent 25%), linear-gradient(-45deg, #ffffff0a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ffffff0a 75%), linear-gradient(-45deg, transparent 75%, #ffffff0a 75%);
+  background-color: var(--checker-base);
+  background-image: linear-gradient(45deg, color-mix(in srgb, var(--foreground) 3.9%, transparent) 25%, transparent 25%), linear-gradient(-45deg, color-mix(in srgb, var(--foreground) 3.9%, transparent) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--foreground) 3.9%, transparent) 75%), linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--foreground) 3.9%, transparent) 75%);
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
 }

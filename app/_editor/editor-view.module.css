@@ -4,7 +4,7 @@
 .preview figure { border: 0; border-radius: 16px; background: transparent; box-shadow: 0 10px 30px #0000001a; }
 .preview figure > div:first-child { overflow: hidden; border-radius: 16px; }
 .preview figure video, .preview figure canvas { max-height: 340px; }
-.preview figcaption { border: 0; background: #ffffff03; }
+.preview figcaption { border: 0; background: color-mix(in srgb, var(--foreground) 1.2%, transparent); }
 .fileRow { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .fileDetails { min-width: 0; }
 .fileName { overflow: hidden; color: var(--foreground); font-size: 12px; font-weight: 500; text-overflow: ellipsis; white-space: nowrap; }

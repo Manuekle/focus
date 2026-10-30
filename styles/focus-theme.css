@@ -53,6 +53,7 @@
   --status-review-bg: #f8f3d9; --status-review-fg: #726010;
   --status-expired-bg: #eef0f5; --status-expired-fg: #626a7d;
   --diagram-series-0: #2853e9; --diagram-series-1: #278c9e;
+  --checker-base: #e3e6ed;
 }
 :root.dark, .dark {
   --background: #181818; --foreground: #f5f5f5;
@@ -96,6 +97,7 @@
   --status-review-bg: #35321d; --status-review-fg: #ddd18c;
   --status-expired-bg: #2b2b2b; --status-expired-fg: #afb6ca;
   --diagram-series-0: #2853e9; --diagram-series-1: #67c8d5;
+  --checker-base: #1d1f27;
 }
 
 /* Reference button: a white inside stroke, soft inner light and coloured edge.

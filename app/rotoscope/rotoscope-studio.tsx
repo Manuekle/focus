@@ -30,6 +30,7 @@ import { AnimateNav } from "../_editor/animate-nav";
 export const PHASE_LABELS: Record<RotoscopePhase, string> = {
   preparing: "Preparing",
   ready: "Ready",
+  extending: "Adding frames",
   generating: "Drawing",
   stopping: "Stopping",
   failed: "Failed",

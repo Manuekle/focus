@@ -263,6 +263,11 @@
   .viewport { touch-action: pan-y; }
 }
 
+/* The centred action bar would run over the hint; the bar wins (the shortcuts are also in the help text). */
+@media (max-width: 1400px) {
+  .hint:has(~ .actionBar) { display: none; }
+}
+
 @media (max-width: 720px) {
   .hint { display: none; }
   .minimapWrap { display: none; }

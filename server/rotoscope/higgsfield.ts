@@ -1,5 +1,5 @@
+import { createHash } from "node:crypto";
 import sharp from "sharp";
-import { HiggsfieldClient as UploadClient } from "@higgsfield/client";
 import { createHiggsfieldClient, type V2Response } from "@higgsfield/client/v2";
 import { AppError } from "../errors";
 import type { ImageReference } from "../animation/muse-image";
@@ -15,11 +15,11 @@ const MODEL = () => process.env.HIGGSFIELD_IMAGE_MODEL || "xai/grok-imagine-imag
 /** References travel at most this large, like Muse Image's. */
 const REFERENCE_LONG_SIDE = 1024;
 
-function credentials(): { apiKey: string; apiSecret: string; joined: string } | null {
+function credentials(): { joined: string } | null {
   const joined = process.env.HF_CREDENTIALS?.trim();
   const at = joined?.indexOf(":") ?? -1;
   if (!joined || at <= 0 || at === joined.length - 1) return null;
-  return { apiKey: joined.slice(0, at), apiSecret: joined.slice(at + 1), joined };
+  return { joined };
 }
 
 /** True when HF_CREDENTIALS is set in the "key-id:key-secret" form. */
@@ -42,8 +42,49 @@ function race<T>(work: Promise<T>, signal?: AbortSignal): Promise<T> {
   });
 }
 
+/**
+ * Uploads one reference and returns its public URL. The SDK's own uploader (the v1 client) still
+ * sends the old hf-api-key / hf-secret headers, which the API now answers with 403; the documented
+ * header is `Authorization: Key <id>:<secret>`, the one the v2 client already sends. The upload
+ * URL is signed over the headers the API returns with it (`upload_headers`, x-amz-tagging
+ * included): the PUT sends exactly those.
+ */
+async function upload(png: Buffer, credentials: string, signal?: AbortSignal): Promise<string> {
+  const response = await fetch("https://api.higgsfield.ai/files/generate-upload-url", {
+    method: "POST",
+    headers: { Authorization: `Key ${credentials}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ content_type: "image/png" }),
+    signal,
+  });
+  if (!response.ok) throw new AppError("higgsfield_upload", 502, "The reference images couldn’t be sent to Higgsfield.", `HTTP ${response.status}`);
+  const { upload_url: target, public_url: url, upload_headers: headers } = await response.json() as { upload_url?: string; public_url?: string; upload_headers?: Record<string, string> };
+  if (!target || !url) throw new AppError("higgsfield_upload", 502, "The reference images couldn’t be sent to Higgsfield.", "no upload URL");
+  const put = await fetch(target, { method: "PUT", headers: headers ?? { "Content-Type": "image/png" }, body: new Uint8Array(png), signal });
+  if (!put.ok) throw new AppError("higgsfield_upload", 502, "The reference images couldn’t be sent to Higgsfield.", `upload HTTP ${put.status}`);
+  return url;
+}
+
 async function uploadable(png: Buffer): Promise<Buffer> {
   return sharp(png).resize(REFERENCE_LONG_SIDE, REFERENCE_LONG_SIDE, { fit: "inside", withoutEnlargement: true, kernel: "lanczos3" }).png().toBuffer();
+}
+
+// Most references repeat on every frame (the character sheet, the pose sheet):
+// each distinct image is resized and uploaded once and its URL reused for a
+// while, instead of two HTTP round trips per reference per frame.
+const UPLOAD_TTL_MS = 30 * 60_000;
+const uploads = ((globalThis as { __focusHiggsfieldUploads?: Map<string, { url: Promise<string>; at: number }> }).__focusHiggsfieldUploads ??= new Map());
+
+function uploadOnce(png: Buffer, credentials: string, signal?: AbortSignal): Promise<string> {
+  const now = Date.now();
+  for (const [key, entry] of uploads) if (now - entry.at > UPLOAD_TTL_MS) uploads.delete(key);
+  const key = createHash("sha256").update(png).digest("hex");
+  const kept = uploads.get(key);
+  if (kept) return kept.url;
+  const url = uploadable(png).then((resized) => upload(resized, credentials, signal));
+  uploads.set(key, { url, at: now });
+  // A failed or stopped upload is not remembered.
+  url.catch(() => uploads.delete(key));
+  return url;
 }
 
 function failure(result: V2Response): AppError {
@@ -69,8 +110,7 @@ export async function generateHiggsfield(input: {
   const auth = credentials();
   if (!auth) throw new AppError("higgsfield_unconfigured", 503, "Higgsfield isn’t configured on this server (HF_CREDENTIALS).");
   aborted(input.signal);
-  const uploader = new UploadClient({ apiKey: auth.apiKey, apiSecret: auth.apiSecret });
-  const urls = await race(Promise.all(input.references.map(async (reference) => uploader.uploadImage(await uploadable(reference.png), "png"))), input.signal);
+  const urls = await Promise.all(input.references.map((reference) => uploadOnce(reference.png, auth.joined, input.signal)));
   const roles = input.references.map((reference, index) => `Image ${index + 1}: ${reference.role}`).join("\n");
   const client = createHiggsfieldClient({ credentials: auth.joined, maxPollTime: 6 * 60_000 });
   let result: V2Response;

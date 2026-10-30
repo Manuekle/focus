@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-const ResourceSchema = z.object({ kind: z.enum(["edit", "flipbook", "character"]), id: z.uuid() });
+const ResourceSchema = z.object({ kind: z.enum(["edit", "flipbook", "character", "rotoscope"]), id: z.uuid() });
 export type ActivityResource = z.infer<typeof ResourceSchema>;
 const ActivitySchema = z.object({
   id: z.string().max(100),
@@ -32,7 +32,7 @@ const pendingRequests = new Set<string>();
 export const activityId = (resource: ActivityResource) => `${resource.kind}:${resource.id}`;
 export const activityHref = (resource: ActivityResource) => resource.kind === "edit"
   ? null // Video jobs supply their video id, rather than their job id, in the URL.
-  : resource.kind === "flipbook" ? `/flipbook?f=${resource.id}` : `/characters?c=${resource.id}`;
+  : resource.kind === "flipbook" ? `/flipbook?f=${resource.id}` : resource.kind === "rotoscope" ? `/rotoscope?run=${resource.id}` : `/characters?c=${resource.id}`;
 export const getActivityVersion = () => version;
 export const activityRequestPending = (id: string) => pendingRequests.has(id);
 export const getActivities = () => entries;
@@ -64,7 +64,7 @@ export function setActivityScope(next: string, sessionStorage?: Storage) {
       // Only server resources can be resumed after a document reload.
       state: entry.state === "running" && !entry.resource ? "canceled" : entry.state,
       detail: entry.state === "running" && !entry.resource ? "Interrupted by page reload" : entry.detail,
-      href: entry.href && /^\/(?:editor\?v=|flipbook(?:\?|$)|characters(?:\?|$))/.test(entry.href) ? entry.href : null,
+      href: entry.href && /^\/(?:editor\?v=|flipbook(?:\?|$)|characters(?:\?|$)|rotoscope(?:\?|$))/.test(entry.href) ? entry.href : null,
       observedAt: 0,
     }));
   } catch { /* Private browsing or invalid metadata: start with the current tasks. */ }

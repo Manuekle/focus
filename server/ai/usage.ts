@@ -1,5 +1,5 @@
 import path from "node:path";
-import { appendFile, mkdir, readFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, stat } from "node:fs/promises";
 import { dataRoot } from "../storage";
 
 // Basic, local usage diagnostics: one JSON line per API call or cache hit.
@@ -61,17 +61,59 @@ export async function usageSummary() {
   };
 }
 
+type Billed = { readonly at: number; readonly frames: number };
+
+// Every AI request checks the daily SAM budget. Instead of parsing the whole
+// log each time, the billed entries are kept in memory and only the bytes
+// appended since the last check are read.
+const tail = ((globalThis as { __focusUsageTail?: { file: string; ino: number; offset: number; billed: Billed[]; reading: Promise<void> } }).__focusUsageTail ??= {
+  file: "",
+  ino: 0,
+  offset: 0,
+  billed: [],
+  reading: Promise.resolve(),
+});
+
+function billedFrames(entry: UsageEntry): number {
+  if (entry.cached) return 0;
+  if (entry.kind === "segment") return entry.videoFramesProcessed ?? 0;
+  // A still image is one frame of SAM work.
+  if (entry.kind === "segment_image" && entry.ok) return 1;
+  return 0;
+}
+
+async function catchUp(): Promise<void> {
+  const file = usageFile();
+  const info = await stat(file).catch(() => null);
+  const size = info?.size ?? 0;
+  const ino = info?.ino ?? 0;
+  // Another data root, or the log was replaced: start over.
+  if (tail.file !== file || tail.ino !== ino || size < tail.offset) Object.assign(tail, { file, ino, offset: 0, billed: [] });
+  if (size === tail.offset) return;
+  const handle = await open(file, "r");
+  try {
+    const chunk = Buffer.alloc(size - tail.offset);
+    await handle.read(chunk, 0, chunk.length, tail.offset);
+    // A line still being appended waits for the next check.
+    const end = chunk.lastIndexOf(0x0a);
+    if (end < 0) return;
+    for (const line of chunk.subarray(0, end).toString("utf8").split("\n")) {
+      if (!line) continue;
+      const entry = JSON.parse(line) as UsageEntry;
+      const frames = billedFrames(entry);
+      if (frames > 0) tail.billed.push({ at: Date.parse(entry.at), frames });
+    }
+    tail.offset += end + 1;
+  } finally {
+    await handle.close();
+  }
+}
+
 /** SAM frames billed since a moment (cache hits excluded): the processing budget. */
 export async function samFramesSince(since: Date): Promise<number> {
-  const raw = await readFile(usageFile(), "utf8").catch(() => "");
-  let total = 0;
-  for (const line of raw.split("\n")) {
-    if (!line) continue;
-    const entry = JSON.parse(line) as UsageEntry;
-    if (entry.cached || new Date(entry.at) < since) continue;
-    if (entry.kind === "segment") total += entry.videoFramesProcessed ?? 0;
-    // A still image is one frame of SAM work.
-    else if (entry.kind === "segment_image" && entry.ok) total += 1;
-  }
-  return total;
+  // Serialized, so two requests never read the same bytes twice.
+  tail.reading = tail.reading.catch(() => undefined).then(catchUp);
+  await tail.reading;
+  const from = since.getTime();
+  return tail.billed.reduce((total, entry) => (entry.at >= from ? total + entry.frames : total), 0);
 }

@@ -117,7 +117,7 @@ export function ColorPicker({
       <Popover.Trigger
         type="button"
         aria-label={`${label}: ${value}`}
-        className={cn("size-7 shrink-0 cursor-pointer rounded-md border-0 p-0 shadow-[inset_0_0_0_1px_#ffffff26] outline-none transition-[scale,box-shadow] duration-150 ease-[var(--ease-smooth-out)] hover:scale-105 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[color:var(--btn-focus-ring)] data-[state=open]:shadow-[inset_0_0_0_1px_#ffffff26,0_0_0_2px_var(--primary)]", className)}
+        className={cn("size-7 shrink-0 cursor-pointer rounded-md border-0 p-0 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--foreground)_14.9%,transparent)] outline-none transition-[scale,box-shadow] duration-150 ease-[var(--ease-smooth-out)] hover:scale-105 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[color:var(--btn-focus-ring)] data-[state=open]:shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--foreground)_14.9%,transparent),0_0_0_2px_var(--primary)]", className)}
         style={{ background: value }}
       />
       <Popover.Portal>
@@ -185,7 +185,7 @@ export function ColorPicker({
                   title={hex}
                   aria-label={hex}
                   aria-pressed={hex.toLowerCase() === value.toLowerCase()}
-                  className="size-5 cursor-pointer rounded-md border-0 p-0 shadow-[inset_0_0_0_1px_#ffffff26] transition-[scale] duration-150 hover:scale-110 aria-pressed:shadow-[inset_0_0_0_1px_#ffffff26,0_0_0_2px_var(--primary)]"
+                  className="size-5 cursor-pointer rounded-md border-0 p-0 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--foreground)_14.9%,transparent)] transition-[scale] duration-150 hover:scale-110 aria-pressed:shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--foreground)_14.9%,transparent),0_0_0_2px_var(--primary)]"
                   style={{ background: hex }}
                   onClick={() => commit(hexToHsv(hex))}
                 />

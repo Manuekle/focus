@@ -11,12 +11,14 @@ export function FlipbookDemo() {
       <div className={styles.scene}>
         <div className={styles.reference}>
           <div className={styles.photo}>
-            <Image src={`/characters/${ichika.fileName}`} alt={ichika.alt} width={ichika.width} height={ichika.height} style={{ aspectRatio: "3 / 5", objectFit: "contain", backgroundColor: "#fff" }} loading="eager" unoptimized />
+            <span className={styles.paper}>
+              <Image src={`/characters/${ichika.fileName}`} alt={ichika.alt} width={ichika.width} height={ichika.height} style={{ aspectRatio: "3 / 5", objectFit: "contain" }} loading="eager" unoptimized />
+            </span>
           </div>
           <span className={styles.referenceLabel}>It starts with a character.</span>
         </div>
         <div className={styles.doodle} aria-hidden="true">
-          <span>a little life</span>
+          <span>comes alive</span>
           <svg width="72" height="48" viewBox="0 0 72 48" fill="none"><path d="M5 9C16 35 48 39 65 17M51 19l15-4-1 15" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>
         </div>
         <div className={styles.result} aria-hidden="true">
@@ -25,7 +27,6 @@ export function FlipbookDemo() {
           </div>
         </div>
       </div>
-      <figcaption className={styles.caption}>Your character. A whole new way to move.</figcaption>
     </figure>
   );
 }

@@ -5,6 +5,8 @@ import { useSession } from "../_auth/session-client";
 import { jobApi } from "../_editor/job-client";
 import { characterApi } from "../characters/character-client";
 import { flipbookApi } from "../flipbook/flipbook-client";
+import { rotoscopeApi } from "../rotoscope/rotoscope-client";
+import { rotoscopeEnabled } from "../../shared/features";
 import { activityConnectionError, activityRequestPending, getActivities, getActivityVersion, setActivityScope } from "./activity-store";
 
 /** Lives above route changes; follows only known resources through their existing read APIs. */
@@ -18,7 +20,7 @@ export function ActivityProvider({ children }: { readonly children: ReactNode })
     let storage: Storage | undefined;
     try { storage = window.sessionStorage; } catch { /* Optional in private browsing. */ }
     setActivityScope(scope, storage);
-    if (userId) void Promise.allSettled([flipbookApi.list(), characterApi.list()]);
+    if (userId) void Promise.allSettled([flipbookApi.list(), characterApi.list(), ...(rotoscopeEnabled() ? [rotoscopeApi.list()] : [])]);
     let stopped = false;
     let timer: ReturnType<typeof setTimeout>;
     const tick = async () => {
@@ -30,6 +32,7 @@ export function ActivityProvider({ children }: { readonly children: ReactNode })
         try {
           if (resource.kind === "edit") await jobApi.get(resource.id);
           else if (resource.kind === "flipbook") await flipbookApi.get(resource.id);
+          else if (resource.kind === "rotoscope") await rotoscopeApi.get(resource.id);
           else await characterApi.get(resource.id);
         } catch (error) {
           if (stopped || version !== getActivityVersion()) return;

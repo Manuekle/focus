@@ -1,12 +1,12 @@
 import path from "node:path";
-import { createReadStream } from "node:fs";
+import { createReadStream, existsSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import { toFile } from "openai";
 import { buildObjectPrompt, decodeMaskToRaster, frameIndexOf, parseImageStream, parseVideoStream, recordsOfKind, type ResponsesEvent, type SegmentationMaskRecord } from "@meta-sam/parser";
 import type { NormalizedMedia } from "../../shared/schemas";
 import { buildTracking, type Box, type Tracking } from "../../shared/tracking";
 import { AppError } from "../errors";
-import { metaClient, metaError, requireMetaConfig, segmentationLimiter, withRetry } from "./meta";
+import { metaClient, metaError, readMetaConfig, requireMetaConfig, segmentationLimiter, withRetry } from "./meta";
 import { recordUsage } from "./usage";
 
 // SAM 3.1 receives the normalized video — the exact file the compositor
@@ -31,16 +31,14 @@ type SegmentInput = {
 
 const FILE_CACHE = "meta-file.json";
 
-/** Uploads once per video; later passes reuse the returned file id. */
-async function fileIdFor(input: SegmentInput, force = false): Promise<string> {
-  const cachePath = path.join(input.videoDir, FILE_CACHE);
-  if (!force) {
-    const cached = await readFile(cachePath, "utf8").then((raw) => JSON.parse(raw) as { fileId?: string }).catch(() => null);
-    if (cached?.fileId) {
-      await recordUsage({ model: "files", kind: "file_upload", cached: true, ok: true, videoId: input.videoId });
-      return cached.fileId;
-    }
-  }
+type UploadTarget = Pick<SegmentInput, "videoId" | "videoDir" | "normalizedPath" | "signal">;
+
+// One upload per video at a time, shared across route bundles: a prefetch
+// started next to the planner and the segmentation that follows it wait on
+// the same request instead of sending the video twice.
+const inflightUploads = ((globalThis as { __focusUploads?: Map<string, Promise<string>> }).__focusUploads ??= new Map());
+
+async function uploadVideo(input: UploadTarget, cachePath: string): Promise<string> {
   const client = metaClient();
   const started = Date.now();
   const file = await withRetry(
@@ -50,6 +48,38 @@ async function fileIdFor(input: SegmentInput, force = false): Promise<string> {
   await recordUsage({ model: "files", kind: "file_upload", cached: false, ok: true, videoId: input.videoId, durationMs: Date.now() - started });
   await writeFile(cachePath, JSON.stringify({ fileId: file.id, uploadedAt: new Date().toISOString(), bytes: file.bytes }));
   return file.id;
+}
+
+/** Uploads once per video; later passes reuse the returned file id. */
+async function fileIdFor(input: UploadTarget, force = false): Promise<string> {
+  const cachePath = path.join(input.videoDir, FILE_CACHE);
+  if (force) return uploadVideo(input, cachePath);
+  const cached = await readFile(cachePath, "utf8").then((raw) => JSON.parse(raw) as { fileId?: string }).catch(() => null);
+  if (cached?.fileId) {
+    await recordUsage({ model: "files", kind: "file_upload", cached: true, ok: true, videoId: input.videoId });
+    return cached.fileId;
+  }
+  const pending = inflightUploads.get(cachePath);
+  if (pending) {
+    // Someone else's upload failed or was canceled: send our own.
+    const shared = await pending.catch(() => null);
+    if (shared) return shared;
+    input.signal?.throwIfAborted();
+  }
+  const upload = uploadVideo(input, cachePath).finally(() => inflightUploads.delete(cachePath));
+  inflightUploads.set(cachePath, upload);
+  return upload;
+}
+
+/**
+ * Starts the video upload while Muse Spark is still planning, so SAM can
+ * begin as soon as the plan names a concept. Never throws: a failed prefetch
+ * is retried by the segmentation itself. No abort signal, because the file id
+ * is cached for every later edit of the same video.
+ */
+export function prefetchVideoFile(input: Omit<UploadTarget, "signal">): void {
+  if (!readMetaConfig() || existsSync(path.join(input.videoDir, FILE_CACHE))) return;
+  void fileIdFor(input).catch(() => undefined);
 }
 
 export function promptText(prompt: SamPrompt, media: NormalizedMedia): string {

@@ -66,7 +66,7 @@ export function MediaLightbox({
               className="relative grid min-h-0 place-items-center overflow-hidden rounded-2xl bg-black/40 shadow-2xl"
               data-transparent={media.transparent || undefined}
               style={media.transparent ? {
-                backgroundColor: "#1d1f27",
+                backgroundColor: "var(--checker-base)",
                 backgroundImage: "linear-gradient(45deg, #ffffff0a 25%, transparent 25%), linear-gradient(-45deg, #ffffff0a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ffffff0a 75%), linear-gradient(-45deg, transparent 75%, #ffffff0a 75%)",
                 backgroundSize: "20px 20px",
                 backgroundPosition: "0 0, 0 10px, 10px -10px, -10px 0",

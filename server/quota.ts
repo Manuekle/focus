@@ -1,6 +1,6 @@
 import path from "node:path";
 import { createHash } from "node:crypto";
-import { mkdirSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { DatabaseSync } from "node:sqlite";
 import type { Quota } from "../shared/account";
 import { AppError } from "./errors";
@@ -37,14 +37,30 @@ export function generationLimitError(limit = freeEditLimit()): AppError {
   return new AppError("generation_limit_reached", 403, `You’ve used all ${limit} free generations. You can still view and export your saved work.`);
 }
 
+// One embedded SQLite file on the local volume, opened once per process and
+// shared by every route bundle: no database server, and no reopen, pragma and
+// schema check on each request.
+const connection = (globalThis as { __focusQuotaDb?: { file: string; db: DatabaseSync } });
+
+function quotaDb(): DatabaseSync {
+  const file = path.join(dataRoot(), "quota", "generations.sqlite");
+  // A volume wiped under the running process gets a fresh file.
+  if (connection.__focusQuotaDb?.file === file && connection.__focusQuotaDb.db.isOpen && existsSync(file)) return connection.__focusQuotaDb.db;
+  if (connection.__focusQuotaDb?.db.isOpen) connection.__focusQuotaDb.db.close();
+  connection.__focusQuotaDb = undefined;
+  mkdirSync(path.dirname(file), { recursive: true });
+  const db = new DatabaseSync(file);
+  db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
+  db.exec("CREATE TABLE IF NOT EXISTS counters (id TEXT PRIMARY KEY, used INTEGER NOT NULL CHECK (used >= 0))");
+  connection.__focusQuotaDb = { file, db };
+  return db;
+}
+
 /** Transactions coordinate route bundles and processes on the Railway volume. */
 function counter(keys: readonly string[], consume: boolean, inherit?: string, mirrors: readonly string[] = []): Quota {
   let db: DatabaseSync | undefined;
   try {
-    mkdirSync(path.join(dataRoot(), "quota"), { recursive: true });
-    db = new DatabaseSync(path.join(dataRoot(), "quota", "generations.sqlite"));
-    db.exec("PRAGMA busy_timeout = 5000; PRAGMA journal_mode = WAL; PRAGMA synchronous = FULL;");
-    db.exec("CREATE TABLE IF NOT EXISTS counters (id TEXT PRIMARY KEY, used INTEGER NOT NULL CHECK (used >= 0))");
+    db = quotaDb();
     db.exec("BEGIN IMMEDIATE");
     const seed = db.prepare("INSERT OR IGNORE INTO counters (id, used) VALUES (?, ?)");
     const read = db.prepare("SELECT used FROM counters WHERE id = ?");
@@ -73,8 +89,6 @@ function counter(keys: readonly string[], consume: boolean, inherit?: string, mi
     if (db?.isTransaction) db.exec("ROLLBACK");
     if (error instanceof AppError) throw error;
     throw new AppError("quota_unavailable", 503, "Your generation allowance couldn’t be checked. Try again shortly.");
-  } finally {
-    db?.close();
   }
 }
 

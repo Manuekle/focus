@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { ApiErrorBodySchema } from "../../shared/schemas";
-import { RotoscopeFlipbookSchema, RotoscopeRunSchema, RotoscopeRunSummarySchema, type RotoscopeRun } from "../../shared/rotoscope";
+import { RotoscopeFlipbookSchema, RotoscopeRunSchema, RotoscopeRunSummarySchema, type RotoscopeRun, type RotoscopeRunSummary } from "../../shared/rotoscope";
+import { discoverRotoscopeRuns, observeRotoscope } from "../_activity/activity-adapters";
+import { getActivityVersion } from "../_activity/activity-store";
 
 export class RotoscopeApiError extends Error {
   constructor(message: string, readonly code: string) {
@@ -15,6 +17,7 @@ function errorFrom(body: unknown, status: number): RotoscopeApiError {
 }
 
 async function call<T>(url: string, init: RequestInit | undefined, parse: (value: unknown) => T): Promise<T> {
+  const activityVersion = getActivityVersion();
   let response: Response;
   try {
     response = await fetch(url, { cache: "no-store", ...init });
@@ -23,14 +26,19 @@ async function call<T>(url: string, init: RequestInit | undefined, parse: (value
   }
   const body = response.status === 204 ? null : await response.json().catch(() => null);
   if (!response.ok) throw errorFrom(body, response.status);
-  return parse(body);
+  const value = parse(body);
+  // Every run read also tells the sidebar's Activity where the run stands.
+  if (parse === parseRun && activityVersion === getActivityVersion()) observeRotoscope(value as RotoscopeRun);
+  if (parse === parseRunList && activityVersion === getActivityVersion()) discoverRotoscopeRuns(value as RotoscopeRunSummary[]);
+  return value;
 }
 
 const parseRun = (value: unknown) => RotoscopeRunSchema.parse(value);
+const parseRunList = (value: unknown) => RotoscopeRunSummarySchema.array().parse(value);
 const post = (body?: unknown): RequestInit => (body === undefined ? { method: "POST" } : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
 
 export const rotoscopeApi = {
-  list: () => call("/api/rotoscope/runs", undefined, (value) => RotoscopeRunSummarySchema.array().parse(value)),
+  list: () => call("/api/rotoscope/runs", undefined, parseRunList),
   get: (id: string) => call(`/api/rotoscope/runs/${id}`, undefined, parseRun),
   generate: (id: string, options: { dual?: boolean; frame?: number } = {}) => call(`/api/rotoscope/runs/${id}/generate`, post(options), parseRun),
   rename: (id: string, name: string) => call(`/api/rotoscope/runs/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }, parseRun),
@@ -45,8 +53,10 @@ export const rotoscopeApi = {
     form.set("marks", note.marks, "marks.png");
     return call(`/api/rotoscope/runs/${id}/correct`, { method: "POST", body: form }, parseRun);
   },
+  /** Adds the next seconds of the video as open frames (no drawing yet). */
+  extend: (id: string, seconds: number) => call(`/api/rotoscope/runs/${id}/extend`, post({ seconds }), parseRun),
   rebuildGuides: (id: string) => call(`/api/rotoscope/runs/${id}/guides`, post(), parseRun),
-  openInFlipbook: (id: string) => call(`/api/rotoscope/runs/${id}/flipbook`, post(), (value) => RotoscopeFlipbookSchema.parse(value)),
+  openInFlipbook: (id: string, options: { readonly sound: boolean }) => call(`/api/rotoscope/runs/${id}/flipbook`, post(options), (value) => RotoscopeFlipbookSchema.parse(value)),
   remove: (id: string) => call(`/api/rotoscope/runs/${id}`, { method: "DELETE" }, () => undefined),
 };
 
@@ -69,6 +79,7 @@ export function createRun(input: CreateRunInput, onProgress: (fraction: number) 
     xhr.onload = () => {
       if (xhr.status === 201) {
         const parsed = RotoscopeRunSchema.safeParse(xhr.response);
+        if (parsed.success) observeRotoscope(parsed.data);
         return parsed.success ? resolve(parsed.data) : reject(new RotoscopeApiError("We couldn’t read the server’s response. Try again.", "invalid_response"));
       }
       reject(errorFrom(xhr.response, xhr.status));
@@ -80,7 +91,7 @@ export function createRun(input: CreateRunInput, onProgress: (fraction: number) 
   return { promise, abort: () => xhr.abort() };
 }
 
-const busy = (run: RotoscopeRun | null) => run !== null && (run.phase === "preparing" || run.phase === "generating" || run.phase === "stopping");
+const busy = (run: RotoscopeRun | null) => run !== null && (run.phase === "preparing" || run.phase === "extending" || run.phase === "generating" || run.phase === "stopping");
 
 /** Follows a run while it prepares or draws; settles to the server's state when it stops. */
 export function useRotoscopeRun(id: string | null) {

@@ -8,7 +8,7 @@ const frames = Array.from({ length: 36 }, (_, index) => ({
   index: index + 1,
   status: index < 12 ? "approved" as const : "pending" as const,
   approvedAttempt: index < 12 ? 1 : null,
-  manual: false, correction: null,
+  manual: false, correction: null, reading: null,
   attempts: index < 12 ? [{ attempt: 1, at: new Date(0).toISOString(), passed: true, checks: [] }] : [],
 }));
 
@@ -22,6 +22,7 @@ const run: RotoscopeRun = {
   fps: 9,
   start: 0,
   seconds: 4,
+  videoSeconds: 4,
   maxAttempts: 3,
   error: null,
   halted: null,
@@ -31,6 +32,8 @@ const run: RotoscopeRun = {
   dual: false,
   dualAvailable: false,
   guidesVersion: "",
+  hasAudio: false,
+  lessons: [],
 };
 
 export default function CanvasPreview() {

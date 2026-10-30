@@ -12,10 +12,10 @@ import styles from "./hero-badge.module.css";
 
 // The hidden lines share one grid cell, so the widest one keeps the pill steady.
 const LINES = [
-  { Icon: StackPlayColored24, text: "One drawing. A little more life" },
+  { Icon: StackPlayColored24, text: "One drawing, endless motion" },
   { Icon: AstronomyColored24, text: "Your character, frame by frame" },
-  { Icon: EarthColored24, text: "Your ideas, a little more alive" },
-  { Icon: VideoColored24, text: "MP4, GIF and every little frame" },
+  { Icon: EarthColored24, text: "Sketch it once. Watch it move" },
+  { Icon: VideoColored24, text: "MP4, GIF and every single frame" },
 ] as const;
 const INTERVAL_MS = 3200;
 

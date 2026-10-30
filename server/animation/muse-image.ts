@@ -2,7 +2,7 @@ import OpenAI from "openai";
 import sharp from "sharp";
 import type { ResponseCreateParamsNonStreaming } from "openai/resources/responses/responses";
 import { AppError } from "../errors";
-import { Limiter, metaClient, metaError, requireMetaConfig, withRetry } from "../ai/meta";
+import { concurrency, Limiter, metaClient, metaError, requireMetaConfig, withRetry } from "../ai/meta";
 import { recordUsage } from "../ai/usage";
 
 // Muse Image through the Responses API with its image_generation tool. Each
@@ -12,7 +12,7 @@ import { recordUsage } from "../ai/usage";
 // Built-in image search, web search and shell stay off: a pose drawing must
 // come from the reference, not from the internet.
 
-const limiter = ((globalThis as { __focusImageLimiter?: Limiter }).__focusImageLimiter ??= new Limiter(2));
+const limiter = ((globalThis as { __focusImageLimiter?: Limiter }).__focusImageLimiter ??= new Limiter(concurrency("FOCUS_IMAGE_CONCURRENCY", 2)));
 
 export type ImageReference = {
   readonly png: Buffer;

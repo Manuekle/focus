@@ -35,9 +35,9 @@ import { suggestTemporalEvent, type TemporalSuggestion } from "../shared/tempora
 import { checkTemporalTracking, selectionTrack } from "../shared/temporal-track";
 import { assistEdit } from "./ai/assistant";
 import { interpretInstruction } from "./ai/planner";
-import { segmentVideo, type SamPrompt } from "./ai/sam";
+import { prefetchVideoFile, segmentVideo, type SamPrompt } from "./ai/sam";
 import { recordUsage } from "./ai/usage";
-import { Limiter } from "./ai/meta";
+import { concurrency, Limiter } from "./ai/meta";
 import { AppError } from "./errors";
 import { renderComparison, renderVideo, trackingMaskSource, verifyOutput } from "./video/compositor";
 import { retainedIds } from "./projects";
@@ -73,7 +73,7 @@ const runtime: JobRuntime = {
   inflightPlans: (shared.inflightPlans ??= new Map()),
   locks: (shared.locks ??= new Map()),
   inflightRenders: (shared.inflightRenders ??= new Map()),
-  renderLimiter: (shared.renderLimiter ??= new Limiter(1)),
+  renderLimiter: (shared.renderLimiter ??= new Limiter(concurrency("FOCUS_RENDER_CONCURRENCY", 1))),
 };
 const { running, inflightSegmentations, inflightPlans, locks, inflightRenders, renderLimiter } = runtime;
 
@@ -317,16 +317,27 @@ async function filledVariant(video: VideoAsset, conceptId: string): Promise<Trac
   return best;
 }
 
+// A segmentation file holds every frame's masks; the planner only needs its
+// concept. Remembered per file and modification time, so a new edit doesn't
+// parse megabytes of masks again before Muse Spark can start.
+const conceptCache = ((globalThis as { __focusConcepts?: Map<string, { mtimeMs: number; concept: string | null }> }).__focusConcepts ??= new Map());
+
 /** Concepts with a stored concept segmentation for this video. */
 async function knownConcepts(video: VideoAsset): Promise<string[]> {
   const dir = path.join(videoDir(video.id), "segmentations");
   const names = await readdir(dir).catch(() => [] as string[]);
-  const concepts: string[] = [];
-  for (const name of names.filter((entry) => entry.startsWith("c-") && !entry.includes("+") && entry.endsWith(".json"))) {
+  const concepts = await Promise.all(names.filter((entry) => entry.startsWith("c-") && !entry.includes("+") && entry.endsWith(".json")).map(async (name) => {
+    const file = path.join(dir, name);
+    const mtimeMs = await stat(file).then((info) => info.mtimeMs).catch(() => null);
+    if (mtimeMs === null) return null;
+    const known = conceptCache.get(file);
+    if (known?.mtimeMs === mtimeMs) return known.concept;
     const tracking = await readTracking(video, name.slice(0, -5)).catch(() => null);
-    if (tracking?.source === "concept" && tracking.objects.length > 0) concepts.push(tracking.prompt);
-  }
-  return concepts;
+    const concept = tracking?.source === "concept" && tracking.objects.length > 0 ? tracking.prompt : null;
+    conceptCache.set(file, { mtimeMs, concept });
+    return concept;
+  }));
+  return concepts.filter((concept): concept is string => concept !== null);
 }
 
 async function trackingFor(
@@ -366,6 +377,11 @@ async function trackingFor(
 }
 
 async function runJob(id: string, video: VideoAsset, request: EditRequest, key: string, signal: AbortSignal): Promise<void> {
+  // The video upload SAM needs runs alongside Muse Spark's planning instead of
+  // after it. Skipped when tests replace the segmenter, so no paid call leaks.
+  if (services.segment === segmentVideo) {
+    prefetchVideoFile({ videoId: video.id, videoDir: videoDir(video.id), normalizedPath: path.join(videoDir(video.id), VIDEO_FILES.normalized) });
+  }
   const { plan, reused: planReused } = await planFor(video, request, key, signal);
   // Cached plans can outlive the build that enabled their effect.
   assertEffectEnabled(effectFamily(plan.effect));
@@ -919,6 +935,7 @@ export async function cleanupVideos(): Promise<void> {
     if (!touched) continue;
     if (Date.now() - touched.mtimeMs > JOB_TTL_MS) {
       await rm(dir, { recursive: true, force: true });
+      for (const file of conceptCache.keys()) if (file.startsWith(dir + path.sep)) conceptCache.delete(file);
       continue;
     }
     if (!info) continue;

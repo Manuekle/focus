@@ -48,9 +48,9 @@ describe("checkScale", () => {
   });
 
   it("fails a character drawn too small and says which lines to reach", () => {
-    const check = checkScale({ head: 330, feet: 1200, center: 500 }, target);
+    const check = checkScale({ head: 480, feet: 1200, center: 500 }, target);
     expect(check.passed).toBe(false);
-    expect(check.feedback).toBe("The top of the hair must touch grid line 1.6 (it is at 2.6).");
+    expect(check.feedback).toBe("The top of the hair must touch grid line 1.6 (it is at 3.8).");
   });
 
   it("fails a character standing too high", () => {

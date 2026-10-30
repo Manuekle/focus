@@ -36,6 +36,8 @@ HAND_EDGES = [(0, 1), (1, 2), (2, 3), (3, 4), (0, 5), (5, 6), (6, 7), (7, 8), (0
 LEFT_HAND, RIGHT_HAND = 91, 112
 # Skull height over the jaw-line ends, in jaw widths, when the sheet's hair top is unknown.
 SKULL_DEFAULT = 0.6
+# The shortest share of the sheet's limb length the source's reach may cap a limb at.
+SHEET_FLOOR = 0.85
 
 
 def load(path: Path) -> np.ndarray:
@@ -158,11 +160,13 @@ def rotoscope_retarget(track: PoseTrack, placed: np.ndarray) -> np.ndarray:
         ref_len[left] = ref_len[right] = float(longest)
     # A sheet measures limbs badly when they are bent or turned (three-quarter view, clasped hands)
     # and tends to read them long. No limb may be longer, against the torso, than the source shows
-    # it at its most extended: over-long arms and legs are what the generator then copies.
+    # it at its most extended: over-long arms and legs are what the generator then copies. But a
+    # clip that never extends a limb (an arm raised toward the camera throughout) would make its
+    # shortened look the full length: never below SHEET_FLOOR of the sheet (body-map.ts sheetLengths).
     for bone in LIMB_BONES:
         seen = [length(f, *bone) / t for f in frames if np.isfinite(f[list(bone)]).all() and np.isfinite(t := torso(f)) and t > 0]
         if seen:
-            ref_len[bone] = min(ref_len[bone], float(np.percentile(seen, 90)) * ref_torso)
+            ref_len[bone] = max(SHEET_FLOOR * ref_len[bone], min(ref_len[bone], float(np.percentile(seen, 90)) * ref_torso))
     ref_ratio = {bone: ref_len[bone] / ref_torso for bone in LIMB_BONES}
     full = full_lengths(frames, ref_ratio, torso_median)
     spans = {pair: float(np.nanmedian([length(f, *pair) for f in frames])) for pair in [(5, 6), (11, 12)]}

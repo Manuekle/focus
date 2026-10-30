@@ -42,10 +42,11 @@ test("shows the studio immediately and holds the demo still when motion is reduc
   await expect(page.getByLabel("Describe the change")).toHaveValue("Blur the background");
 });
 
-test("stays dark when the browser and saved preference are light", async ({ page }) => {
+test("follows the saved theme, then the browser preference", async ({ page }) => {
   await page.emulateMedia({ colorScheme: "light" });
-  await page.addInitScript(() => localStorage.setItem("focus-theme", "light"));
   await page.goto("/");
+  await expect(page.locator("html")).toHaveCSS("color-scheme", "light");
+  await page.getByRole("button", { name: "Switch to dark mode" }).click();
   await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
   await expect(page.getByRole("heading", { name: /Your drawings\.\s*In motion\.$/ })).toHaveCSS("color", "rgb(245, 245, 245)");
   await page.reload();

@@ -8,14 +8,13 @@ import { HugeiconsIcon } from "../../components/icons/icon";
 import { Alert, useDismissedNotices, type AlertTone } from "../../components/ui/alert";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
-import { Disclosure } from "../../components/ui/disclosure";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Spinner } from "../../components/ui/spinner";
 import { Switch } from "../../components/ui/switch";
 import { ToggleChip } from "../../components/ui/toggle-chip";
 import { useToast } from "../../components/toast-provider";
-import { nextOpenFrame, rotoscopeUrls, type RotoscopeFrame, type RotoscopeLive, type RotoscopeRun } from "../../shared/rotoscope";
+import { EXTEND_STEPS, nextOpenFrame, rotoscopeUrls, videoLeft, type RotoscopeFrame, type RotoscopeLive, type RotoscopeRun } from "../../shared/rotoscope";
 import { MAX_SEQUENCE_FRAMES, SEQUENCE_CLOCK } from "../../shared/sequence";
 import composer from "../_editor/composer.module.css";
 import fb from "../flipbook/flipbook.module.css";
@@ -24,6 +23,7 @@ import { rotoscopeApi } from "./rotoscope-client";
 import { CHECKS } from "./rotoscope-create";
 import { PencilNote } from "./pencil-note";
 import { MediaLightbox, ZoomButton, type LightboxMedia } from "../../components/ui/media-lightbox";
+import { ActivityLog } from "./activity-log";
 import { CompareSheet } from "./compare-sheet";
 import { RotoscopeCanvas } from "./rotoscope-canvas";
 import { RotoscopePlayer, type LiveStage } from "./rotoscope-player";
@@ -51,6 +51,7 @@ const PREPARE_STEPS = [
 const CHECK_LABEL: Record<string, string> = Object.fromEntries(CHECKS.map((check) => [check.name, check.label]));
 /** Flipbook's longest sequence, in whole seconds. */
 const MAX_SEQUENCE_SECONDS = MAX_SEQUENCE_FRAMES / SEQUENCE_CLOCK;
+const SOUND_KEY = "focus.rotoscope.sound";
 
 /**
  * A run as a free canvas: the frame sheet fills the workspace and can be
@@ -66,8 +67,10 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
   const [picked, setPicked] = useState<number | null>(null);
   const live = run.live;
   const next = nextOpenFrame(run);
-  const working = run.phase === "preparing" || run.phase === "generating" || run.phase === "stopping";
+  const working = run.phase === "preparing" || run.phase === "extending" || run.phase === "generating" || run.phase === "stopping";
   const complete = run.total > 0 && run.approved === run.total;
+  // Seconds of video after the last frame: a finished run can go on a piece at a time.
+  const left = videoLeft(run);
   const started = run.frames.some((frame) => frame.attempts.length > 0);
   const halted = run.halted && run.phase === "ready" ? run.halted : null;
   // While drawing, the inspector follows the frame in progress until another frame is picked.
@@ -111,6 +114,21 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
   // Two drawings per attempt (Muse Image + Higgsfield), the closer match kept; the server remembers it per run.
   const [dual, setDual] = useState(run.dual);
   const draw = () => void act("Couldn’t start drawing", () => rotoscopeApi.generate(run.id, { dual }));
+  // The next piece of the video: its frames are cut and measured, then drawn as soon as they are ready.
+  const [step, setStep] = useState<number>(EXTEND_STEPS[0]);
+  const [drawAfterExtend, setDrawAfterExtend] = useState(false);
+  const extend = () => void act("Couldn’t add the next part", async () => {
+    const updated = await rotoscopeApi.extend(run.id, step);
+    setDrawAfterExtend(true);
+    return updated;
+  });
+  useEffect(() => {
+    if (!drawAfterExtend || run.phase !== "ready") return;
+    setDrawAfterExtend(false);
+    if (!run.error && nextOpenFrame(run) !== null) draw();
+    // Only the end of the extension starts the drawing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drawAfterExtend, run.phase]);
   const correct = (frame: number, attempt: number, note: { comment: string; marks: Blob; redraw: boolean }) => void act("Couldn’t save your note", async () => {
     const updated = await rotoscopeApi.correct(run.id, { frame, attempt, comment: note.comment, marks: note.marks });
     if (!note.redraw) return updated;
@@ -125,10 +143,20 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
   const wholeSeconds = Math.min(MAX_SEQUENCE_SECONDS, Math.floor(prefix / run.fps));
   const canOpen = run.approved > 0 && wholeSeconds >= 1 && !working;
 
+  // Off until asked for; one choice for the preview and for what Flipbook receives.
+  const [sound, setSound] = useState(false);
+  useEffect(() => {
+    try { setSound(localStorage.getItem(SOUND_KEY) === "1"); } catch { /* storage unavailable: stays off */ }
+  }, []);
+  const toggleSound = (on: boolean) => {
+    setSound(on);
+    try { localStorage.setItem(SOUND_KEY, on ? "1" : "0"); } catch { /* not remembered */ }
+  };
+
   const openInFlipbook = async () => {
     setOpening(true);
     try {
-      const { flipbookId } = await rotoscopeApi.openInFlipbook(run.id);
+      const { flipbookId } = await rotoscopeApi.openInFlipbook(run.id, { sound: sound && run.hasAudio });
       router.push(`/flipbook?f=${flipbookId}`);
     } catch (cause) {
       toast({ title: "Couldn’t open in Flipbook", description: cause instanceof Error ? cause.message : "Try again.", status: "error" });
@@ -140,7 +168,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
   // One notice at a time, most urgent first. Informational ones can be closed, and the next one in line takes their place.
   const { isDismissed, dismiss } = useDismissedNotices(run.id);
   const hints: { readonly key: string; readonly tone: AlertTone; readonly text: ReactNode }[] = [];
-  if (complete && !working) hints.push({ key: "complete", tone: "success", text: "Every frame approved. Open it in Flipbook, play it in the preview, or download the transparent PNGs." });
+  if (complete && !working) hints.push({ key: left > 0 ? "complete-more" : "complete", tone: "success", text: left > 0 ? `Every frame approved. ${left.toFixed(1)} s of the video are left: animate the next part from the bar below the canvas, or open what you have in Flipbook.` : "Every frame approved. Open it in Flipbook, play it in the preview, or download the transparent PNGs." });
   if (run.approved > 0 && wholeSeconds < 1 && !working) hints.push({ key: "whole-seconds", tone: "info", text: `Flipbook works in whole seconds: approve at least ${Math.ceil(run.fps)} frames in order to open this run there.` });
   if (run.approved > 0 && prefix / run.fps > MAX_SEQUENCE_SECONDS && !working) hints.push({ key: "max-seconds", tone: "info", text: `Flipbook holds up to ${MAX_SEQUENCE_SECONDS} s: only the first ${MAX_SEQUENCE_SECONDS} s of approved frames will open there.` });
   const hint = hints.find((entry) => !isDismissed(entry.key));
@@ -162,7 +190,11 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
   // The canvas's own controls, bottom centre: draw what is left, or redraw the frame that is selected.
   const redrawable = selected !== null && run.phase === "ready" && selected.index !== next && (selected.status === "approved" || selected.attempts.length > 0);
   const drawing = run.phase === "generating" || run.phase === "stopping";
-  const canvasActions = !run.frames.length ? null : drawing ? (
+  const canvasActions = !run.frames.length ? null : run.phase === "extending" ? (
+    <span className={styles.barStatus} role="status">
+      <Spinner className="size-3.5" />Adding the next part of the video…
+    </span>
+  ) : drawing ? (
     <>
       <span className={styles.barStatus} role="status">
         <Spinner className="size-3.5" />
@@ -172,8 +204,24 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
         <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={1.75} />Stop
       </Button>
     </>
-  ) : run.phase === "ready" && ((!complete && run.total > 0) || redrawable) ? (
+  ) : run.phase === "ready" && ((!complete && run.total > 0) || redrawable || (complete && left > 0)) ? (
     <>
+      {complete && left > 0 ? (
+        <>
+          <div role="group" aria-label="Seconds to add">
+            <SlidingTabs
+              className={styles.stepTabs}
+              tabs={EXTEND_STEPS.filter((seconds, i) => i === 0 || seconds <= Math.ceil(left)).map((seconds) => ({ id: String(seconds), label: `${seconds} s` }))}
+              value={String(step)}
+              onValueChange={(id) => setStep(Number(id))}
+            />
+          </div>
+          <Button size="sm" variant="ai" disabled={acting} onClick={extend} title={`Cuts the next ${Math.min(step, left).toFixed(1)} s of the video into frames and draws them. Frames 1–${run.total} stay as they are.`}>
+            {acting ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={14} strokeWidth={1.75} />}
+            Animate next {step === 1 ? "second" : `${step} s`}
+          </Button>
+        </>
+      ) : null}
       {!complete && run.total > 0 ? (
         <Button size="sm" variant="ai" disabled={acting} onClick={draw} title={started ? `Keeps frames 1–${(next ?? 1) - 1} and draws the rest.` : "Draws one image per frame, in order."}>
           {acting ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={14} strokeWidth={1.75} />}
@@ -210,7 +258,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
               variant={complete ? "ai" : "outline"}
               disabled={!canOpen || opening || acting}
               onClick={() => void openInFlipbook()}
-              title={canOpen ? `Copies the first ${wholeSeconds} s of approved frames into a new editable Flipbook.` : "Flipbook works in whole seconds: approve at least one second of frames in order."}
+              title={canOpen ? `Copies the first ${wholeSeconds} s of approved frames into a new editable Flipbook${sound && run.hasAudio ? ", with the video’s sound" : ""}.` : "Flipbook works in whole seconds: approve at least one second of frames in order."}
             >
               {opening ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.75} />}
               Open in Flipbook
@@ -312,6 +360,9 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
                     fps={run.fps}
                     live={liveStage}
                     compact
+                    audioSrc={run.hasAudio ? rotoscopeUrls.audio(run.id) : null}
+                    sound={sound}
+                    onSoundChange={toggleSound}
                     focus={selected ? {
                       index: selected.index,
                       source: rotoscopeUrls.media(run.id, "source", selected.index),
@@ -394,6 +445,38 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
                       ) : null}
                     </section>
 
+                    <section className={fb.panel} aria-labelledby="ro-lessons">
+                      <div className={fb.panelHead}><h2 id="ro-lessons" className={fb.panelTitle}>What the AI learned</h2></div>
+                      {run.lessons.length ? (
+                        <>
+                          <p className={fb.hint}>Every rejected drawing teaches a rule. The most frequent recent ones go into the instructions of every new drawing; mistakes it stops making fade out on their own.</p>
+                          <ul className={styles.lessons}>
+                            {run.lessons.map((lesson) => (
+                              <li key={lesson.rule} data-active={lesson.inPrompt}>
+                                <span className="text-foreground">{lesson.rule}</span>
+                                <span className={styles.lessonMeta}>
+                                  {lesson.count}× · {lesson.frames.length === 1 ? "frame" : "frames"}{" "}
+                                  {lesson.frames.map((index, i) => (
+                                    <span key={index}>{i ? ", " : ""}<button type="button" className={styles.lessonFrame} onClick={() => pick(index)}>{index}</button></span>
+                                  ))}
+                                  {lesson.inPrompt ? " · in the instructions" : ""}
+                                </span>
+                              </li>
+                            ))}
+                          </ul>
+                        </>
+                      ) : (
+                        <p className={fb.hint}>Nothing yet. When a drawing is rejected, the mistake becomes a rule the next drawings follow.</p>
+                      )}
+                    </section>
+
+                    {run.log.length ? (
+                      <section className={fb.panel} aria-labelledby="ro-activity">
+                        <div className={fb.panelHead}><h2 id="ro-activity" className={fb.panelTitle}>Activity</h2></div>
+                        <ActivityLog log={run.log} labels={CHECK_LABEL} liveFrame={live?.frame ?? null} onFrame={pick} />
+                      </section>
+                    ) : null}
+
                     <section className={fb.panel} aria-labelledby="ro-checks">
                       <div className={fb.panelHead}><h2 id="ro-checks" className={fb.panelTitle}>Quality checks</h2></div>
                       <p className={fb.hint}>A frame is approved only when every check passes. After {run.maxAttempts} failed attempts the run stops on that frame; nothing after it is drawn until you resume or approve an attempt yourself.</p>
@@ -402,13 +485,6 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
                       </ul>
                     </section>
 
-                    {run.log.length ? (
-                      <section className={fb.panel}>
-                        <Disclosure title="Activity">
-                          <pre className={styles.log}>{run.log.slice(-30).join("\n")}</pre>
-                        </Disclosure>
-                      </section>
-                    ) : null}
                   </div>
                 )}
               </div>
@@ -453,17 +529,27 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
   const live = run.live?.frame === frame.index ? run.live : null;
   const state = frameState(run, frame);
   const recorded = [...frame.attempts].reverse();
-  const [chosen, setChosen] = useState<number | null>(requested?.attempt ?? null);
-  useEffect(() => { if (requested) { setChosen(requested.attempt); setInspect("drawing"); } }, [requested]);
+  // The attempt in progress, from its first stroke until it is recorded; it can be fetched only once it is cut out.
+  const inProgress = live && !frame.attempts.some((entry) => entry.attempt === live.attempt) ? live : null;
+  const liveAttempt = inProgress?.attempt ?? null;
+  // "live" follows the attempt in progress from one try to the next; a number stays on that attempt.
+  const pickOf = (picked: number) => (picked === liveAttempt ? "live" as const : picked);
+  const [chosen, setChosen] = useState<number | "live" | null>(requested ? pickOf(requested.attempt) : null);
+  useEffect(() => { if (requested) { setChosen(pickOf(requested.attempt)); setInspect("drawing"); } }, [requested]); // eslint-disable-line react-hooks/exhaustive-deps -- only a new request re-picks
   const [inspect, setInspect] = useState<InspectView>("drawing");
   const [marking, setMarking] = useState(false);
-  // The attempt in progress shows first while it is being checked; otherwise the approved or latest one.
-  const liveAttempt = live?.image && !frame.attempts.some((entry) => entry.attempt === live.attempt) ? live.attempt : null;
-  const attempt = chosen ?? liveAttempt ?? frame.approvedAttempt ?? recorded[0]?.attempt ?? null;
+  // The attempt in progress shows first; otherwise the approved or latest one. A pick that no longer exists falls back.
+  const known = (candidate: number) => candidate === liveAttempt || frame.attempts.some((entry) => entry.attempt === candidate);
+  const picked = chosen === "live" ? liveAttempt : chosen !== null && known(chosen) ? chosen : null;
+  const attempt = picked ?? liveAttempt ?? frame.approvedAttempt ?? recorded[0]?.attempt ?? null;
   const record = frame.attempts.find((entry) => entry.attempt === attempt) ?? null;
   useEffect(() => { onViewing(attempt); }, [attempt]); // eslint-disable-line react-hooks/exhaustive-deps -- onViewing is a fresh closure each render; only a change of attempt matters
   const view: InspectView = inspect === "note" && !frame.correction ? "drawing" : inspect;
-  const drawing = attempt !== null ? rotoscopeUrls.media(run.id, "attempt", frame.index, attempt) : null;
+  // Still being drawn: there is no picture to fetch yet, so the frame shows the work instead.
+  const pending = inProgress !== null && attempt === liveAttempt && !inProgress.image ? inProgress : null;
+  const drawing = attempt !== null && !pending ? rotoscopeUrls.media(run.id, "attempt", frame.index, attempt) : null;
+  // A picture that fails to load (removed, or not written yet) shows a note instead of a broken image.
+  const [failed, setFailed] = useState<string | null>(null);
   const image = view === "video" ? rotoscopeUrls.media(run.id, "source", frame.index)
     : view === "guide" ? rotoscopeUrls.guide(run, frame.index)
       : view === "note" ? `${rotoscopeUrls.media(run.id, "correction", frame.index)}&v=${encodeURIComponent(frame.correction?.at ?? "")}`
@@ -506,19 +592,25 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
           onCancel={() => setMarking(false)}
           onSend={(note) => { setMarking(false); onCorrect(record.attempt, note); }}
         />
-      ) : image ? (
+      ) : view === "drawing" && pending ? (
+        <div className={`${fb.inspect} ${styles.inspectFrame} ${styles.drawingNow}`} role="status">
+          {/* eslint-disable-next-line @next/next/no-img-element -- the video frame being drawn, dimmed under the work */}
+          <img className={styles.drawingGhost} src={rotoscopeUrls.media(run.id, "source", frame.index)} alt="" draggable={false} />
+          <span className={styles.drawingSweep} aria-hidden />
+          <span className={styles.drawingStatus}>
+            <Spinner className="size-3.5" />
+            <span className="t-shimmer" data-text={LIVE_LABEL[pending.stage]}>{LIVE_LABEL[pending.stage]}</span>
+            <span className={styles.drawingTry}>{pending.tries}/{run.maxAttempts}</span>
+          </span>
+        </div>
+      ) : image && failed !== image ? (
         <ZoomButton className={`${fb.inspect} ${styles.inspectFrame}`} data-transparent={view === "drawing" ? "" : undefined} label="Open larger" onOpen={() => setZoomed(true)}>
           {/* eslint-disable-next-line @next/next/no-img-element -- from the run's media route */}
-          <img key={image} className={styles.arrive} src={image} alt={view === "video" ? "Video frame" : view === "guide" ? "Pose guide on your character's proportions" : view === "note" ? "Your pencil marks on the earlier drawing" : `Attempt ${attempt}`} draggable={false} />
+          <img key={image} className={styles.arrive} src={image} alt={view === "video" ? "Video frame" : view === "guide" ? "Pose guide on your character's proportions" : view === "note" ? "Your pencil marks on the earlier drawing" : `Attempt ${attempt}`} draggable={false} onError={() => setFailed(image)} />
         </ZoomButton>
       ) : (
         <div className={`${fb.inspect} ${styles.inspectFrame}`}>
-          {live ? (
-            <>
-              <Skeleton className={fb.working} />
-              <span className={fb.workingLabel}>{LIVE_LABEL[live.stage]}</span>
-            </>
-          ) : <span className={fb.stripEmpty}>Not drawn yet</span>}
+          <span className={fb.stripEmpty}>{image ? "This picture couldn’t be loaded" : "Not drawn yet"}</span>
         </div>
       )}
       <MediaLightbox
@@ -534,10 +626,14 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
         </Button>
       ) : null}
 
-      {live ? (
+      {/* The frame itself says where the work is while it shows it; elsewhere this line does. */}
+      {live && !(view === "drawing" && pending) ? (
         <div className={styles.liveRow} role="status">
           <Spinner className="size-3.5" />
-          <span>Attempt {live.tries} of {run.maxAttempts} · {LIVE_LABEL[live.stage]}</span>
+          <span className="min-w-0 flex-1">Attempt {live.tries} of {run.maxAttempts} · {LIVE_LABEL[live.stage]}</span>
+          {view !== "drawing" || attempt !== liveAttempt ? (
+            <Button size="xs" variant="ghost" onClick={() => { setChosen("live"); setInspect("drawing"); }}>Show</Button>
+          ) : null}
         </div>
       ) : null}
       {!following && run.live ? <Button size="sm" variant="ghost" className="w-fit" onClick={onFollow}>Follow frame {run.live.frame} live</Button> : null}
@@ -546,7 +642,7 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
         <div className={fb.controlField}>
           <span className={fb.sectionLabel}>Attempts</span>
           <div className={fb.chips} role="group" aria-label="Attempts">
-            {liveAttempt ? <ToggleChip size="xs" selected={attempt === liveAttempt} onClick={() => setChosen(liveAttempt)}><Spinner className="size-3" />Now</ToggleChip> : null}
+            {liveAttempt ? <ToggleChip size="xs" selected={attempt === liveAttempt} onClick={() => { setChosen("live"); setInspect("drawing"); }}><Spinner className="size-3" />Now</ToggleChip> : null}
             {recorded.map((entry) => (
               <ToggleChip key={entry.attempt} size="xs" selected={attempt === entry.attempt} onClick={() => { setChosen(entry.attempt); setInspect("drawing"); }}>
                 <HugeiconsIcon icon={frame.approvedAttempt === entry.attempt ? Tick02Icon : entry.passed ? Tick02Icon : Cancel01Icon} size={12} strokeWidth={2} />
@@ -591,6 +687,13 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
         <p className={fb.hint}>The checks appear here when this attempt is judged.</p>
       ) : !frame.attempts.length && !live ? (
         <p className={fb.hint}>{state === "pending" ? "This frame hasn’t been drawn yet. Frames are drawn in order." : ""}</p>
+      ) : null}
+
+      {frame.reading ? (
+        <div className={fb.checks}>
+          <span className={fb.sectionLabel}>How the AI read this frame</span>
+          <p className={styles.reading}>{frame.reading}</p>
+        </div>
       ) : null}
     </section>
   );

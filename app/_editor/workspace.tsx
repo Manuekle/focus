@@ -10,7 +10,6 @@ import { EASE_OUT } from "../../lib/ease";
 import { useReducedMotion } from "../../lib/hooks/use-reduced-motion";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
-import { Badge } from "../../components/ui/badge";
 import { useToast } from "../../components/toast-provider";
 import { formatSeconds } from "../../shared/media";
 import type { EffectId, VideoAsset } from "../../shared/schemas";
@@ -33,8 +32,8 @@ import styles from "./workspace.module.css";
 /** The work in order, as the header tabs show it; any step can be the first. */
 const HOW_STEPS = [
   { n: "01", title: "Bring a character", copy: "Design one, or start from a single illustration of your own.", Icon: ShapesColored24, href: "/characters", cta: "My characters" },
-  { n: "02", title: "Give it a little life", copy: "Describe a movement, or follow a video: editable, or copied frame by frame.", Icon: FeatherSparkleColored24, href: "/flipbook", cta: "Animate" },
-  { n: "03", title: "Make it yours", copy: "Every way ends in the Flipbook editor: fine-tune the drawings and export.", Icon: ClipboardColored24, href: "/flipbook", cta: null },
+  { n: "02", title: "Give it life", copy: "Describe a movement, or follow a video: editable, or copied frame by frame.", Icon: FeatherSparkleColored24, href: "/flipbook", cta: "Animate" },
+  { n: "03", title: "Make it yours", copy: "Every way ends in the Flipbook editor: fine-tune the drawings and export.", Icon: ClipboardColored24, href: "/flipbook", cta: "Open Flipbook" },
   { n: "04", title: "Put it in a video", copy: "Optional: track it in a clip, add effects and sound in the video editor.", Icon: VideoColored24, href: "/editor", cta: "Video editor" },
 ] as const;
 
@@ -70,6 +69,23 @@ export function Workspace() {
     animate: { opacity: 1, y: 0 },
     transition: { duration: reducedMotion ? 0 : 0.5, delay: reducedMotion ? 0 : delay, ease: EASE_OUT },
   });
+  // Sections below the fold rise in once, the first time they come into view.
+  const reveal = {
+    initial: reducedMotion ? false as const : { opacity: 0, y: 16 },
+    whileInView: { opacity: 1, y: 0 },
+    viewport: { once: true, margin: "0px 0px -80px 0px" },
+    transition: { duration: reducedMotion ? 0 : 0.6, ease: EASE_OUT },
+  };
+
+  // The sticky header only takes a surface once the page moves under it.
+  const [scrolled, setScrolled] = useState(false);
+  useEffect(() => {
+    const update = () => setScrolled(window.scrollY > 8);
+    update();
+    window.addEventListener("scroll", update, { passive: true });
+    return () => window.removeEventListener("scroll", update);
+  }, []);
+
   useEffect(() => {
     const element = contentRef.current;
     if (!element) return;
@@ -140,18 +156,20 @@ export function Workspace() {
   return (
     <div className={styles.workspace}>
       <a className={styles.skipLink} href="#home-content">Skip to content</a>
-      <motion.header data-home-enter="" {...entrance(0, 6)} className={styles.header}>
-        <Link href="/" className={styles.brand} aria-label="Focus — Home">
-          <Image src="/brand/focus-cat.webp" alt="" width={38} height={38} />
-          <span>focus<span className={styles.brandDot}>.</span></span>
-        </Link>
-        <nav className={styles.nav} aria-label="Main navigation">
-          <Button asChild size="sm" variant="ghost" className={styles.navLink}><a href="#how-it-works">How it works</a></Button>
-          <Button asChild size="sm" variant="ghost" className={styles.navLink}><a href="#video-effects">Video effects</a></Button>
-          {hasFlipbook ? <Button asChild size="sm" variant="ghost" className={styles.navLink}><Link href="/characters">Characters</Link></Button> : null}
-          {hasFlipbook ? <Button asChild size="sm" variant="ghost" className={styles.navLink}><Link href="/flipbook">Animate</Link></Button> : null}
-          <AccountButton session={session} next={hasFlipbook ? "/flipbook" : "/editor"} />
-        </nav>
+      <motion.header data-home-enter="" data-scrolled={scrolled} {...entrance(0, 6)} className={styles.headerBar}>
+        <div className={styles.header}>
+          <Link href="/" className={styles.brand} aria-label="Focus — Home">
+            <Image src="/brand/focus-cat.webp" alt="" width={38} height={38} />
+            <span>focus<span className={styles.brandDot}>.</span></span>
+          </Link>
+          <nav className={styles.nav} aria-label="Main navigation">
+            <Button asChild size="sm" variant="ghost" className={styles.navLink}><a href="#how-it-works">How it works</a></Button>
+            <Button asChild size="sm" variant="ghost" className={styles.navLink}><a href="#video-effects">Video effects</a></Button>
+            {hasFlipbook ? <Button asChild size="sm" variant="ghost" className={styles.navLink}><Link href="/characters">Characters</Link></Button> : null}
+            {hasFlipbook ? <Button asChild size="sm" variant="ghost" className={styles.navLink}><Link href="/flipbook">Animate</Link></Button> : null}
+            <AccountButton session={session} next={hasFlipbook ? "/flipbook" : "/editor"} />
+          </nav>
+        </div>
       </motion.header>
 
         <main id="home-content" tabIndex={-1} className={styles.home}>
@@ -159,21 +177,22 @@ export function Workspace() {
             <div className={styles.heroCopy}>
               <p className={styles.eyebrow}><HeroBadge /></p>
               <h1 id="home-title" className={styles.title}><span className={styles.titleLine}><span className={styles.titleWhite}>Your drawings.</span></span><br /><span className={styles.titleLine}><span className={styles.titleAccent}>In motion.</span></span></h1>
-              <p className={styles.intro}>A wave, a dance, a whole little story.<br /><span>Bring your characters to life, one frame at a time.</span></p>
+              <p className={styles.intro}>A wave, a dance, a whole story.<br /><span>Bring your characters to life, one frame at a time.</span></p>
               <div className={styles.cta}>
-                <Button asChild>{hasFlipbook ? <Link href="/characters">Create a character <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.75} /></Link> : <a href="#flipbook-demo">Explore flipbook <HugeiconsIcon icon={ArrowDown01Icon} size={14} strokeWidth={1.75} /></a>}</Button>
-                {hasFlipbook ? <Button asChild variant="outline"><Link href="/flipbook">Animate a drawing</Link></Button> : <Button asChild variant="outline"><a href="#video-effects">Explore video effects</a></Button>}
+                <Button asChild size="lg" className={styles.heroButton}>{hasFlipbook ? <Link href="/characters">Create a character <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.75} /></Link> : <a href="#flipbook-demo">Explore flipbook <HugeiconsIcon icon={ArrowDown01Icon} size={14} strokeWidth={1.75} /></a>}</Button>
+                {hasFlipbook ? <Button asChild size="lg" variant="outline" className={styles.heroButton}><Link href="/flipbook">Animate a drawing</Link></Button> : <Button asChild size="lg" variant="outline" className={styles.heroButton}><a href="#video-effects">Explore video effects</a></Button>}
               </div>
             </div>
             <div className={styles.heroVisual}><FlipbookDemo /></div>
-            <p className={styles.formats}>Made to keep. MP4 <span>·</span> GIF <span>·</span> Sprite sheets <span>·</span> PNG frames</p>
+            <p className={styles.formats}>Export as MP4 <span>·</span> GIF <span>·</span> Sprite sheets <span>·</span> PNG frames</p>
           </section>
 
-          <section id="how-it-works" className={styles.how} aria-labelledby="how-title">
+          <motion.section data-home-enter="" {...reveal} id="how-it-works" className={styles.how} aria-labelledby="how-title">
             <h2 id="how-title" className={styles.sectionTitle}>From a still to a story.</h2>
             <ol className={styles.footerSteps}>
               {HOW_STEPS.map(({ n, title, copy, Icon, href, cta }) => (
                 <li key={n} className={styles.footerStep}>
+                  <span className={styles.stepIndex} aria-hidden="true">{n}</span>
                   <Icon className={styles.stepIcon} width={48} height={48} aria-hidden="true" />
                   <h3>{title}</h3>
                   <p>{copy}</p>
@@ -181,19 +200,19 @@ export function Workspace() {
                 </li>
               ))}
             </ol>
-          </section>
+          </motion.section>
 
-          <section id="video-effects" className={styles.videoSection} aria-labelledby="video-title">
+          <motion.section data-home-enter="" {...reveal} id="video-effects" className={styles.videoSection} aria-labelledby="video-title">
             <div className={styles.sectionHeading}>
               <div>
-                <p className={styles.sectionEyebrow}>A little more to play with</p>
+                <p className={styles.sectionEyebrow}>Beyond the flipbook</p>
                 <h2 id="video-title" className={styles.sectionTitle}>Make your video stand out.</h2>
                 <p className={styles.sectionDescription}>Keep your subject in color, let it break the frame, or give every move a trail.</p>
               </div>
               <Button asChild variant="outline"><Link href="/editor">Open video editor <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.5} /></Link></Button>
             </div>
             <HeroDemo />
-          </section>
+          </motion.section>
 
           <motion.section data-home-enter="" {...entrance(0.58)} ref={studioRef} id="studio" tabIndex={-1} className={styles.studio} aria-label="Video studio">
             <ol className={styles.steps} aria-label="Editing steps">
@@ -228,28 +247,52 @@ export function Workspace() {
             </motion.div>
           </motion.section>
 
-          <section className={styles.concept} aria-labelledby="concept-title">
-            <div className={styles.conceptCopy}>
-              <p className={styles.sectionEyebrow}><Badge size="sm">In exploration</Badge>Subject effects</p>
-              <h2 id="concept-title" className={styles.sectionTitle}>One subject. A new vibe.</h2>
-              <p className={styles.sectionDescription}>Someone you’d rather keep out of focus? Choose a detected subject and give just them a glitch or distortion effect.</p>
-              <p className={styles.conceptNote}>A look at what’s next. These effects aren’t available yet.</p>
+          <motion.section data-home-enter="" {...reveal} className={styles.closing} aria-labelledby="closing-title">
+            <h2 id="closing-title" className={styles.closingTitle}>{hasFlipbook ? <>Your first flipbook<br />is one drawing away.</> : <>Your next clip,<br />made to stand out.</>}</h2>
+            <p className={styles.sectionDescription}>{hasFlipbook ? "Bring a character, give it a movement, and export it the way you need it." : "Keep your subject in color, let it break the frame, or give every move a trail."}</p>
+            <div className={styles.cta}>
+              {hasFlipbook ? (
+                <>
+                  <Button asChild size="lg" className={styles.heroButton}><Link href="/characters">Create a character <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.75} /></Link></Button>
+                  <Button asChild size="lg" variant="outline" className={styles.heroButton}><Link href="/flipbook">Animate a drawing</Link></Button>
+                </>
+              ) : (
+                <Button asChild size="lg" className={styles.heroButton}><Link href="/editor">Open video editor <HugeiconsIcon icon={ArrowRight01Icon} size={14} strokeWidth={1.75} /></Link></Button>
+              )}
             </div>
-            <div className={styles.conceptFlow}>
-              <p className={styles.conceptFlowTitle}>The idea</p>
-              <ol>
-                <li><span>1</span><div><h3>Find the subjects</h3><p>See detected people and objects across your clip.</p></div></li>
-                <li><span>2</span><div><h3>Choose who changes</h3><p>Select a subject and keep everyone else as they are.</p></div></li>
-                <li><span>3</span><div><h3>Give them an effect</h3><p>Glitch or distortion. Adjust the strength, then preview.</p></div></li>
-              </ol>
-            </div>
-          </section>
+          </motion.section>
 
           <footer className={styles.footer}>
+            <div className={styles.footerTop}>
+              <div className={styles.footerBrand}>
+                <Link href="/" className={styles.brand} aria-label="Focus — Home">
+                  <Image src="/brand/focus-cat.webp" alt="" width={32} height={32} />
+                  <span>focus<span className={styles.brandDot}>.</span></span>
+                </Link>
+                <p>Bring your drawings to life, one frame at a time.</p>
+              </div>
+              <nav className={styles.footerNav} aria-label="Footer">
+                <div>
+                  <p className={styles.footerNavTitle}>Product</p>
+                  <ul>
+                    <li><a href="#how-it-works">How it works</a></li>
+                    {hasFlipbook ? <li><Link href="/characters">Characters</Link></li> : null}
+                    {hasFlipbook ? <li><Link href="/flipbook">Animate</Link></li> : null}
+                    <li><Link href="/editor">Video editor</Link></li>
+                  </ul>
+                </div>
+                <div>
+                  <p className={styles.footerNavTitle}>Legal</p>
+                  <ul>
+                    <li><Link href="/privacy">Privacy</Link></li>
+                    <li><Link href="/data-deletion">Data deletion</Link></li>
+                  </ul>
+                </div>
+              </nav>
+            </div>
             <div className={styles.footerBottom}>
-              <p>Made for your little ideas.</p>
+              <p>© {new Date().getFullYear()} Focus. Drawings, in motion.</p>
               <div className={styles.footerSocial}>
-                <span>Made to stand out.</span>
                 <a className={styles.footerSocialLink} href="https://github.com/Manuekle/focus" target="_blank" rel="noreferrer" aria-label="GitHub — Manuekle/focus">
                   <GithubIcon />
                 </a>

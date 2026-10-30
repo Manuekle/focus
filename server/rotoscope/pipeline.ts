@@ -7,13 +7,15 @@ import sharp from "sharp";
 import { ffmpeg } from "../ffmpeg";
 import { dataRoot } from "../storage";
 import { checkAlpha, fromRgba, KEY_COLOR, keyOut, toRgba } from "./alpha";
-import { bodySpec, checkProportions, describeFace, fullLengths, onCanvas, type BodySpec } from "./body-map";
-import { CANVAS, describeCharacter, drawFrame, fitCanvas, framePrompt, onColour, reviewCheck, reviewFrame, sideBySide, toCanvas, type Correction, type FrameInput } from "./draw";
+import { checkStyle, outlineDensity } from "./style";
+import { bodySpec, checkProportions, describeFace, fullLengths, onCanvas, sheetLengths, type BodySpec } from "./body-map";
+import { CANVAS, describeCharacter, describeFrame, drawFrame, fitCanvas, framePrompt, onColour, reviewCheck, reviewFrame, sideBySide, toCanvas, type Correction, type FrameInput } from "./draw";
 import { generateHiggsfield, higgsfieldConfigured } from "./higgsfield";
+import { lessonLines } from "./lessons";
 import { detectCrop, extractFrames, frameName } from "./extract";
-import { comparePoses, describePose, type Pose } from "./pose-match";
-import { checkScale, figureBox, GRID, proportions, targets, toLine, withGrid, type Marks } from "./grid";
-import { copyInto, readManifest, runFrames, writeManifest, type Check, type Manifest, type RunOutcome } from "./run-state";
+import { comparePoses, describeLegs, describePose, type Pose } from "./pose-match";
+import { checkScale, figureBox, GRID, REGISTER_SCALE, proportions, targets, toLine, withGrid, type Marks } from "./grid";
+import { acquireLock, copyInto, readManifest, runFrames, writeManifest, type Check, type Manifest, type RunOutcome } from "./run-state";
 
 // The rotoscope pipeline, shared by the console (cli.ts) and the app
 // (service.ts): video → frames at N fps → DWPose guides on the character's
@@ -105,7 +107,7 @@ function drawnSize(p: Pose, reference: Pose): number | null {
  */
 async function register(png: Buffer, drawn: Marks | null, target: Marks): Promise<{ png: Buffer; note: string }> {
   if (!drawn || drawn.feet <= drawn.head) return { png, note: "not registered (body not found)" };
-  const scale = Math.min(1.25, Math.max(0.8, (target.feet - target.head) / (drawn.feet - drawn.head)));
+  const scale = Math.min(REGISTER_SCALE.max, Math.max(REGISTER_SCALE.min, (target.feet - target.head) / (drawn.feet - drawn.head)));
   const ox = Math.round(target.center - drawn.center * scale);
   const oy = Math.round(target.feet - drawn.feet * scale);
   return { png: await place(png, scale, ox, oy, { r: 0, g: 0, b: 0, alpha: 0 }), note: `moved ${ox}, ${oy} px, scaled ${scale.toFixed(2)}` };
@@ -115,9 +117,11 @@ async function register(png: Buffer, drawn: Marks | null, target: Marks): Promis
  * The drawing's own hair top, soles and hip centre, measured on its pixels before registration.
  * Hair top: from the nose straight up each column of the head until the figure ends (a raised
  * hand beside the head is a different column; the median ignores one that touches the hair).
- * Soles: the lowest opaque row.
+ * Soles: the lowest opaque row. A hand resting on or over the head joins the hair in every
+ * column: when one is there and the scan lands well above where the sheet puts the hair top
+ * for a figure this size, the sheet's hair top is used instead.
  */
-async function drawnMarks(keyed: Buffer, drawn: Pose): Promise<Marks | null> {
+async function drawnMarks(keyed: Buffer, drawn: Pose, reference: Pose, sheet: ReturnType<typeof proportions>): Promise<Marks | null> {
   const [nose, ls, rs, lh, rh] = [at(drawn, 0), at(drawn, 5), at(drawn, 6), at(drawn, 11), at(drawn, 12)];
   if (!nose || !ls || !rs || !lh || !rh) return null;
   const { data, info } = await sharp(keyed).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
@@ -135,7 +139,18 @@ async function drawnMarks(keyed: Buffer, drawn: Pose): Promise<Marks | null> {
     for (let x = 0; x < info.width; x++) if (solid(x, y)) { soles = y; break; }
   }
   if (soles < 0) return null;
-  return { head: tops[Math.floor(tops.length / 2)], feet: soles, center: (lh[0] + rh[0]) / 2 };
+  let head = tops[Math.floor(tops.length / 2)];
+  const size = drawnSize(drawn, reference);
+  const reach = Math.abs(ls[0] - rs[0]) * 0.75;
+  const handOverHead = [9, 10, ...Array.from({ length: 42 }, (_, i) => 91 + i)].some((i) => {
+    const p = at(drawn, i);
+    return p !== null && p[1] < nose[1] && Math.abs(p[0] - nose[0]) < reach;
+  });
+  if (size && handOverHead) {
+    const expected = nose[1] - sheet.headAboveNose * size;
+    if (head < expected - 0.15 * sheet.headAboveNose * size) head = expected;
+  }
+  return { head, feet: soles, center: (lh[0] + rh[0]) / 2 };
 }
 
 export type InitInput = {
@@ -160,12 +175,15 @@ export async function initRun(dir: string, input: InitInput, log: (line: string)
   if (count === 0) throw new Error("no frames in that part of the video");
   log(`extracted ${count} frames at ${fps} fps${crop ? `, cropped to ${crop.width}×${crop.height}+${crop.x}+${crop.y}` : ""}`);
   const characterFile = await copyInto(dir, character, "character.png");
-  log("DWPose on the source frames and the character…");
-  await pose(["detect", "--images", path.join(dir, "source"), "--out", path.join(dir, "source-poses.json")]);
-  await pose(["detect", "--image", path.join(dir, "character.png"), "--out", path.join(dir, "character-pose.json")]);
-  await drawGuides(dir);
-  log("describing the character with Muse Spark…");
-  await writeFile(path.join(dir, "character.txt"), `${await describeCharacter(await readFile(path.join(dir, "character.png")))}\n`);
+  log("DWPose on the source frames and the character, Muse Spark describing the character…");
+  // Independent work at once: both DWPose passes (local CPU) and the character description (remote).
+  await Promise.all([
+    Promise.all([
+      pose(["detect", "--images", path.join(dir, "source"), "--out", path.join(dir, "source-poses.json")]),
+      pose(["detect", "--image", path.join(dir, "character.png"), "--out", path.join(dir, "character-pose.json")]),
+    ]).then(() => drawGuides(dir)),
+    readFile(path.join(dir, "character.png")).then(describeCharacter).then((text) => writeFile(path.join(dir, "character.txt"), `${text}\n`)),
+  ]);
   const names = (await readdir(path.join(dir, "source"))).filter((name) => /^frame_\d{4}\.png$/.test(name)).sort();
   const manifest: Manifest = {
     version: 1, createdAt: new Date().toISOString(), ...(input.ownerId ? { ownerId: input.ownerId } : {}), ...(input.name ? { name: input.name } : {}),
@@ -176,6 +194,48 @@ export async function initRun(dir: string, input: InitInput, log: (line: string)
   await writeManifest(dir, manifest);
   log(`run ready: ${names.length} frames`);
   return manifest;
+}
+
+/**
+ * The next `seconds` of the video after the run's last frame, added as open frames: cut at the
+ * same rate and crop, DWPose on the new frames only, and the pose guides redrawn over the whole
+ * clip. Approved frames, their poses and the clip layout stay as they are. The manifest is
+ * written last, so an interrupted extension leaves the run as it was. Returns how many frames
+ * were added (0 when the video has no more frames).
+ */
+export async function extendRun(dir: string, seconds: number, duration: number, log: (line: string) => void = () => undefined): Promise<number> {
+  const release = await acquireLock(dir);
+  try {
+    const manifest = await readManifest(dir);
+    const count = manifest.frames.length;
+    // The new frames carry on the same cadence: frame n+1 is n frame lengths after the start.
+    const start = manifest.start + count / manifest.fps;
+    const length = Math.min(seconds, duration - start);
+    if (length < 0.5 / manifest.fps) return 0;
+    const next = path.join(dir, "source-next");
+    await rm(next, { recursive: true, force: true });
+    const added = await extractFrames({ video: manifest.video, out: next, fps: manifest.fps, start, seconds: length, crop: manifest.crop });
+    if (added === 0) return 0;
+    log(`extracted ${added} more frames from ${start.toFixed(2)} s`);
+    log("DWPose on the new frames…");
+    await pose(["detect", "--images", next, "--out", path.join(next, "poses.json")]);
+    const fresh = JSON.parse(await readFile(path.join(next, "poses.json"), "utf8")) as PoseFile;
+    const names = Array.from({ length: added }, (_, i) => frameName(count + i + 1));
+    for (const [i, name] of names.entries()) await rename(path.join(next, frameName(i + 1)), path.join(dir, "source", name));
+    // Poses past the manifest's frames are leftovers of an interrupted extension.
+    const poses = JSON.parse(await readFile(path.join(dir, "source-poses.json"), "utf8")) as PoseFile;
+    const files = poses.files ?? manifest.frames.map((frame) => path.basename(frame.source));
+    await writeFile(path.join(dir, "source-poses.json"), JSON.stringify({ ...poses, files: [...files.slice(0, count), ...names], frames: [...poses.frames.slice(0, count), ...fresh.frames] }));
+    log("redrawing the pose guides…");
+    await drawGuides(dir);
+    await rm(next, { recursive: true, force: true });
+    manifest.frames.push(...names.map((name, i) => ({ index: count + i + 1, source: `source/${name}`, status: "pending" as const, attempts: [] })));
+    await writeManifest(dir, { ...manifest, seconds: start + length - manifest.start, halted: null });
+    log(`run extended: ${count + added} frames`);
+    return added;
+  } finally {
+    await release();
+  }
 }
 
 /** The pose guides: every source pose on the character's proportions (rotoscope_pose.py guides). */
@@ -213,8 +273,10 @@ export async function layoutRun(dir: string) {
   const layoutFile = path.join(dir, "layout.json");
   const fit: Layout = existsSync(layoutFile) ? JSON.parse(await readFile(layoutFile, "utf8")) : clipLayout(guides, reference, sheet);
   if (!existsSync(layoutFile)) await writeFile(layoutFile, `${JSON.stringify(fit)}\n`);
-  // How long each guide bone is at its most extended: shorter means the camera sees it foreshortened.
-  const full = fullLengths(guides.frames.map((frame) => onCanvas(frame, fit)));
+  // How long each guide bone is at its most extended, never shorter than the character's own limb:
+  // shorter means the camera sees it foreshortened.
+  const onFit = guides.frames.map((frame) => onCanvas(frame, fit));
+  const full = fullLengths(onFit, sheetLengths(reference, onFit));
   const poseImages = async (index: number) => {
     const guide = guides.frames[index - 1];
     const size = drawnSize(guide, reference) ?? 1;
@@ -247,6 +309,9 @@ export async function previewRun(dir: string, log: (line: string) => void = () =
   }
   log(`layout scale ${fit.scale.toFixed(3)}; images in ${out}`);
 }
+
+/** Where a frame's reading (describeFrame) is kept, relative to the run folder. */
+export const readingFile = (index: number) => `readings/${frameName(index).replace(".png", ".txt")}`;
 
 /** Draws and validates every open frame in order, behind the firewall (run-state.ts). */
 export type LiveStage = "drawing" | "measuring" | "checking" | "reviewing" | "approved" | "rejected";
@@ -281,7 +346,7 @@ export async function generateRun(dir: string, options: { limit?: number; only?:
   if (options.dual && !higgsfieldConfigured()) throw new Error("two drawings per attempt need Higgsfield: set HF_CREDENTIALS");
   const generators: Generator[] = options.dual ? ["muse", "higgsfield"] : ["muse"];
   const sourcePoses = JSON.parse(await readFile(path.join(dir, "source-poses.json"), "utf8")) as PoseFile;
-  const { character, poseImages } = await layoutRun(dir);
+  const { character, reference, sheet, poseImages } = await layoutRun(dir);
   const description = (await readFile(path.join(dir, "character.txt"), "utf8")).trim();
   const chosen = new Map<string, Candidate>();
   const key = (index: number, attempt: number) => `${index}:${attempt}`;
@@ -296,14 +361,57 @@ export async function generateRun(dir: string, options: { limit?: number; only?:
   };
   await mkdir(path.join(dir, "work"), { recursive: true });
 
+  /**
+   * Muse Spark's reading of a video frame, asked once and kept in readings/ for every attempt,
+   * resume and redraw. Without one (the call failed) the frame is drawn from the measurements alone.
+   */
+  const readings = new Map<number, Promise<string>>();
+  const readingFor = (index: number, source: string): Promise<string> => {
+    let pending = readings.get(index);
+    if (!pending) {
+      // Only a kept reading is shared; a failed one is asked again on the next attempt, as before.
+      pending = readFrame(index, source).then((reading) => {
+        if (!reading) readings.delete(index);
+        return reading;
+      }, (error: unknown) => {
+        readings.delete(index);
+        throw error;
+      });
+      readings.set(index, pending);
+    }
+    return pending;
+  };
+  /** Starts the next open frame's reading while this one is drawn: it never depends on the drawing. */
+  const openFrames = (await readManifest(dir)).frames.filter((frame) => frame.status !== "approved" || options.only === frame.index);
+  const readAhead = (index: number) => {
+    const next = openFrames.find((frame) => frame.index > index);
+    if (next && options.only === undefined) void readingFor(next.index, next.source).catch(() => undefined);
+  };
+  const readFrame = async (index: number, source: string): Promise<string> => {
+    const file = path.join(dir, readingFile(index));
+    const kept = await readFile(file, "utf8").catch(() => null);
+    if (kept !== null) return kept.trim();
+    try {
+      const reading = await describeFrame(await readFile(path.join(dir, source)), options.signal);
+      await mkdir(path.dirname(file), { recursive: true });
+      await writeFile(file, `${reading}\n`);
+      log(`  frame ${index} read: ${reading.slice(0, 160)}`);
+      return reading;
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      log(`  frame ${index}: couldn't read the video frame (${error instanceof Error ? error.message.slice(0, 120) : String(error)}); drawing from the measurements`);
+      return "";
+    }
+  };
+
   /** Cuts out, measures and registers one generator's picture; every measurable check runs here. */
-  const measure = async (generator: Generator, raw: Buffer, stem: string, index: number, marks: Marks, spec: BodySpec | null): Promise<Candidate> => {
+  const measure = async (generator: Generator, raw: Buffer, stem: string, index: number, marks: Marks, spec: BodySpec | null, anchorDensity: number | null): Promise<Candidate> => {
     await writeFile(`${stem}_${generator}_raw.png`, raw);
     const keyed = await fromRgba(keyOut(await toRgba(raw)));
     await writeFile(`${stem}_${generator}_keyed.png`, keyed);
     await pose(["detect", "--image", `${stem}_${generator}_keyed.png`, "--out", `${stem}_${generator}_pose.json`]);
     const drawn = (JSON.parse(await readFile(`${stem}_${generator}_pose.json`, "utf8")) as PoseFile).frames[0];
-    const measured = await drawnMarks(keyed, drawn);
+    const measured = await drawnMarks(keyed, drawn, reference, sheet);
     const placed = await register(keyed, measured, marks);
     const poseCheck = comparePoses(sourcePoses.frames[index - 1], drawn);
     const alphaCheck = checkAlpha(await toRgba(placed.png));
@@ -312,13 +420,15 @@ export async function generateRun(dir: string, options: { limit?: number; only?:
       checkScale(measured, marks),
       checkProportions(spec, drawn, measured, marks),
       alphaCheck,
+      // Line work held to the run's first drawing: the model reviewer lets a prettier, softer render through.
+      ...(anchorDensity ? [checkStyle(await toRgba(placed.png), anchorDensity)] : []),
     ];
     return { generator, png: placed.png, drawn, checks, note: placed.note };
   };
 
   return runFrames(dir, {
     log,
-    draw: async ({ frame, attempt, previous, feedback }) => {
+    draw: async ({ frame, attempt, previous, anchor, feedback }) => {
       const name = frameName(frame.index);
       const tries = feedback.length + 1;
       live(frame.index, attempt, tries, "drawing");
@@ -330,12 +440,17 @@ export async function generateRun(dir: string, options: { limit?: number; only?:
         guide,
         sourceGrey,
         previous: previous ? await withGrid(await onColour(previous, KEY_COLOR)) : null,
+        // Frame 2 already copies frame 1 as its previous: the anchor only matters once they differ.
+        anchor: anchor && previous && !anchor.equals(previous) ? await withGrid(await onColour(anchor, KEY_COLOR)) : null,
         marks,
         poseText: describePose(source),
         bodyMap: spec?.text ?? "",
         face: describeFace(source),
+        reading: await readingFor(frame.index, frame.source).finally(() => readAhead(frame.index)),
         correction: await correctionFor(frame),
         feedback,
+        // Every rejected attempt so far, read back from the manifest: the run learns as it draws.
+        lessons: lessonLines((await readManifest(dir)).frames, frame.index, feedback.length === 0),
         signal: options.signal,
       };
       const stem = path.join(dir, "work", `${name.replace(".png", "")}_a${attempt}`);
@@ -352,7 +467,8 @@ export async function generateRun(dir: string, options: { limit?: number; only?:
       }
       if (!ready.length) throw (drawings[0] as PromiseRejectedResult).reason;
       live(frame.index, attempt, tries, "measuring");
-      const candidates = await Promise.all(ready.map(({ generator, raw }) => measure(generator, raw, stem, frame.index, marks, spec)));
+      const anchorDensity = anchor ? outlineDensity(await toRgba(anchor)) : null;
+      const candidates = await Promise.all(ready.map(({ generator, raw }) => measure(generator, raw, stem, frame.index, marks, spec, anchorDensity)));
       const best = candidates.reduce((winner, candidate) => (better(candidate, winner) ? candidate : winner));
       const others = candidates.filter((candidate) => candidate !== best)
         .map((candidate) => `${GENERATOR_NAME[candidate.generator]} ${candidate.checks.filter((check) => !check.passed).map((check) => check.name).join("+") || "passed"}`);
@@ -362,7 +478,7 @@ export async function generateRun(dir: string, options: { limit?: number; only?:
       await writeFile(`${stem}_pose.json`, JSON.stringify({ width: CANVAS.width, height: CANVAS.height, frames: [best.drawn] }));
       return best.png;
     },
-    validate: async (png, { frame, attempt, previous, feedback }) => {
+    validate: async (png, { frame, attempt, previous, anchor, feedback }) => {
       const tries = feedback.length + 1;
       live(frame.index, attempt, tries, "checking");
       const winner = chosen.get(key(frame.index, attempt))!;
@@ -375,7 +491,9 @@ export async function generateRun(dir: string, options: { limit?: number; only?:
           character,
           pair: await sideBySide(await readFile(path.join(dir, frame.source)), png),
           previous: previous ? await onColour(previous, "#d8d8d8") : null,
+          anchor: anchor ? await onColour(anchor, "#d8d8d8") : null,
           correction,
+          legs: describeLegs(sourcePoses.frames[frame.index - 1]),
           signal: options.signal,
         }), correction));
       }

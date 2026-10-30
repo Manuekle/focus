@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { checkAlpha, keyOut, type Rgba } from "./alpha";
-import { angleBetween, comparePoses, describePose, direction, type Pose } from "./pose-match";
-import { reviewCheck, type Review } from "./draw";
+import { angleBetween, comparePoses, describeLegs, describePose, direction, type Pose } from "./pose-match";
+import { checkStyle, outlineDensity } from "./style";
+import { framePrompt, reviewCheck, type FrameInput, type Review } from "./draw";
 
 /** A magenta canvas with filled rectangles of the given colours. */
 function canvas(width: number, height: number, rects: { x: number; y: number; w: number; h: number; rgb: [number, number, number] }[]): Rgba {
@@ -114,7 +115,12 @@ describe("comparePoses", () => {
 
   it("describes the pose by screen side, not by the subject's left and right", () => {
     const raised = pose({ ...BASE, 0: [100, 70], 7: [140, 50], 9: [150, 0] });
-    expect(describePose(raised)).toBe("The arm on the LEFT of the image: upper arm points down, forearm points down, hand at waist height. The arm on the RIGHT of the image: upper arm points up, forearm points up, hand above the head. Feet apart.");
+    expect(describePose(raised)).toBe("The arm on the LEFT of the image: upper arm points down, forearm points down, hand at waist height. The arm on the RIGHT of the image: upper arm points up, forearm points up, hand above the head. Legs: both legs straight, knees not bent, the feet are a little apart, closer than the shoulders are wide.");
+  });
+
+  it("measures knees together and crossed legs instead of leaving them to a glance", () => {
+    expect(describeLegs(pose({ ...BASE, 13: [104, 260], 14: [96, 260] }))).toBe("Legs: both legs nearly straight, knees only slightly bent (no crouch), the knees are pulled together, touching, the feet are a little apart, closer than the shoulders are wide.");
+    expect(describeLegs(pose({ ...BASE, 13: [95, 260], 14: [105, 260], 15: [90, 320], 16: [110, 320] }))).toBe("Legs: both legs nearly straight, knees only slightly bent (no crouch), the legs cross at the knees, the legs cross, each foot on the other leg's side.");
   });
 
   it("measures angles and names screen directions", () => {
@@ -143,5 +149,54 @@ describe("reviewCheck", () => {
     const partial = review(() => true);
     partial.limbs = partial.limbs.slice(1);
     expect(reviewCheck(partial).detail).toMatch(/right arm .* not compared/);
+  });
+});
+
+describe("checkStyle", () => {
+  const figure = (stripes: number): Rgba => {
+    const width = 64, height = 64, data = Buffer.alloc(width * height * 4);
+    for (let y = 0; y < height; y++) for (let x = 0; x < width; x++) {
+      const i = (y * width + x) * 4;
+      const inside = x >= 4 && x < 60 && y >= 4 && y < 60;
+      const dark = stripes > 0 && inside && Math.floor(x / stripes) % 2 === 0;
+      data[i] = data[i + 1] = data[i + 2] = dark ? 10 : 230;
+      data[i + 3] = inside ? 255 : 0;
+    }
+    return { data, width, height };
+  };
+
+  it("passes the same line work", () => {
+    expect(checkStyle(figure(4), outlineDensity(figure(4))).passed).toBe(true);
+  });
+
+  it("fails a drawing with soft, lost outlines", () => {
+    const check = checkStyle(figure(0), outlineDensity(figure(4)));
+    expect(check.passed).toBe(false);
+    expect(check.feedback).toMatch(/outlines/);
+  });
+});
+
+describe("framePrompt", () => {
+  const input: FrameInput = {
+    character: Buffer.alloc(0), description: "a girl", guide: Buffer.alloc(0), sourceGrey: Buffer.alloc(0), previous: null,
+    marks: { head: 256, feet: 1472, center: 512 }, poseText: "", bodyMap: "", face: "Face and expression in this frame: eyes open.", correction: null, feedback: [],
+  };
+
+  it("trusts the frame's reading over the measured face", () => {
+    const { prompt } = framePrompt({ ...input, reading: "Eyes closed, head bowed." });
+    expect(prompt).toContain("described by a person who watched the video (trust it for the head, eyes, mouth and hands): Eyes closed, head bowed.");
+    expect(prompt).not.toContain("eyes open");
+  });
+
+  it("falls back to the measured face without a reading", () => {
+    expect(framePrompt(input).prompt).toContain("eyes open");
+  });
+
+  it("holds the style to the first approved frame when there is one", () => {
+    const { prompt, references } = framePrompt({ ...input, previous: Buffer.from("p"), anchor: Buffer.from("a") });
+    const index = references.findIndex((reference) => reference.role.startsWith("THE STYLE ANCHOR")) + 1;
+    expect(index).toBe(5);
+    expect(prompt).toContain(`Style: identical to Image ${index} (the style anchor)`);
+    expect(framePrompt(input).references.some((reference) => reference.role.startsWith("THE STYLE ANCHOR"))).toBe(false);
   });
 });

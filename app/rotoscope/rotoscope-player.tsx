@@ -31,7 +31,7 @@ export type LiveStage = { readonly index: number; readonly source: string; reado
  * rate times 0.1× to 4×, beside their video frames or alone. While a run
  * draws, the stage follows the frame in progress instead.
  */
-export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, compact = false }: {
+export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, compact = false, audioSrc, sound, onSoundChange }: {
   readonly frames: readonly PlayerFrame[];
   readonly fps: number;
   readonly live: LiveStage | null;
@@ -41,6 +41,10 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
   readonly strip: ReactNode;
   /** A shorter stage, for the drawer over the canvas. */
   readonly compact?: boolean;
+  /** The reference video's sound from the run's start; null when the video has none. */
+  readonly audioSrc: string | null;
+  readonly sound: boolean;
+  readonly onSoundChange: (on: boolean) => void;
 }) {
   const [position, setPosition] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -58,6 +62,7 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
     try { localStorage.setItem(SMOOTHER_KEY, on ? "1" : "0"); } catch { /* not remembered */ }
   };
   const preloaded = useRef(new Map<string, HTMLImageElement>());
+  const track = useRef<HTMLAudioElement | null>(null);
   const current = Math.min(position, Math.max(0, frames.length - 1));
   const frame = frames[current];
   const rate = fps * speed;
@@ -96,6 +101,26 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
     }, 1000 / rate);
     return () => clearTimeout(timer);
   }, [playing, current, rate, loop, frames.length]);
+
+  // The video's sound follows the playhead: frame N is heard from (N - 1) / fps, at the preview speed.
+  const listening = sound && audioSrc !== null;
+  useEffect(() => {
+    if (!listening) return;
+    const element = new Audio(audioSrc);
+    element.preload = "auto";
+    track.current = element;
+    return () => { element.pause(); element.removeAttribute("src"); element.load(); track.current = null; };
+  }, [listening, audioSrc]);
+  const playhead = frame ? (frame.index - 1) / fps : 0;
+  useEffect(() => {
+    const element = track.current;
+    if (!element) return;
+    if (!listening || !playing || !frame) { element.pause(); return; }
+    element.playbackRate = speed;
+    // Frames are timed by a timer, the sound by the clock: only a real drift (or a loop) moves it.
+    if (Math.abs(element.currentTime - playhead) > 0.25) element.currentTime = playhead;
+    if (element.paused) void element.play().catch(() => undefined);
+  }, [listening, playing, playhead, speed, frame]);
 
   const step = (delta: number) => {
     if (!frames.length) return;
@@ -181,6 +206,11 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
           {(["checker", "white", "dark"] as const).map((value) => (
             <ToggleChip key={value} size="xs" selected={background === value} onClick={() => setBackground(value)}>{value === "checker" ? "Transparent" : value === "white" ? "White" : "Dark"}</ToggleChip>
           ))}
+        </div>
+        <div className={fb.controlRow}>
+          <span className={fb.controlLabel} title={audioSrc ? "Plays the reference video’s sound in sync with the preview, and brings it into Flipbook." : "This video has no sound track."}>Sound</span>
+          <Switch checked={sound && audioSrc !== null} disabled={audioSrc === null} onCheckedChange={onSoundChange} label="Sound: play the reference video’s audio with the preview" />
+          {audioSrc === null ? <span className={fb.controlValue}>No sound in this video</span> : null}
         </div>
         <div className={fb.controlRow}>
           <span className={fb.controlLabel} title="While playing, each drawing dissolves out of the previous one instead of cutting.">Smoother</span>

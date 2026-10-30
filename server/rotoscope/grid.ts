@@ -82,7 +82,12 @@ export function targets(pose: Pose, size: number, sheet: Proportions, transform:
 }
 
 export type ScaleLimits = { readonly head: number; readonly feet: number; readonly center: number };
-export const DEFAULT_SCALE_LIMITS: ScaleLimits = { head: 0.08, feet: 0.06, center: 0.08 };
+// Registration rescales every drawing onto the target lines (0.8–1.25), so a uniform size error
+// is corrected there; these only reject drawings far enough off to lose detail when rescaled.
+// Muse Image draws a figure with a hand on its head up to a quarter taller, on every try: the
+// head limit is what registration can still scale back (a figure 1 / REGISTER_SCALE.min tall).
+export const REGISTER_SCALE = { min: 0.8, max: 1.25 } as const;
+export const DEFAULT_SCALE_LIMITS: ScaleLimits = { head: 1 / REGISTER_SCALE.min - 1, feet: 0.08, center: 0.08 };
 
 /** The drawing's hair top, soles and centre against the target lines, as shares of the target figure height. */
 export function checkScale(drawn: Marks | null, target: Marks, limits: ScaleLimits = DEFAULT_SCALE_LIMITS): Check {

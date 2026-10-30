@@ -1,4 +1,4 @@
-.demo { width: min(760px, 100%); margin: 36px auto 0; }
+.demo { width: 100%; margin: 48px auto 0; }
 
 .frame {
   --split: 50;
@@ -6,10 +6,10 @@
   overflow: hidden;
   padding: 6px;
   border-radius: 22px;
-  background: linear-gradient(180deg, #ffffff0d, #ffffff03);
+  background: linear-gradient(180deg, color-mix(in srgb, var(--foreground) 5.1%, transparent), color-mix(in srgb, var(--foreground) 1.2%, transparent));
   box-shadow:
-    inset 0 1px 0 #ffffff14,
-    inset 0 0 0 1px #ffffff0a,
+    inset 0 1px 0 color-mix(in srgb, var(--foreground) 7.8%, transparent),
+    inset 0 0 0 1px color-mix(in srgb, var(--foreground) 3.9%, transparent),
     0 30px 80px -24px #000000b3,
     0 18px 90px -40px #2853e966;
   touch-action: pan-y;
@@ -42,7 +42,7 @@
   pointer-events: none;
 }
 .tagBefore { left: 18px; }
-.tagAfter { right: 18px; color: var(--foreground); font-family: var(--font-porkys), sans-serif; font-size: 14px; letter-spacing: -0.02em; }
+.tagAfter { right: 18px; color: #f5f5f5; font-family: var(--font-porkys), sans-serif; font-size: 14px; letter-spacing: -0.02em; }
 .tagAfter > span { color: var(--primary); }
 
 .divider {
@@ -94,7 +94,7 @@
 .frame:hover .play,
 .play:focus-visible,
 .play[data-paused="true"] { opacity: 1; }
-.play:hover { color: var(--foreground); }
+.play:hover { color: #f5f5f5; }
 .play:focus-visible { outline: 2px solid #819aff; outline-offset: 2px; }
 
 .caption { display: grid; justify-items: center; gap: 12px; margin-top: 16px; }
@@ -104,8 +104,8 @@
   gap: 2px;
   padding: 3px;
   border-radius: 12px;
-  background: #ffffff06;
-  box-shadow: inset 0 0 0 1px #ffffff0d;
+  background: color-mix(in srgb, var(--foreground) 2.4%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.1%, transparent);
 }
 
 .effectTab {
@@ -122,8 +122,8 @@
 }
 .effectTab:hover { color: var(--foreground); }
 .effectTab[aria-pressed="true"] {
-  background: #ffffff0f;
-  box-shadow: inset 0 1px 0 #ffffff12;
+  background: color-mix(in srgb, var(--foreground) 5.9%, transparent);
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--foreground) 7.1%, transparent);
   color: var(--foreground);
 }
 .effectTab:focus-visible { outline: 2px solid #819aff; outline-offset: 2px; }
@@ -176,3 +176,6 @@
   .effectTab { padding: 7px 10px; font-size: 12px; }
   .line > span { display: none; }
 }
+
+/* Light theme: the same frame, with shadows scaled down for a pale page. */
+:global(:root:not(.dark)) .frame { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--foreground) 8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent), 0 30px 80px -28px rgb(35 39 53 / 0.32), 0 18px 90px -44px #2853e955; }

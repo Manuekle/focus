@@ -149,7 +149,34 @@ export function describePose(source: Pose, minConfidence = DEFAULT_POSE_THRESHOL
     const crosses = hand && Math.sign(hand[0] - shoulders[0]) !== Math.sign((p(side.shoulder) ?? shoulders)[0] - shoulders[0]) ? ", crossing in front of the body to the other side" : "";
     return `The arm on the ${side.screen} of the image: upper arm points ${bone(shoulder, elbow)}, forearm points ${bone(elbow, wrist)}, hand ${hand ? height(hand[1]) : "hidden"}${crosses}.`;
   });
-  const [la, ra] = [p(15), p(16)];
-  const feet = la && ra ? (Math.abs(la[0] - ra[0]) < Math.abs(ls[0] - rs[0]) * 0.5 ? "Legs straight with the feet close together." : "Feet apart.") : "";
-  return [...lines, feet].filter(Boolean).join(" ");
+  return [...lines, describeLegs(source, minConfidence)].filter(Boolean).join(" ");
+}
+
+/**
+ * The legs in screen terms: crossed, knees together or apart, feet together or apart. Measured
+ * on the joints, so the reviewer and the generator get the same facts: a glance at two figures
+ * calls knees-together legs crossed one time and straight the next.
+ */
+export function describeLegs(source: Pose, minConfidence = DEFAULT_POSE_THRESHOLDS.minConfidence): string {
+  const p = (i: number) => point(source, i, minConfidence);
+  const [ls, rs, lh, rh, lk, rk, la, ra] = [p(5), p(6), p(11), p(12), p(13), p(14), p(15), p(16)];
+  if (!lh || !rh || !ls || !rs) return "";
+  const hips = lh[0] - rh[0];
+  const width = Math.abs(ls[0] - rs[0]);
+  // A leg's knee or foot past the other one's, against the hips' order, is a crossed leg.
+  const crossed = (l: Point | null, r: Point | null) => Boolean(l && r && Math.sign(l[0] - r[0]) !== Math.sign(hips) && Math.abs(l[0] - r[0]) > width * 0.05);
+  const knees = !lk || !rk ? "" : crossed(lk, rk) ? "the legs cross at the knees" : Math.abs(lk[0] - rk[0]) < Math.abs(hips) * 0.45 ? "the knees are pulled together, touching" : "";
+  // How far apart against the shoulders: told only "apart", the generator draws a wide stance.
+  const gap = la && ra ? Math.abs(la[0] - ra[0]) / Math.max(1, width) : 0;
+  const feet = !la || !ra ? "" : crossed(la, ra) ? "the legs cross, each foot on the other leg's side"
+    : gap < 0.5 ? "the feet are close together" : gap < 1 ? "the feet are a little apart, closer than the shoulders are wide" : "the feet are apart, as wide as the shoulders or wider";
+  // A knee bends when the shin leaves the thigh's line: under 12° is straight, under 25° barely
+  // bent. Said either way: left unsaid, the generator bends the knees into a dance crouch.
+  const bend = (hip: Point | null, knee: Point | null, ankle: Point | null) => (hip && knee && ankle ? angleBetween([knee[0] - hip[0], knee[1] - hip[1]], [ankle[0] - knee[0], ankle[1] - knee[1]]) : null);
+  const bends = [bend(lh, lk, la), bend(rh, rk, ra)];
+  const known = bends.every((angle) => angle !== null);
+  const most = Math.max(...bends.map((angle) => angle ?? 0));
+  const straight = !known ? "" : most < 12 ? "both legs straight, knees not bent" : most < 25 ? "both legs nearly straight, knees only slightly bent (no crouch)" : "";
+  const parts = [straight, knees, feet].filter(Boolean);
+  return parts.length ? `Legs: ${parts.join(", ")}.` : "";
 }

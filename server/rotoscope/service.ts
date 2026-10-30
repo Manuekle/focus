@@ -16,7 +16,7 @@ import {
   type RotoscopeRunSummary,
 } from "../../shared/rotoscope";
 import { AppError } from "../errors";
-import { probe } from "../ffmpeg";
+import { ffmpeg, probe } from "../ffmpeg";
 import { importSequence } from "../animation/flipbooks";
 import { decodeImage } from "../animation/image-input";
 import { readJsonFile, writeAtomic } from "../animation/store";
@@ -24,7 +24,8 @@ import { writeZip } from "../animation/zip";
 import { frameName } from "./extract";
 import { CANVAS } from "./draw";
 import { higgsfieldConfigured } from "./higgsfield";
-import { generateRun, initRun, poseToolAvailable, reguideRun, runsRoot, type LiveEvent } from "./pipeline";
+import { learn, PROMPT_LESSONS } from "./lessons";
+import { extendRun, generateRun, initRun, poseToolAvailable, readingFile, reguideRun, runsRoot, type LiveEvent } from "./pipeline";
 import { approveManually, attemptFile, readManifest, requestCorrection, type Manifest } from "./run-state";
 
 // Rotoscope runs in the app: one folder per run under FOCUS_DATA_DIR/rotoscope,
@@ -37,15 +38,19 @@ const StateSchema = z.object({
   ownerId: z.string(),
   name: z.string(),
   createdAt: z.string(),
-  phase: z.enum(["preparing", "ready", "generating", "stopping", "failed"]),
+  phase: z.enum(["preparing", "ready", "extending", "generating", "stopping", "failed"]),
   error: z.string().nullable(),
   log: z.array(z.string()),
   live: RotoscopeLiveSchema.nullable().default(null),
   fps: z.number(),
   start: z.number(),
   seconds: z.number().nullable(),
+  /** The whole video's length; measured on first view for runs made before it was stored. */
+  duration: z.number().nullable().default(null),
   /** Draw every attempt with Muse Image and Higgsfield and keep the closer one. */
   dual: z.boolean().default(false),
+  /** The video has a sound track; null until measured (runs made before it was stored). */
+  audio: z.boolean().nullable().default(null),
 });
 type State = z.infer<typeof StateSchema>;
 
@@ -91,9 +96,10 @@ async function ownedState(id: string, ownerId: string): Promise<State> {
   const state = await readState(id);
   if (!state || state.ownerId !== ownerId) throw new AppError("run_not_found", 404, "This rotoscope run doesn’t exist.");
   // A phase whose worker is gone (the server restarted) is settled here.
-  if ((state.phase === "preparing" || state.phase === "generating" || state.phase === "stopping") && !runtime.running.has(id)) {
+  if ((state.phase === "preparing" || state.phase === "extending" || state.phase === "generating" || state.phase === "stopping") && !runtime.running.has(id)) {
     return updateState(id, (current) => current.phase === "preparing"
       ? { ...current, phase: "failed", error: "Preparation was interrupted. Delete this run and create it again." }
+      // An interrupted extension never wrote its manifest: the run is as it was.
       : { ...current, phase: "ready", live: null });
   }
   return state;
@@ -122,7 +128,7 @@ function friendly(error: unknown): string {
 
 // ── Views ──────────────────────────────────────────────────────────────────
 
-function view(state: State, manifest: Manifest | null): RotoscopeRun {
+function view(state: State, manifest: Manifest | null, readings: ReadonlyMap<number, string> = new Map()): RotoscopeRun {
   const frames = (manifest?.frames ?? []).map((frame) => ({
     index: frame.index,
     status: frame.status,
@@ -130,6 +136,7 @@ function view(state: State, manifest: Manifest | null): RotoscopeRun {
     approvedAttempt: frame.approved?.attempt ?? null,
     manual: Boolean(frame.approved?.manual),
     correction: frame.correction ? { comment: frame.correction.comment, attempt: frame.correction.attempt, at: frame.correction.at } : null,
+    reading: readings.get(frame.index) ?? null,
   }));
   return {
     id: state.id,
@@ -141,6 +148,7 @@ function view(state: State, manifest: Manifest | null): RotoscopeRun {
     fps: state.fps,
     start: state.start,
     seconds: state.seconds,
+    videoSeconds: state.duration,
     maxAttempts: manifest?.maxAttempts ?? ROTOSCOPE_LIMITS.maxAttempts,
     error: state.error,
     halted: manifest?.halted ? { frame: manifest.halted.frame, reason: manifest.halted.reason } : null,
@@ -150,14 +158,37 @@ function view(state: State, manifest: Manifest | null): RotoscopeRun {
     dual: state.dual && higgsfieldConfigured(),
     dualAvailable: higgsfieldConfigured(),
     guidesVersion: "",
+    hasAudio: state.audio === true,
+    lessons: learn(manifest?.frames ?? []).map(({ rule, count, frames }, i) => ({ rule, count, frames: [...frames], inPrompt: i < PROMPT_LESSONS })),
   };
 }
 
 export async function getRun(id: string, ownerId: string): Promise<RotoscopeRun> {
-  const state = await ownedState(id, ownerId);
+  let state = await ownedState(id, ownerId);
+  if (state.duration === null && state.phase === "ready") {
+    const duration = await videoDuration(id);
+    if (duration !== null) state = await updateState(id, (current) => ({ ...current, duration }));
+  }
+  if (state.audio === null && state.phase === "ready") {
+    const audio = await videoHasAudio(id);
+    if (audio !== null) state = await updateState(id, (current) => ({ ...current, audio }));
+  }
   const manifest = existsSync(path.join(runDir(id), "manifest.json")) ? await readManifest(runDir(id)) : null;
   const guides = await stat(path.join(runDir(id), "guides", "guides.json")).catch(() => null);
-  return { ...view(state, manifest), guidesVersion: guides ? String(Math.round(guides.mtimeMs)) : "" };
+  return { ...view(state, manifest, await readings(id, manifest)), guidesVersion: guides ? String(Math.round(guides.mtimeMs)) : "" };
+}
+
+/** The frames' readings (pipeline.ts readingFor), from readings/: one small text file per frame drawn so far. */
+async function readings(id: string, manifest: Manifest | null): Promise<Map<number, string>> {
+  const out = new Map<number, string>();
+  const names = new Set(await readdir(path.join(runDir(id), "readings")).catch(() => [] as string[]));
+  for (const frame of manifest?.frames ?? []) {
+    const file = readingFile(frame.index);
+    if (!names.has(path.basename(file))) continue;
+    const text = await readFile(path.join(runDir(id), file), "utf8").catch(() => "");
+    if (text.trim()) out.set(frame.index, text.trim());
+  }
+  return out;
 }
 
 export async function listRuns(ownerId: string): Promise<RotoscopeRunSummary[]> {
@@ -212,7 +243,7 @@ export async function createRun(input: { ownerId: string; video: File; character
     const state: State = {
       id, ownerId: input.ownerId,
       name: options.name || path.basename(input.video.name, path.extname(input.video.name)).slice(0, 80) || "Rotoscope",
-      createdAt: new Date().toISOString(), phase: "preparing", error: null, log: [], live: null, fps: options.fps, start: options.start, seconds, dual: false,
+      createdAt: new Date().toISOString(), phase: "preparing", error: null, log: [], live: null, fps: options.fps, start: options.start, seconds, duration, dual: false, audio: facts.streams.some((stream) => stream.codec_type === "audio"),
     };
     await writeAtomic(statePath(id), `${JSON.stringify(state, null, 2)}\n`);
     start(id, async () => {
@@ -239,6 +270,7 @@ async function moveInto(from: string, to: string): Promise<void> {
 
 const PHASE_BUSY: Partial<Record<RotoscopePhase, string>> = {
   preparing: "This run is still being prepared.",
+  extending: "This run is adding frames. Try again in a moment.",
   generating: "This run is already drawing.",
   stopping: "This run is stopping. Try again in a moment.",
   failed: "This run couldn’t be prepared. Delete it and create it again.",
@@ -276,6 +308,73 @@ export async function startGeneration(id: string, ownerId: string, gate: () => P
       }));
     } catch (error) {
       await updateState(id, (current) => ({ ...current, phase: "ready", live: null, error: error instanceof AppError ? error.message : `Drawing stopped: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}` }));
+    }
+  });
+  return getRun(id, ownerId);
+}
+
+async function videoHasAudio(id: string): Promise<boolean | null> {
+  const manifest = await readManifest(runDir(id)).catch(() => null);
+  if (!manifest || !existsSync(manifest.video)) return null;
+  const facts = await probe(manifest.video, true).catch(() => null);
+  return facts ? facts.streams.some((stream) => stream.codec_type === "audio") : null;
+}
+
+/** The video's sound from the run's start to its end (or `seconds` of it), as AAC: frame N plays at (N - 1) / fps into this clip. */
+async function cutSound(id: string, to: string, seconds?: number): Promise<void> {
+  const manifest = await readManifest(runDir(id));
+  if (!existsSync(manifest.video)) throw new AppError("video_missing", 409, "This run’s video is no longer available, so its sound can’t be used.");
+  const partial = `${to}.${randomUUID()}.part.m4a`;
+  try {
+    await ffmpeg(["-ss", String(manifest.start), ...(seconds ? ["-t", String(seconds)] : []), "-i", manifest.video, "-vn", "-map", "0:a:0", "-ac", "2", "-ar", "48000", "-c:a", "aac", "-b:a", "128k", partial], 300_000);
+    await rename(partial, to);
+  } catch (error) {
+    await rm(partial, { force: true });
+    if (error instanceof AppError) throw error;
+    throw new AppError("no_audio", 422, "This video has no sound to use.");
+  }
+}
+
+/** The reference sound, cut on first use and kept next to the video. */
+async function soundClip(id: string): Promise<string> {
+  const clip = path.join(runDir(id), "input", "sound.m4a");
+  if (!existsSync(clip)) await cutSound(id, clip);
+  return clip;
+}
+
+async function videoDuration(id: string): Promise<number | null> {
+  const manifest = await readManifest(runDir(id)).catch(() => null);
+  if (!manifest || !existsSync(manifest.video)) return null;
+  const duration = Number((await probe(manifest.video, true).catch(() => null))?.format?.duration);
+  return Number.isFinite(duration) && duration > 0 ? duration : null;
+}
+
+/**
+ * Adds the next `seconds` of the video after the run's last frame as open frames, so a long
+ * clip is animated a piece at a time. Local work only (FFmpeg and DWPose, no AI call); the
+ * approved frames stay. Drawing the new frames is a separate generate.
+ */
+export async function extendRunBy(id: string, ownerId: string, seconds: number): Promise<RotoscopeRun> {
+  const state = await ownedState(id, ownerId);
+  if (PHASE_BUSY[state.phase]) throw new AppError("run_busy", 409, PHASE_BUSY[state.phase]!);
+  if (!poseToolAvailable()) throw new AppError("pose_unavailable", 503, "Pose detection (DWPose) isn’t installed on this server.");
+  const manifest = await readManifest(runDir(id));
+  const duration = state.duration ?? await videoDuration(id);
+  if (duration === null) throw new AppError("video_missing", 409, "This run’s video is no longer available, so no more frames can be added.");
+  const covered = manifest.frames.length / manifest.fps;
+  const left = duration - (manifest.start + covered);
+  if (left < 0.5 / manifest.fps) throw new AppError("video_end", 409, "The run already reaches the end of the video.");
+  const room = Math.min(ROTOSCOPE_LIMITS.maxSeconds - covered, (ROTOSCOPE_LIMITS.maxFrames - manifest.frames.length) / manifest.fps);
+  if (room < 1 / manifest.fps) throw new AppError("segment_too_long", 422, `One run covers at most ${ROTOSCOPE_LIMITS.maxSeconds} s and ${ROTOSCOPE_LIMITS.maxFrames} frames. Start a new run for the rest of the video.`);
+  const length = Math.min(seconds, left, room);
+  await updateState(id, (current) => ({ ...current, phase: "extending", error: null, duration }));
+  start(id, async () => {
+    try {
+      const added = await extendRun(runDir(id), length, duration, (line) => void appendLog(id, line));
+      const after = await readManifest(runDir(id));
+      await updateState(id, (current) => ({ ...current, phase: "ready", seconds: after.seconds, ...(added ? {} : { error: "The video has no more frames after this run." }) }));
+    } catch (error) {
+      await updateState(id, (current) => ({ ...current, phase: "ready", error: `Couldn’t add frames: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}` }));
     }
   });
   return getRun(id, ownerId);
@@ -364,7 +463,7 @@ const FLIPBOOK_MAX_SECONDS = MAX_SEQUENCE_FRAMES / SEQUENCE_CLOCK;
  * approved prefix is resampled to it by holding the nearest Rotoscope frame
  * (no new AI work: each copy is cut out from its own transparency locally).
  */
-export async function openInFlipbook(id: string, ownerId: string): Promise<{ flipbookId: string }> {
+export async function openInFlipbook(id: string, ownerId: string, options: { sound?: boolean } = {}): Promise<{ flipbookId: string }> {
   const state = await ownedState(id, ownerId);
   if (PHASE_BUSY[state.phase]) throw new AppError("run_busy", 409, PHASE_BUSY[state.phase]!);
   const manifest = await readManifest(runDir(id));
@@ -381,6 +480,9 @@ export async function openInFlipbook(id: string, ownerId: string): Promise<{ fli
   // The first `seconds` of the approved prefix, held at Flipbook's 24ths.
   const source = approved.slice(0, seconds * state.fps);
   const frames = Array.from({ length: seconds * FLIPBOOK_FPS }, (_, tick) => source[Math.min(source.length - 1, Math.floor((tick * state.fps) / FLIPBOOK_FPS))]);
+  // The sound of the same seconds the frames cover, so it lines up with them from the start.
+  const sound = options.sound && state.audio !== false ? path.join(runDir(id), "input", `flipbook-sound-${seconds}.m4a`) : null;
+  if (sound && !existsSync(sound)) await cutSound(id, sound, seconds);
   const flipbook = await importSequence({
     ownerId,
     title: `${state.name} · ${seconds} s`,
@@ -388,8 +490,9 @@ export async function openInFlipbook(id: string, ownerId: string): Promise<{ fli
     frames,
     sequence: { durationSeconds: seconds, drawingFps: FLIPBOOK_FPS },
     importedFrom: { kind: "rotoscope", runId: id, fps: state.fps },
+    ...(sound ? { audio: { file: sound, name: `${state.name} · sound` } } : {}),
   });
-  await appendLog(id, `opened in Flipbook as ${seconds} s (${frames.length} drawings)`);
+  await appendLog(id, `opened in Flipbook as ${seconds} s (${frames.length} drawings${sound ? ", with sound" : ""})`);
   return { flipbookId: flipbook.id };
 }
 
@@ -401,7 +504,7 @@ export async function importConsoleRun(source: string, ownerId: string): Promise
   await cp(source, dir, { recursive: true, filter: (from) => !from.endsWith("run.lock") });
   const state: State = {
     id, ownerId, name: manifest.name ?? path.basename(source), createdAt: manifest.createdAt, phase: "ready", error: null, live: null,
-    log: [`imported from the console run ${path.basename(source)}`], fps: manifest.fps, start: manifest.start, seconds: manifest.seconds, dual: false,
+    log: [`imported from the console run ${path.basename(source)}`], fps: manifest.fps, start: manifest.start, seconds: manifest.seconds, duration: null, dual: false, audio: null,
   };
   await writeAtomic(statePath(id), `${JSON.stringify(state, null, 2)}\n`);
   // The app serves the character from input/, where its own uploads keep it.
@@ -418,6 +521,10 @@ export async function mediaFile(id: string, ownerId: string, kind: RotoscopeMedi
   const dir = runDir(id);
   const missing = () => new AppError("media_not_found", 404, "This file is no longer available.");
   if (kind === "character") return path.join(dir, "input", "character.png");
+  if (kind === "audio") {
+    if (state.audio === false) throw missing();
+    return soundClip(id);
+  }
   const manifest = await readManifest(dir).catch(() => null);
   const entry = manifest?.frames.find((candidate) => candidate.index === frame);
   if (!entry) throw missing();

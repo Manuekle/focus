@@ -5,6 +5,7 @@ import { DropdownMenu } from "radix-ui";
 import { Logout01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { ThemeToggle } from "../../components/theme-toggle";
 import { cn } from "../../lib/utils";
 import type { PublicUser, SessionInfo } from "../../shared/account";
 import { signInWithFacebook, signOut } from "./session-client";
@@ -22,6 +23,10 @@ export function Avatar({ user, className }: { readonly user: PublicUser; readonl
 
 /** Header account control: generations left and "Sign in", or the signed-in person's menu. */
 export function AccountButton({ session, next }: { readonly session: SessionInfo | null; readonly next: string }) {
+  return <div className="flex items-center gap-2"><ThemeToggle /><AccountControl session={session} next={next} /></div>;
+}
+
+function AccountControl({ session, next }: { readonly session: SessionInfo | null; readonly next: string }) {
   const router = useRouter();
   if (!session) return <span aria-hidden className="h-8 w-24" />;
   if (!session.user) {

@@ -12,7 +12,7 @@
   padding: 6px 15px 6px 11px;
   border-radius: 999px;
   background: #0d1222b3;
-  box-shadow: inset 0 1px 0 #ffffff0d, 0 0 28px -6px #2853e940;
+  box-shadow: inset 0 1px 0 color-mix(in srgb, var(--foreground) 5.1%, transparent), 0 0 28px -6px #2853e940;
   color: #c6ccda;
   font-size: 12px;
   letter-spacing: 0.01em;
@@ -81,3 +81,7 @@
 @media (max-width: 680px) {
   .badge { font-size: 11.5px; }
 }
+
+/* Light theme: frosted white glass, the travelling arc in the brand blue. */
+:global(:root:not(.dark)) .badge { background: #ffffffb3; box-shadow: inset 0 1px 0 #ffffff, 0 0 28px -8px #2853e940; color: #343a4c; }
+:global(:root:not(.dark)) .badge::before { background: conic-gradient(from var(--badge-angle), #2853e91f 0deg, #2853e91f 230deg, #2853e980 290deg, #2853e9 325deg, #2853e980 345deg, #2853e91f 360deg); }

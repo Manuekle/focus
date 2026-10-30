@@ -46,6 +46,8 @@ export type BoneSpec = {
   readonly b: Point;
   /** Canvas pixels. */
   readonly length: number;
+  /** Canvas pixels: how long the bone is fully extended (never shorter than `length`). */
+  readonly full: number;
   /** Long enough on screen to measure (not pointing at the camera). */
   readonly clear: boolean;
 };
@@ -63,19 +65,60 @@ const LIMBS = [
   { limb: "leg", side: "right", bones: [["thigh", 12, 14], ["shin", 14, 16]] },
   { limb: "leg", side: "left", bones: [["thigh", 11, 13], ["shin", 13, 15]] },
 ] as const;
-/** The guide bones' full lengths: how long each looks at its most extended in the clip (90th percentile). */
+/**
+ * The guide bones' full lengths: how long each looks at its most extended in the clip (90th
+ * percentile), and never shorter than the character's own limb (sheetLengths): a clip that
+ * keeps an arm pointing at the camera throughout would otherwise make its shortened look the
+ * arm's full length, and the generator is then held to an arm it can't draw.
+ */
 export type FullLengths = ReadonlyMap<string, number>;
 const boneKey = (from: number, to: number) => `${from}-${to}`;
 
-export function fullLengths(poses: readonly Pose[]): FullLengths {
-  const out = new Map<string, number>();
+export function fullLengths(poses: readonly Pose[], floor: FullLengths = new Map()): FullLengths {
+  const out = new Map<string, number>(floor);
   for (const { bones } of LIMBS) {
     for (const [, from, to] of bones) {
       const seen = poses.flatMap((pose) => {
         const [a, b] = [point(pose, from), point(pose, to)];
         return a && b ? [distance(a, b)] : [];
       }).sort((x, y) => x - y);
-      if (seen.length) out.set(boneKey(from, to), seen[Math.min(seen.length - 1, Math.floor(seen.length * 0.9))]);
+      const key = boneKey(from, to);
+      if (seen.length) out.set(key, Math.max(out.get(key) ?? 0, seen[Math.min(seen.length - 1, Math.floor(seen.length * 0.9))]));
+    }
+  }
+  return out;
+}
+
+/**
+ * The sheet may read a limb long (bent, turned, clasped hands): the guide caps it at what the
+ * source shows, but never below this share of the sheet (rotoscope_pose.py SHEET_FLOOR).
+ */
+const SHEET_FLOOR = 0.85;
+
+const torsoOf = (pose: Pose) => {
+  const [ls, rs, lh, rh] = [point(pose, 5), point(pose, 6), point(pose, 11), point(pose, 12)];
+  return ls && rs && lh && rh ? distance(mid(ls, rs), mid(lh, rh)) : null;
+};
+
+/**
+ * The character's own limb lengths at the guides' size: each bone on the sheet (the longer
+ * side, as a hand may be hidden), scaled from the sheet's torso to the guides' usual torso.
+ */
+export function sheetLengths(reference: Pose, guides: readonly Pose[]): FullLengths {
+  const out = new Map<string, number>();
+  const sheetTorso = torsoOf(reference);
+  const torsos = guides.flatMap((pose) => torsoOf(pose) ?? []).sort((x, y) => x - y);
+  if (!sheetTorso || !torsos.length) return out;
+  const scale = (torsos[Math.floor(torsos.length / 2)] / sheetTorso) * SHEET_FLOOR;
+  for (const [i, { bones }] of LIMBS.entries()) {
+    // LIMBS lists each limb's right side, then its left: the twin is the other side.
+    const twin = LIMBS[i % 2 === 0 ? i + 1 : i - 1];
+    for (const [j, [, from, to]] of bones.entries()) {
+      const lengths = [[from, to], [twin.bones[j][1], twin.bones[j][2]]].flatMap(([a, b]) => {
+        const [pa, pb] = [point(reference, a), point(reference, b)];
+        return pa && pb ? [distance(pa, pb)] : [];
+      });
+      if (lengths.length) out.set(boneKey(from, to), Math.max(...lengths) * scale);
     }
   }
   return out;
@@ -118,12 +161,14 @@ export function bodySpec(guide: Pose, marks: Marks, headHeight: number, full: Fu
       const [a, b] = [point(guide, from), point(guide, to)];
       if (!a || !b) continue;
       const length = distance(a, b);
+      const known = full.get(boneKey(from, to));
       // Without the clip's lengths, a bone is judged against the torso (an anime forearm is about 0.4 of it).
-      const clear = length >= CLEAR_BONE_SHARE * (full.get(boneKey(from, to)) ?? torso * 0.6);
-      bones.push({ name, screen, colour, from, to, a, b, length, clear });
+      const clear = length >= CLEAR_BONE_SHARE * (known ?? torso * 0.6);
+      const extended = Math.max(length, known ?? length);
+      bones.push({ name, screen, colour, from, to, a, b, length, full: extended, clear });
       if (!joints.length) joints.push(a);
       joints.push(b);
-      lengths.push(`${name} ${cells(length)} cells${clear ? "" : " (seen shortened: it points toward the viewer)"}`);
+      lengths.push(`${name} ${cells(length)} cells${clear ? "" : ` (seen shortened: it points toward the viewer; fully extended it would be ${cells(extended)} cells)`}`);
     }
     if (joints.length < 2) {
       lines.push(`The ${limb} on the ${screen} of the image (${colour} in Image 2) is hidden in the pose: keep it hidden behind the body as in the pose photo.`);
@@ -134,7 +179,7 @@ export function bodySpec(guide: Pose, marks: Marks, headHeight: number, full: Fu
     const hand = limb === "arm" ? handCentre(guide, HANDS[side]) : null;
     lines.push(`The ${limb} on the ${screen} of the image (${colour} in Image 2): ${path}; ${lengths.join(", ")}.${hand ? ` The hand is centred at ${xy(hand)}.` : ""}`);
   }
-  lines.push("Limb lengths are fixed by the character: never draw an arm or a leg longer than its numbers above. Over-long arms, forearms, thighs and shins are the most common mistake — check them before finishing.");
+  lines.push("Limb lengths are fixed by the character: never draw an arm or a leg longer than its numbers above (a shortened one: never longer than fully extended). Over-long arms, forearms, thighs and shins are the most common mistake — check them before finishing.");
   return { text: lines.join("\n"), bones, headHeight };
 }
 
@@ -182,19 +227,26 @@ export const DEFAULT_PROPORTION_LIMITS = { longest: 1.18, shortest: 0.78, head: 
 export function checkProportions(spec: BodySpec | null, drawn: Pose, drawnMarks: Marks | null, target: Marks, limits = DEFAULT_PROPORTION_LIMITS): Check {
   if (!spec || !drawnMarks) return { name: "proportions", passed: true, detail: "not measurable (body not found); left to the review" };
   const scale = (drawnMarks.feet - drawnMarks.head) / Math.max(1, target.feet - target.head);
+  // Too long is measured against the bone fully extended: a limb the pose shows shortened may
+  // come out at its full length (a pose matter for the review), never longer than the character's.
+  // Too short only counts where the guide's length is clear. In between: 1.
   const found: { bone: BoneSpec; ratio: number }[] = [];
   for (const bone of spec.bones) {
-    if (!bone.clear) continue;
     const [a, b] = [point(drawn, bone.from), point(drawn, bone.to)];
-    if (a && b) found.push({ bone, ratio: distance(a, b) / (bone.length * scale) });
+    if (!a || !b) continue;
+    const length = distance(a, b) / scale;
+    found.push({ bone, ratio: length > bone.full ? length / bone.full : bone.clear && length < bone.length ? length / bone.length : 1 });
   }
   const chin = point(drawn, CHIN);
   const head = chin ? (chin[1] - drawnMarks.head) / (spec.headHeight * scale) : null;
   const percent = (ratio: number) => `${ratio >= 1 ? "+" : ""}${Math.round((ratio - 1) * 100)} %`;
   const fixes: string[] = [];
   for (const { bone, ratio } of found) {
-    if (ratio > limits.longest) fixes.push(`The ${bone.name} on the ${bone.screen} of the image is ${Math.round((ratio - 1) * 100)} % too long: it must measure ${cells(bone.length)} cells, from ${xy(bone.a)} to ${xy(bone.b)} (${bone.colour} in Image 2).`);
-    else if (ratio < limits.shortest) fixes.push(`The ${bone.name} on the ${bone.screen} of the image is ${Math.round((1 - ratio) * 100)} % too short: it must measure ${cells(bone.length)} cells, from ${xy(bone.a)} to ${xy(bone.b)}.`);
+    if (ratio > limits.longest) {
+      fixes.push(bone.full > bone.length
+        ? `The ${bone.name} on the ${bone.screen} of the image is ${Math.round((ratio - 1) * 100)} % longer than the character's own: even fully extended it measures at most ${cells(bone.full)} cells; in this pose it is seen shortened, ${cells(bone.length)} cells from ${xy(bone.a)} to ${xy(bone.b)} (${bone.colour} in Image 2).`
+        : `The ${bone.name} on the ${bone.screen} of the image is ${Math.round((ratio - 1) * 100)} % too long: it must measure ${cells(bone.length)} cells, from ${xy(bone.a)} to ${xy(bone.b)} (${bone.colour} in Image 2).`);
+    } else if (ratio < limits.shortest) fixes.push(`The ${bone.name} on the ${bone.screen} of the image is ${Math.round((1 - ratio) * 100)} % too short: it must measure ${cells(bone.length)} cells, from ${xy(bone.a)} to ${xy(bone.b)}.`);
   }
   if (head !== null && Math.abs(head - 1) > limits.head) fixes.push(`The head is ${head > 1 ? "too big" : "too small"} (${percent(head)}): from the top of the hair to the chin it must measure ${cells(spec.headHeight)} cells.`);
   const worst = [...found].sort((x, y) => Math.abs(y.ratio - 1) - Math.abs(x.ratio - 1))[0];

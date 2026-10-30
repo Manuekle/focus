@@ -39,8 +39,8 @@
 
 /* The transparent-pixel checkerboard behind sprites. */
 .stage[data-transparent], .stripThumb[data-transparent], .inspect[data-transparent], .referenceImage[data-transparent] {
-  background-color: #1d1f27;
-  background-image: linear-gradient(45deg, #ffffff0a 25%, transparent 25%), linear-gradient(-45deg, #ffffff0a 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ffffff0a 75%), linear-gradient(-45deg, transparent 75%, #ffffff0a 75%);
+  background-color: var(--checker-base);
+  background-image: linear-gradient(45deg, color-mix(in srgb, var(--foreground) 3.9%, transparent) 25%, transparent 25%), linear-gradient(-45deg, color-mix(in srgb, var(--foreground) 3.9%, transparent) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--foreground) 3.9%, transparent) 75%), linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--foreground) 3.9%, transparent) 75%);
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
 }
@@ -49,12 +49,12 @@
   display: flex;
   flex-direction: column;
   border-radius: 14px;
-  background: linear-gradient(180deg, #ffffff06, #ffffff02);
-  box-shadow: inset 0 0 0 1px #ffffff0d, inset 0 1px 0 #ffffff08;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--foreground) 2.4%, transparent), color-mix(in srgb, var(--foreground) 0.8%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.1%, transparent), inset 0 1px 0 color-mix(in srgb, var(--foreground) 3.1%, transparent);
   transition: box-shadow 160ms ease-out, background-color 160ms ease-out;
 }
 .field:focus-within {
-  background-color: #ffffff04;
+  background-color: color-mix(in srgb, var(--foreground) 1.6%, transparent);
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 55%, transparent), 0 0 0 4px color-mix(in srgb, var(--primary) 14%, transparent), 0 10px 30px -18px #2853e980;
 }
 .fieldInput {
@@ -112,7 +112,7 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .steps li { display: inline-flex; align-items: center; gap: 6px; color: var(--muted-foreground); }
 .steps li[data-state="active"] { color: var(--foreground); }
 .steps li[data-state="done"] { color: color-mix(in srgb, var(--foreground) 75%, var(--muted-foreground)); }
-.stepDot { display: inline-grid; width: 16px; height: 16px; place-items: center; border-radius: 999px; box-shadow: inset 0 0 0 1px #ffffff1f; }
+.stepDot { display: inline-grid; width: 16px; height: 16px; place-items: center; border-radius: 999px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 12.2%, transparent); }
 .steps li[data-state="done"] .stepDot { background: color-mix(in srgb, var(--primary) 70%, transparent); box-shadow: none; color: var(--primary-foreground, #fff); }
 
 .grid { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(280px, 340px); align-items: start; gap: 28px; }
@@ -147,13 +147,13 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .referencePair[data-single] { grid-template-columns: minmax(0, 200px); }
 .referencePair figure { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
 .referencePair figcaption { display: inline-flex; align-items: center; gap: 4px; color: var(--muted-foreground); font-size: 11px; }
-.referenceImage { position: relative; display: grid; aspect-ratio: 2 / 3; place-items: center; overflow: hidden; border-radius: 12px; background: #ffffff04; box-shadow: inset 0 0 0 1px #ffffff0a; }
+.referenceImage { position: relative; display: grid; aspect-ratio: 2 / 3; place-items: center; overflow: hidden; border-radius: 12px; background: color-mix(in srgb, var(--foreground) 1.6%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 3.9%, transparent); }
 /* Absolutely placed: a percentage height inside an aspect-ratio grid cell would overflow and crop the feet. */
 .referenceImage img, .stripThumb img, .inspect img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 /* Extra views of the character: small squares, removable. */
 .extras { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 8px; }
 .extra { position: relative; }
-.extraImage { position: relative; display: block; width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 10px; background: #ffffff04; box-shadow: inset 0 0 0 1px #ffffff0a; }
+.extraImage { position: relative; display: block; width: 100%; aspect-ratio: 1; overflow: hidden; border-radius: 10px; background: color-mix(in srgb, var(--foreground) 1.6%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 3.9%, transparent); }
 .extraImage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .extraRemove { position: absolute; top: 4px; right: 4px; display: grid; width: 18px; height: 18px; place-items: center; padding: 0; border: 0; border-radius: 999px; background: #000000a6; color: #fff; cursor: pointer; opacity: 0; scale: 0.85; transition: opacity 150ms var(--ease-smooth-out), scale 150ms var(--ease-smooth-out), background-color 150ms; }
 .extra:hover .extraRemove, .extraRemove:focus-visible { opacity: 1; scale: 1; }
@@ -165,11 +165,11 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .plates figure { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
 .plates figcaption { color: var(--muted-foreground); font-size: 11px; transition: color 150ms; }
 .plates figure[data-active] figcaption { color: var(--foreground); }
-.plate { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 10px; background: #ffffff04; box-shadow: inset 0 0 0 1px #ffffff0f; transition: box-shadow 150ms var(--ease-smooth-out); }
-.plates figure[data-active] .plate { box-shadow: inset 0 0 0 1px #ffffff0f, 0 0 0 2px var(--primary); }
+.plate { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 10px; background: color-mix(in srgb, var(--foreground) 1.6%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.9%, transparent); transition: box-shadow 150ms var(--ease-smooth-out); }
+.plates figure[data-active] .plate { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.9%, transparent), 0 0 0 2px var(--primary); }
 .plate img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
 .palette { display: flex; gap: 4px; }
-.palette span { width: 16px; height: 16px; border-radius: 5px; box-shadow: inset 0 0 0 1px #ffffff1f; }
+.palette span { width: 16px; height: 16px; border-radius: 5px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 12.2%, transparent); }
 /* One column that can shrink: a long value wraps inside the panel instead of widening the track under the stage. */
 .metrics { display: grid; grid-template-columns: minmax(0, 1fr); gap: 6px; font-size: 12px; }
 .metrics > div { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: baseline; gap: 12px; }
@@ -187,9 +187,9 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 /* Player */
 .player { display: flex; min-width: 0; flex-direction: column; gap: 12px; }
 /* The light table: a quiet surface the stage sits on, so a narrow in-place cell doesn't float on black. */
-.lightTable { display: grid; place-items: center; padding: clamp(12px, 2vw, 22px); border-radius: 22px; background: radial-gradient(120% 90% at 50% 0%, #ffffff08, #ffffff02 60%, transparent), linear-gradient(180deg, #ffffff03, transparent); }
-.stage { position: relative; width: 100%; max-height: min(56vh, 600px); overflow: hidden; margin-inline: auto; border-radius: 14px; box-shadow: inset 0 0 0 1px #ffffff0a, 0 18px 40px -18px #000000a0, 0 2px 8px #0000002e; outline: none; }
-.stage:focus-visible { box-shadow: inset 0 0 0 1px #ffffff0a, 0 0 0 2px var(--primary); }
+.lightTable { display: grid; place-items: center; padding: clamp(12px, 2vw, 22px); border-radius: 22px; background: radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--foreground) 3.1%, transparent), color-mix(in srgb, var(--foreground) 0.8%, transparent) 60%, transparent), linear-gradient(180deg, color-mix(in srgb, var(--foreground) 1.2%, transparent), transparent); }
+.stage { position: relative; width: 100%; max-height: min(56vh, 600px); overflow: hidden; margin-inline: auto; border-radius: 14px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 3.9%, transparent), 0 18px 40px -18px #000000a0, 0 2px 8px #0000002e; outline: none; }
+.stage:focus-visible { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 3.9%, transparent), 0 0 0 2px var(--primary); }
 .canvas { display: block; width: 100%; height: 100%; object-fit: contain; }
 .stageEmpty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted-foreground); font-size: 13px; pointer-events: none; }
 .transport { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; }
@@ -203,8 +203,8 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .strip { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 8px; animation: stripPage 180ms var(--ease-smooth-out) both; }
 @keyframes stripPage { from { opacity: 0; translate: 0 4px; } }
 .stripFrame { display: flex; width: 100%; flex-direction: column; gap: 4px; padding: 4px; border: 0; border-radius: 12px; background: transparent; color: inherit; text-align: left; cursor: pointer; transition: background-color 150ms, box-shadow 150ms; }
-.stripFrame:hover { background: #ffffff06; }
-.stripFrameActive { background: #ffffff08; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 60%, transparent); }
+.stripFrame:hover { background: color-mix(in srgb, var(--foreground) 2.4%, transparent); }
+.stripFrameActive { background: color-mix(in srgb, var(--foreground) 3.1%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 60%, transparent); }
 .stripFrame:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .stripThumb { position: relative; display: grid; aspect-ratio: 2 / 3; place-items: center; overflow: hidden; border-radius: 8px; }
 .stripFrame[data-status="failed"] .stripThumb { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--destructive) 55%, transparent); }
@@ -222,8 +222,8 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .strip[data-dense] .stripMeta { font-size: 10px; }
 
 /* Frame inspector */
-.inspect { position: relative; display: grid; height: 360px; place-items: center; overflow: hidden; border-radius: 12px; box-shadow: inset 0 0 0 1px #ffffff0a; }
-.inspect:not([data-transparent]) { background: #ffffff04; }
+.inspect { position: relative; display: grid; height: 360px; place-items: center; overflow: hidden; border-radius: 12px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 3.9%, transparent); }
+.inspect:not([data-transparent]) { background: color-mix(in srgb, var(--foreground) 1.6%, transparent); }
 
 /* Export */
 .exportsList { display: flex; flex-direction: column; gap: 8px; }
@@ -279,8 +279,8 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .drawingStage { position: relative; display: grid; place-items: center; background: var(--editor-stage); }
 .drawingStage img { display: block; width: auto; max-width: 100%; height: auto; max-height: min(62vh, 620px); }
 .drawingStage[data-transparent] {
-  background-color: #1d1f27;
-  background-image: linear-gradient(45deg, #ffffff08 25%, transparent 25%), linear-gradient(-45deg, #ffffff08 25%, transparent 25%), linear-gradient(45deg, transparent 75%, #ffffff08 75%), linear-gradient(-45deg, transparent 75%, #ffffff08 75%);
+  background-color: var(--checker-base);
+  background-image: linear-gradient(45deg, color-mix(in srgb, var(--foreground) 3.1%, transparent) 25%, transparent 25%), linear-gradient(-45deg, color-mix(in srgb, var(--foreground) 3.1%, transparent) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--foreground) 3.1%, transparent) 75%), linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--foreground) 3.1%, transparent) 75%);
   background-size: 16px 16px;
   background-position: 0 0, 0 8px, 8px -8px, -8px 0;
 }
@@ -298,7 +298,7 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .layerTabs { width: auto; align-self: center; }
 .layerCharacter { animation: lift 360ms cubic-bezier(0.22, 1, 0.36, 1) both; filter: drop-shadow(0 14px 18px #00000066); }
 @keyframes lift { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
-.keepScene { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 12px; background: linear-gradient(180deg, #ffffff06, #ffffff02); box-shadow: inset 0 0 0 1px #ffffff0d; cursor: pointer; }
+.keepScene { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 10px 12px; border-radius: 12px; background: linear-gradient(180deg, color-mix(in srgb, var(--foreground) 2.4%, transparent), color-mix(in srgb, var(--foreground) 0.8%, transparent)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.1%, transparent); cursor: pointer; }
 @media (prefers-reduced-motion: reduce) { .layerCharacter { animation: none; } }
 
 /* Animate as is: the picture or its preview, with a layer's mask tinted over it while that layer is hovered. */
@@ -319,13 +319,13 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .pickerAll:hover { color: var(--foreground); }
 .pickerAll:focus-visible, .pickerItem:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .pickerRow { display: grid; grid-template-columns: repeat(auto-fill, minmax(168px, 1fr)); gap: 8px; }
-.pickerItem { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 10px 6px 6px; border-radius: 12px; background: linear-gradient(180deg, #ffffff06, #ffffff02); box-shadow: inset 0 0 0 1px #ffffff0d, inset 0 1px 0 #ffffff08; color: inherit; text-decoration: none; transition: background-color 150ms, box-shadow 150ms; }
-.pickerItem:hover { background-color: #ffffff06; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 45%, transparent), inset 0 1px 0 #ffffff08; }
-.pickerCover { width: 40px; height: 48px; flex-shrink: 0; border-radius: 8px; background: #ffffff0a; object-fit: contain; }
+.pickerItem { display: flex; align-items: center; gap: 10px; min-width: 0; padding: 6px 10px 6px 6px; border-radius: 12px; background: linear-gradient(180deg, color-mix(in srgb, var(--foreground) 2.4%, transparent), color-mix(in srgb, var(--foreground) 0.8%, transparent)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.1%, transparent), inset 0 1px 0 color-mix(in srgb, var(--foreground) 3.1%, transparent); color: inherit; text-decoration: none; transition: background-color 150ms, box-shadow 150ms; }
+.pickerItem:hover { background-color: color-mix(in srgb, var(--foreground) 2.4%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 45%, transparent), inset 0 1px 0 color-mix(in srgb, var(--foreground) 3.1%, transparent); }
+.pickerCover { width: 40px; height: 48px; flex-shrink: 0; border-radius: 8px; background: color-mix(in srgb, var(--foreground) 3.9%, transparent); object-fit: contain; }
 .pickerSkeleton { height: 60px; border-radius: 12px; }
 /* Picking the characters of a scene: the same rows as the picker, with a number on each one chosen. */
 .castItem { position: relative; width: 100%; border: 0; font: inherit; text-align: left; cursor: pointer; }
-.castItem[aria-pressed="true"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 70%, transparent), inset 0 1px 0 #ffffff08; background-color: #ffffff08; }
+.castItem[aria-pressed="true"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 70%, transparent), inset 0 1px 0 color-mix(in srgb, var(--foreground) 3.1%, transparent); background-color: color-mix(in srgb, var(--foreground) 3.1%, transparent); }
 .castItem:disabled { cursor: default; opacity: 0.5; }
 .castItem:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
 .castBadge { display: grid; width: 20px; height: 20px; flex-shrink: 0; place-items: center; margin-left: auto; border-radius: 999px; background: var(--primary); color: #fff; font-size: 11px; font-weight: 600; }
@@ -339,7 +339,7 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .pickerEmpty { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
 
 .referenceRow { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
-.referenceThumb { height: 48px; width: auto; max-width: 96px; border-radius: 6px; object-fit: cover; box-shadow: inset 0 0 0 1px #ffffff0f; }
+.referenceThumb { height: 48px; width: auto; max-width: 96px; border-radius: 6px; object-fit: cover; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.9%, transparent); }
 
 /* A wide preview and one controls column share the page scroller. */
 .createWorkspace[data-variant="page"] {
@@ -381,4 +381,4 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 
 /* A frame's own failure sits in its panel as plain text: the editor shows at most one alert at a time. */
 .frameError { color: var(--status-failed-fg); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
-.pickerItem[data-selected] { box-shadow: inset 0 0 0 1px var(--primary), inset 0 1px 0 #ffffff08; }
+.pickerItem[data-selected] { box-shadow: inset 0 0 0 1px var(--primary), inset 0 1px 0 color-mix(in srgb, var(--foreground) 3.1%, transparent); }

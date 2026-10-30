@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { activityConnectionError, activityId, dismissActivity, getActivities, observeActivity, setActivityScope, trackActivity, type ActivityInput } from "./activity-store";
-import { characterActivity, editActivity, flipbookActivity, observeCharacter } from "./activity-adapters";
+import { characterActivity, editActivity, flipbookActivity, observeCharacter, rotoscopeActivity } from "./activity-adapters";
 import type { Character } from "../../shared/characters";
 import type { Flipbook } from "../../shared/flipbook";
 import type { EditJob } from "../../shared/schemas";
@@ -132,5 +132,12 @@ describe("real job states", () => {
     const character = { id, updatedAt, name: "Character", status: "generating", error: null } as Character;
     expect(characterActivity(character)).toMatchObject({ state: "running", progress: null });
     expect(characterActivity({ ...character, status: "failed", error: { code: "generation_failed", message: "Try another reference." } })).toMatchObject({ state: "failed", detail: "Try another reference." });
+  });
+
+  it("follows a rotoscope run frame by frame and asks for review when it halts", () => {
+    const run = { id: randomUUID(), name: "dancing", phase: "generating", total: 27, approved: 9, error: null, halted: null, maxAttempts: 3, live: { frame: 10, attempt: 12, tries: 2, stage: "drawing", image: false, at: new Date().toISOString() } } as const;
+    expect(rotoscopeActivity(run)).toMatchObject({ href: `/rotoscope?run=${run.id}`, state: "running", detail: "Frame 10 of 27 · attempt 2/3", progress: 9 / 27 });
+    expect(rotoscopeActivity({ ...run, phase: "ready", live: null, halted: { frame: 10, reason: "" } })).toMatchObject({ state: "waiting", detail: "Stopped at frame 10: needs your review" });
+    expect(rotoscopeActivity({ ...run, phase: "ready", live: null, approved: 27 })).toMatchObject({ state: "completed", progress: 1 });
   });
 });

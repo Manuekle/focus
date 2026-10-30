@@ -184,7 +184,7 @@ export function ChatPanel({
                     {entry.proposal.playback ? (
                       <ul className="flex flex-wrap gap-1" aria-label="Playback changes">
                         {describePlaybackPatch(entry.proposal.playback).map((part) => (
-                          <li key={part} className="rounded-md bg-[#ffffff08] px-1.5 py-0.5 text-[11px] leading-4 text-muted-foreground">{part}</li>
+                          <li key={part} className="rounded-md bg-[color-mix(in_srgb,var(--foreground)_3.1%,transparent)] px-1.5 py-0.5 text-[11px] leading-4 text-muted-foreground">{part}</li>
                         ))}
                       </ul>
                     ) : null}
@@ -235,7 +235,7 @@ export function ChatPanel({
       <form
         className={cn(
           // Same quiet surface as the composer field: an inset hairline, no border box.
-          "flex items-end gap-2 rounded-[14px] bg-[linear-gradient(180deg,#ffffff06,#ffffff02)] p-1.5 pl-3.5 shadow-[inset_0_0_0_1px_#ffffff0d,inset_0_1px_0_#ffffff08] transition-shadow duration-150 focus-within:shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--primary)_55%,transparent),0_0_0_4px_color-mix(in_srgb,var(--primary)_14%,transparent)]",
+          "flex items-end gap-2 rounded-[14px] bg-[linear-gradient(180deg,color-mix(in_srgb,var(--foreground)_2.4%,transparent),color-mix(in_srgb,var(--foreground)_0.8%,transparent))] p-1.5 pl-3.5 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--foreground)_5.1%,transparent),inset_0_1px_0_color-mix(in_srgb,var(--foreground)_3.1%,transparent)] transition-shadow duration-150 focus-within:shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--primary)_55%,transparent),0_0_0_4px_color-mix(in_srgb,var(--primary)_14%,transparent)]",
           (asking || disabled) && "opacity-70",
         )}
         onSubmit={(event) => {

@@ -132,10 +132,20 @@ export class Limiter {
   }
 }
 
+/**
+ * Parallel slots for one kind of work, from an environment variable (a whole
+ * number from 1 to 16) or the default. Defaults suit a small single-instance
+ * host; a bigger machine or a higher API tier can raise them.
+ */
+export function concurrency(name: string, fallback: number, env: Readonly<Record<string, string | undefined>> = process.env): number {
+  const value = Number(env[name]?.trim());
+  return Number.isInteger(value) && value >= 1 && value <= 16 ? value : fallback;
+}
+
 // Shared across route bundles for the same reason as the job runtime.
 const limiters = ((globalThis as { __focusLimiters?: { planner: Limiter; segmentation: Limiter } }).__focusLimiters ??= {
-  planner: new Limiter(2),
-  segmentation: new Limiter(1),
+  planner: new Limiter(concurrency("FOCUS_PLANNER_CONCURRENCY", 2)),
+  segmentation: new Limiter(concurrency("FOCUS_SEGMENTATION_CONCURRENCY", 1)),
 });
 export const plannerLimiter = limiters.planner;
 export const segmentationLimiter = limiters.segmentation;

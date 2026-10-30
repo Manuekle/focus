@@ -25,9 +25,9 @@ export function ThemeProvider({ children, forcedTheme }: {
   readonly children: ReactNode;
   readonly forcedTheme?: Theme;
 }) {
-  // A fixed theme matches the server HTML from the first render. Consumers
-  // without one can still manage their own light/dark preference.
-  const [theme, setThemeState] = useState<Theme>(forcedTheme ?? "light");
+  // The server cannot know the visitor's theme; the pre-paint script in the
+  // root layout puts it on <html>, and the effect below adopts it.
+  const [theme, setThemeState] = useState<Theme>(forcedTheme ?? "dark");
 
   useEffect(() => {
     const root = document.documentElement;

@@ -68,6 +68,8 @@ export type DrawContext = {
   readonly attempt: number;
   /** The last approved drawing before this frame, if any. */
   readonly previous: Buffer | null;
+  /** The first approved drawing of the run when this frame comes after it: the style every frame is held to. */
+  readonly anchor: Buffer | null;
   /** Feedback from this frame's earlier failed attempts in this run, newest last. */
   readonly feedback: readonly string[];
 };
@@ -143,6 +145,13 @@ async function approve(dir: string, frame: FrameState, attempt: number, png: Buf
   delete frame.correction;
 }
 
+/** The earliest approved drawing, for every frame after it: the run's style does not drift as frames copy their predecessors. */
+async function anchorFor(dir: string, manifest: Manifest, frame: FrameState): Promise<Buffer | null> {
+  const first = manifest.frames.find((other) => other.status === "approved" && other.approved);
+  if (!first || first.index >= frame.index) return null;
+  return readFile(path.join(dir, first.approved!.file));
+}
+
 /**
  * Draws every open frame in order. With `only`, it draws just that frame: an approved one is reopened,
  * but its drawing is kept until a new attempt passes, so a redraw can never leave it worse off.
@@ -196,7 +205,7 @@ export async function runFrames(dir: string, steps: RunSteps, options: { limit?:
           return { kind: "stopped", frame: frame.index };
         }
         const attempt = (frame.attempts.at(-1)?.attempt ?? 0) + 1;
-        const context: DrawContext = { frame, attempt, previous, feedback: [...feedback] };
+        const context: DrawContext = { frame, attempt, previous, anchor: await anchorFor(dir, manifest, frame), feedback: [...feedback] };
         log(`frame ${frame.index}: attempt ${tries + 1}/${manifest.maxAttempts}`);
         let png: Buffer;
         let checks: readonly Check[];

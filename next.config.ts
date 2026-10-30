@@ -1,5 +1,11 @@
 import type { NextConfig } from "next";
 import { mediaLimits, parseLimit } from "./shared/media-limits";
+import { loadStoredSettings } from "./server/settings";
+
+// Values saved on the settings page (<FOCUS_DATA_DIR>/settings/env.json) join
+// the environment before anything below reads it, so build-time flags and
+// limits saved there apply on the next `pnpm dev` start or `next build`.
+loadStoredSettings();
 
 // Upload limits come from the server's FOCUS_* variables (.env.local); only
 // their validated numbers reach the browser.
