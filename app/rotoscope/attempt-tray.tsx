@@ -4,6 +4,7 @@ import { useEffect, useRef, type CSSProperties, type KeyboardEvent } from "react
 import { Cancel01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { MediaImage } from "../../components/ui/media-image";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Spinner } from "../../components/ui/spinner";
 import { rotoscopeUrls, type RotoscopeFrame, type RotoscopeLive, type RotoscopeRun } from "../../shared/rotoscope";
@@ -102,8 +103,7 @@ export function AttemptTray({ run, frame, items, current, open, onPick, onClose 
           >
             <span className={styles.attemptThumb} data-transparent="">
               {item.image ? (
-                // eslint-disable-next-line @next/next/no-img-element -- the attempt's drawing from the run's media route
-                <img src={rotoscopeUrls.media(run.id, "attempt", frame.index, item.attempt)} alt="" draggable={false} decoding="async" loading="lazy" />
+                <MediaImage src={rotoscopeUrls.media(run.id, "attempt", frame.index, item.attempt)} alt="" draggable={false} decoding="async" loading="lazy" />
               ) : <Skeleton className={styles.working} />}
               <span className={styles.attemptBadge} aria-hidden>
                 {item.kind === "live" ? <Spinner className="size-2.5" /> : <HugeiconsIcon icon={item.kind === "rejected" ? Cancel01Icon : Tick02Icon} size={10} strokeWidth={2.4} />}

@@ -1,5 +1,6 @@
 "use client";
 
+import { MediaThumb } from "../../components/ui/media-image";
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -221,12 +222,13 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
       <div className={styles.body} {...sidebar.bodyProps}>
         <SidebarResizer sidebar={sidebar} />
         <aside id="editor-sidebar" className={styles.sidebar} aria-label={user ? "Your projects" : "Account"}>
+          <div data-slot="sidebar-top" className={styles.sidebarTop}>
+            <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => router.push("/editor")}>
+              <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
+              New clip
+            </Button>
+          </div>
           <ScrollArea className={styles.sidebarScroll} contentClassName={styles.sidebarContent}>
-          <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => router.push("/editor")}>
-            <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
-            New clip
-          </Button>
-
           {user ? (
             <nav className={styles.projects} aria-label="Projects">
               <p className={styles.sideLabel}>Projects</p>
@@ -239,8 +241,7 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
                   {projects.map((project) => (
                     <li key={project.id} className={cn(styles.project, project.videoId === videoId && styles.projectActive)}>
                       <Link href={`/editor?v=${project.videoId}`} className={styles.projectLink} aria-current={project.videoId === videoId ? "page" : undefined}>
-                        {/* eslint-disable-next-line @next/next/no-img-element -- poster served by the media route */}
-                        <img src={project.posterUrl} alt="" className={styles.poster} />
+                        <MediaThumb src={project.posterUrl} fit="cover" className={styles.poster} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-xs text-foreground" title={project.title}>{project.title}</span>
                           <span className="block truncate text-[11px] text-muted-foreground">
@@ -265,7 +266,7 @@ export function EditorStudio({ videoId, authNotice }: { readonly videoId: string
               </div>
               <ProgressMeter size="sm" value={Math.round((session.quota.used / Math.max(1, session.quota.limit)) * 100)} aria-label="Free generations used" />
               <p className="text-xs leading-5 text-muted-foreground">Sign in to save every clip and its versions. The generation allowance stays the same.</p>
-              <FacebookButton next={here} label="Sign in with Facebook" className="h-9 whitespace-nowrap px-3 text-[13px]" />
+              <FacebookButton next={here} label="Sign in with Facebook" size="default" className="w-fit" />
             </section>
           ) : null}
           </ScrollArea>

@@ -1,5 +1,6 @@
 "use client";
 
+import { MediaThumb } from "../../components/ui/media-image";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
@@ -207,12 +208,14 @@ export function ReferenceMotionStudio({ initialJobId }: { readonly initialJobId:
       <div className={shell.body} {...sidebar.bodyProps}>
         <SidebarResizer sidebar={sidebar} showToggle={false} />
         <aside id="animate-library" className={shell.sidebar} aria-label="Your renders">
-          <ScrollArea className={shell.sidebarScroll} contentClassName={shell.sidebarContent}>
+          <div data-slot="sidebar-top" className={shell.sidebarTop}>
             <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => setJobId(null)}>
               <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
               New render
             </Button>
             <AnimateNav current="motion" />
+          </div>
+          <ScrollArea className={shell.sidebarScroll} contentClassName={shell.sidebarContent}>
             {user ? (
               <nav className={shell.projects} aria-label="Renders">
                 <p className={shell.sideLabel}>Renders</p>
@@ -223,8 +226,7 @@ export function ReferenceMotionStudio({ initialJobId }: { readonly initialJobId:
                     {history.map((entry) => (
                       <li key={entry.id} className={cn(shell.project, entry.id === jobId && shell.projectActive)}>
                         <button type="button" className={cn(shell.projectLink, "text-left")} aria-current={entry.id === jobId ? "page" : undefined} onClick={() => setJobId(entry.id)}>
-                          {/* eslint-disable-next-line @next/next/no-img-element -- the uploaded character, from the media route */}
-                          <img src={entry.status === "completed" && entry.outputs.some((output) => output.name === "preview.webp") ? referenceMotionUrls.output(entry.id, "preview.webp") : referenceMotionUrls.asset(entry.characterAssetId)} alt="" className={shell.poster} onError={(event) => { event.currentTarget.style.visibility = "hidden"; }} />
+                          <MediaThumb fit="cover" className={shell.poster} src={entry.status === "completed" && entry.outputs.some((output) => output.name === "preview.webp") ? referenceMotionUrls.output(entry.id, "preview.webp") : referenceMotionUrls.asset(entry.characterAssetId)} />
                           <span className="min-w-0">
                             <span className="block truncate text-xs text-foreground">{ENGINE_LABELS[entry.engine]} · {entry.config.durationSeconds} s</span>
                             <span className="block text-[11px] text-muted-foreground">{STAGE_LABELS[entry.status]} · {ago(entry.createdAt)}</span>
@@ -245,7 +247,7 @@ export function ReferenceMotionStudio({ initialJobId }: { readonly initialJobId:
             <section className={styles.section}>
               <h1 className={styles.title}>Reference Motion</h1>
               <p className={styles.hint}>Sign in to make a character follow the movement of a video. Renders use a GPU and are saved to your account.</p>
-              <FacebookButton next="/animate" label="Sign in with Facebook" className="h-9 w-fit px-3 text-[13px]" />
+              <FacebookButton next="/animate" label="Sign in with Facebook" size="default" className="w-fit" />
             </section>
           ) : jobId ? (
             job ? <JobView job={job} onAction={(action) => void act(action)} onNew={() => setJobId(null)} /> : pollError ? <p className={styles.hint} data-invalid="">{pollError}</p> : <Spinner />
@@ -260,8 +262,7 @@ export function ReferenceMotionStudio({ initialJobId }: { readonly initialJobId:
                 <h2 id="rm-character" className={styles.label}>1 · Character</h2>
                 <div className={styles.row}>
                   {character.asset ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- the normalized upload
-                    <img src={referenceMotionUrls.asset(character.asset.id)} alt="Character reference" className={styles.thumb} />
+                    <MediaThumb src={referenceMotionUrls.asset(character.asset.id)} alt="Character reference" className={styles.thumb} />
                   ) : null}
                   <div className={styles.stack}>
                     <FilePick accept="image/png,image/jpeg,image/webp" label={character.asset ? "Replace image" : "Upload image"} icon={Image02Icon} onChange={pick("character")} busy={character.progress !== null} />

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, useSyncExternalStore, type CSSProperties, type KeyboardEvent, type MouseEvent, type PointerEvent } from "react";
 import { PanelLeftCloseIcon, PanelLeftOpenIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
@@ -52,7 +52,10 @@ export function useSidebar() {
     return () => window.removeEventListener("keydown", onKey);
   }, [drawer]);
 
-  useEffect(() => {
+  // The server paints the column at the width app/layout.tsx read before first paint (--sidebar-saved);
+  // the saved state then lands with transitions off, so a reload never animates the sidebar into place.
+  const [restored, setRestored] = useState(false);
+  useLayoutEffect(() => {
     try {
       const saved = Number(window.localStorage.getItem(WIDTH_KEY));
       if (Number.isFinite(saved) && saved > 0) setWidth(clamp(saved));
@@ -60,6 +63,9 @@ export function useSidebar() {
     } catch {
       // Private window or blocked storage: the defaults stand.
     }
+    // A timer, not animation frames: a background tab pauses those, and the column must stay resizable.
+    const timer = window.setTimeout(() => setRestored(true), 120);
+    return () => window.clearTimeout(timer);
   }, []);
 
   const remember = (key: string, value: string) => {
@@ -103,7 +109,8 @@ export function useSidebar() {
     commitCollapsed,
     /** Spread on the studio body: the grid column reads the width from here. */
     bodyProps: {
-      style: { "--sidebar-width": collapsed ? "0px" : `${width}px` } as CSSProperties,
+      style: { "--sidebar-width": restored ? (collapsed ? "0px" : `${width}px`) : `var(--sidebar-saved, ${collapsed ? 0 : width}px)` } as CSSProperties,
+      "data-sidebar-restoring": restored ? undefined : "",
       "data-collapsed": (!narrow && collapsed) || undefined,
       "data-drawer": drawer || undefined,
       onClick: onBodyClick,

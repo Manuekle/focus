@@ -2,6 +2,7 @@
 
 import { z } from "zod";
 import {
+  CharacterKitSchema,
   CharacterSchema,
   CharacterSummarySchema,
   characterUrls,
@@ -89,6 +90,11 @@ export const characterApi = {
     ),
   remove: (id: string) =>
     call(`/api/characters/${id}`, { method: "DELETE" }, () => undefined),
+  /** A version's animation data (server/characters/kit.ts). */
+  kit: (id: string, versionId: string) =>
+    call(characterUrls.kit(id, versionId), {}, (value) => CharacterKitSchema.parse(value)),
+  prepareKit: (id: string, versionId: string) =>
+    call(characterUrls.kit(id, versionId), { method: "POST" }, (value) => CharacterKitSchema.parse(value)),
   generate: (id: string, request: GenerateCharacterRequest) =>
     trackActivity({ title: "Generating image", href: `/characters?c=${id}`, resource: { kind: "character", id } }, () => call(`/api/characters/${id}/generate`, json(request), parseCharacter), characterActivity),
 };

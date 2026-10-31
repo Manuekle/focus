@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, type FormEvent } from "react";
 import { useSearchParams } from "next/navigation";
-import { AiPaintbrushIcon, ArrowLeftRightIcon, Cancel01Icon, Image02Icon } from "@hugeicons/core-free-icons";
+import { Add01Icon, AiPaintbrushIcon, ArrowLeftRightIcon, Cancel01Icon, Delete02Icon, Image02Icon } from "@hugeicons/core-free-icons";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
 import { FeatherSparkleColored24 } from "../../components/icons/FeatherSparkleColored24";
 import { HugeiconsIcon } from "../../components/icons/icon";
@@ -16,16 +16,18 @@ import { VideoPlayer } from "../../components/ui/video-player";
 import { useToast } from "../../components/toast-provider";
 import { cn } from "../../lib/utils";
 import { formatBytes } from "../../shared/media";
-import { ROTOSCOPE_LIMITS, type RotoscopeRun } from "../../shared/rotoscope";
-import { characterUrls } from "../../shared/characters";
+import { Input } from "../../components/ui/input";
+import { MAX_BATCH_CHARACTERS, ROTOSCOPE_LIMITS, type RotoscopeBatch, type RotoscopeRun } from "../../shared/rotoscope";
+import { characterUrls, type CharacterBody } from "../../shared/characters";
 import composer from "../_editor/composer.module.css";
 import view from "../_editor/editor-view.module.css";
 import upload from "../_editor/studio-upload.module.css";
 import shell from "../editor/studio.module.css";
 import fb from "../flipbook/flipbook.module.css";
-import { characterFile, handoffImageUrl } from "../characters/character-client";
+import { characterApi, characterFile, handoffImageUrl } from "../characters/character-client";
 import { CharacterPicker } from "../flipbook/character-picker";
-import { createRun } from "./rotoscope-client";
+import { createBatch, createRun } from "./rotoscope-client";
+import { EMPTY_MEASURES, MeasuresFields, draftOf, parseMeasures, type MeasuresDraft } from "./measures-fields";
 import styles from "./rotoscope.module.css";
 
 const VIDEO_ACCEPT = "video/mp4,video/quicktime,video/webm,.mov,.mp4,.webm";
@@ -37,20 +39,32 @@ export const CHECKS = [
   { name: "proportions", label: "Proportions", note: "Every clear limb and the head are measured against the character’s own lengths: no over-long arms or legs." },
   { name: "alpha", label: "Background", note: "The magenta background must key out cleanly: nothing cut, no leftovers." },
   { name: "review", label: "Visual review", note: "Muse Spark compares video and drawing part by part, and the character’s design." },
+  { name: "mapping", label: "Character rig", note: "The first try deforms an approved drawing onto the source pose; only surface it never showed is repainted." },
+  { name: "policies", label: "Animation policies", note: "Timing, holds, arcs and spacing are measured against the video (animation-principles skills)." },
 ] as const;
 
 type Video = { readonly file: File; readonly url: string; readonly duration: number | null; readonly width: number; readonly height: number };
+/** A character as picked: `savedId` when it came from My characters (ringed in the picker, already front-on). */
+type CharacterDraft = { readonly key: string; readonly file: File; readonly url: string; readonly savedId?: string; readonly name: string; readonly measures: MeasuresDraft };
+
+const nameOf = (file: File) => file.name.replace(/\.[a-z0-9]+$/i, "").slice(0, 40) || "character";
 
 /**
  * A new run, laid out like Flipbook's create page: the video on the left,
  * the character and the frame settings on the right.
  */
-export function RotoscopeCreate({ disabled, onCreated }: { readonly disabled: boolean; readonly onCreated: (run: RotoscopeRun) => void }) {
+export function RotoscopeCreate({ disabled, onCreated, onBatch }: { readonly disabled: boolean; readonly onCreated: (run: RotoscopeRun) => void; readonly onBatch: (batch: RotoscopeBatch) => void }) {
   const { toast } = useToast();
   const [video, setVideo] = useState<Video | null>(null);
-  /** `savedId`: picked from My characters (ringed in the picker). */
-  const [character, setCharacter] = useState<{ file: File; url: string; savedId?: string } | null>(null);
+  /** One character for a run; up to MAX_BATCH_CHARACTERS for a test batch. */
+  const [characters, setCharacters] = useState<CharacterDraft[]>([]);
+  const [batch, setBatch] = useState(false);
+  const character = characters[0] ?? null;
   const [loadingCharacter, setLoadingCharacter] = useState(false);
+  /** The video person's height: the characters are drawn that much taller or shorter than them. */
+  const [personHeight, setPersonHeight] = useState("");
+  /** Draw each character in four other poses while preparing: a reference for how its joints bend. */
+  const [poseSheet, setPoseSheet] = useState(true);
   const [fps, setFps] = useState<number>(ROTOSCOPE_LIMITS.defaultFps);
   const [start, setStart] = useState(0);
   const [seconds, setSeconds] = useState(1);
@@ -61,16 +75,30 @@ export function RotoscopeCreate({ disabled, onCreated }: { readonly disabled: bo
   useEffect(() => () => handle.current?.abort(), []);
   // Keyed by the URL itself: `video` is replaced when its metadata arrives, and revoking then would cut off the player mid-playback.
   const videoUrl = video?.url;
-  const characterUrl = character?.url;
   useEffect(() => () => { if (videoUrl) URL.revokeObjectURL(videoUrl); }, [videoUrl]);
-  useEffect(() => () => { if (characterUrl) URL.revokeObjectURL(characterUrl); }, [characterUrl]);
+  // Every preview URL made for a character, released when the page goes.
+  const previews = useRef<string[]>([]);
+  useEffect(() => () => { for (const url of previews.current) URL.revokeObjectURL(url); }, []);
+
+  /** Adds a character to the batch, or replaces the run's one; a saved one brings its height and weight, else they start empty. */
+  const addCharacter = (file: File, name: string, savedId?: string, body?: CharacterBody | null) => {
+    const url = URL.createObjectURL(file);
+    previews.current.push(url);
+    const measures = body ? { ...draftOf({ ...body, personHeightCm: null }), personHeightCm: "" } : null;
+    const draft: CharacterDraft = { key: url, file, url, name, measures: measures ?? EMPTY_MEASURES, ...(savedId ? { savedId } : {}) };
+    setCharacters((current) => (batch ? [...current, draft].slice(0, MAX_BATCH_CHARACTERS) : [{ ...draft, measures: measures ?? current[0]?.measures ?? EMPTY_MEASURES }]));
+  };
+  const updateCharacter = (key: string, change: Partial<CharacterDraft>) => setCharacters((current) => current.map((entry) => (entry.key === key ? { ...entry, ...change } : entry)));
+  const removeCharacter = (key: string) => setCharacters((current) => current.filter((entry) => entry.key !== key));
+  const full = batch && characters.length >= MAX_BATCH_CHARACTERS;
 
   /** A saved character's version, or an image handed over from Flipbook, loaded as this run's upload. */
-  const loadCharacter = async (url: string, name: string, savedId?: string) => {
+  const loadCharacter = async (url: string, name: string, savedId?: string, body?: CharacterBody | null) => {
     setLoadingCharacter(true);
     try {
-      const file = await characterFile(url, name);
-      setCharacter({ file, url: URL.createObjectURL(file), ...(savedId ? { savedId } : {}) });
+      // Measures set in My characters: with them the character's prepared animation data fits this run whole.
+      const measures = body ?? (savedId ? await characterApi.get(savedId).then((saved) => saved.measures, () => null) : null);
+      addCharacter(await characterFile(url, name), name, savedId, measures);
     } catch (cause) {
       toast({ title: "Couldn’t load the character", description: cause instanceof Error ? cause.message : "Try again.", status: "error" });
     } finally {
@@ -99,8 +127,11 @@ export function RotoscopeCreate({ disabled, onCreated }: { readonly disabled: bo
   const length = Math.min(seconds, maxLength);
   const covered = duration === null ? null : Math.max(0, whole ? duration - start : Math.min(length, duration - start));
   const frames = covered === null ? null : Math.round(covered * fps);
+  const parsed = characters.map((entry) => parseMeasures({ ...entry.measures, personHeightCm: personHeight }));
+  const invalid = parsed.find((result): result is { error: string } => "error" in result);
   const blocked = disabled ? "Sign in to start a run."
-    : !character ? (loadingCharacter ? "Loading your character…" : "Add your character to continue.")
+    : !character ? (loadingCharacter ? "Loading your character…" : batch ? "Add up to four characters to compare." : "Add your character to continue.")
+      : invalid ? invalid.error
       : duration === null ? "Reading the video…"
         : covered !== null && covered > ROTOSCOPE_LIMITS.maxSeconds ? `One run covers at most ${ROTOSCOPE_LIMITS.maxSeconds} s. Choose a shorter part.`
           : frames !== null && frames > ROTOSCOPE_LIMITS.maxFrames ? `One run holds at most ${ROTOSCOPE_LIMITS.maxFrames} frames. Lower the frame rate or the length.` : null;
@@ -109,10 +140,23 @@ export function RotoscopeCreate({ disabled, onCreated }: { readonly disabled: bo
     event.preventDefault();
     if (blocked || !video || !character) return;
     setProgress(0);
-    const next = createRun({ video: video.file, character: character.file, fps, start, seconds: whole ? null : length }, setProgress);
-    handle.current = next;
+    const inputs = characters.map((entry, i) => {
+      const result = parsed[i];
+      const measures = "measures" in result ? result.measures : null;
+      return { file: entry.file, name: entry.name, frontOn: Boolean(entry.savedId), heightCm: measures?.heightCm ?? null, weightKg: measures?.weightKg ?? null };
+    });
+    const first = parsed[0];
+    const segment = { video: video.file, fps, start, seconds: whole ? null : length, personHeightCm: "measures" in first ? first.measures.personHeightCm : null, poseSheet };
     try {
-      onCreated(await next.promise);
+      if (batch) {
+        const next = createBatch({ ...segment, characters: inputs }, setProgress);
+        handle.current = next;
+        onBatch(await next.promise);
+      } else {
+        const next = createRun({ ...segment, character: inputs[0] }, setProgress);
+        handle.current = next;
+        onCreated(await next.promise);
+      }
     } catch (cause) {
       if (!(cause instanceof Error && "code" in cause && cause.code === "aborted")) toast({ title: "Couldn’t start the run", description: cause instanceof Error ? cause.message : "Try again.", status: "error" });
     } finally {
@@ -175,8 +219,14 @@ export function RotoscopeCreate({ disabled, onCreated }: { readonly disabled: bo
           </Button>
         </div>
         <section className={fb.reading} aria-live="polite">
-          <p className={fb.readingSummary}>
-            {frames !== null ? <>{frames} frames at {fps} fps, from {start.toFixed(1)} s{whole ? " to the end" : ` to ${(start + (covered ?? 0)).toFixed(1)} s`}. </> : null}
+          {frames !== null ? (
+            <div className={fb.readingStats}>
+              <span><strong>{frames}</strong> frames</span>
+              <span><strong>{fps}</strong> fps</span>
+              <span><strong>{start.toFixed(1)}–{whole ? "end" : (start + (covered ?? 0)).toFixed(1)}</strong> s</span>
+            </div>
+          ) : null}
+          <p className={fb.readingNote}>
             The letterbox is cropped and each frame is drawn in order; a frame that fails {ROTOSCOPE_LIMITS.maxAttempts} times stops the run there, and drawing resumes from it.
           </p>
         </section>
@@ -185,13 +235,38 @@ export function RotoscopeCreate({ disabled, onCreated }: { readonly disabled: bo
       <aside className={cn(view.controls, fb.createControls)}>
         <form className={fb.createForm} onSubmit={(event) => void submit(event)}>
           <section className={fb.createCard} aria-labelledby="ro-character-title">
-            <h2 id="ro-character-title" className={fb.panelTitle}>Your character</h2>
+            <h2 id="ro-character-title" className={fb.panelTitle}>{batch ? "Characters to compare" : "Your character"}</h2>
+            <label className={cn(fb.keepScene, styles.fullRow)}>
+              <span className="min-w-0">
+                <span className="block text-xs font-medium text-foreground">Test batch</span>
+                <span className="block text-[11px] leading-4 text-muted-foreground">Up to {MAX_BATCH_CHARACTERS} characters on this video at once, each drawing only its first frame: one image per character, then another round when you ask.</span>
+              </span>
+              <Switch checked={batch} onCheckedChange={(on) => { setBatch(on); if (!on) setCharacters((current) => current.slice(0, 1)); }} label="Test batch" />
+            </label>
             <input ref={characterInput} type="file" accept="image/png,image/jpeg,image/webp" className="sr-only" tabIndex={-1} aria-hidden onChange={(event) => {
               const file = event.target.files?.[0];
               event.target.value = "";
-              if (file) setCharacter({ file, url: URL.createObjectURL(file) });
+              if (file) addCharacter(file, nameOf(file));
             }} />
-            {character ? (
+            {batch ? (
+              <ul className={styles.batchList}>
+                {characters.map((entry, i) => (
+                  <li key={entry.key} className={styles.batchCharacter}>
+                    <span className={styles.batchThumb}>
+                      {/* eslint-disable-next-line @next/next/no-img-element -- local preview of the chosen file */}
+                      <img src={entry.url} alt={`Character ${i + 1}`} />
+                    </span>
+                    <div className={styles.batchFields}>
+                      <Input aria-label={`Name of character ${i + 1}`} value={entry.name} maxLength={40} onChange={(event) => updateCharacter(entry.key, { name: event.target.value })} />
+                      <MeasuresFields id={`ro-measures-${i}`} value={entry.measures} onChange={(measures) => updateCharacter(entry.key, { measures })} />
+                    </div>
+                    <Button type="button" variant="danger" size="icon-sm" aria-label={`Remove ${entry.name}`} onClick={() => removeCharacter(entry.key)}>
+                      <HugeiconsIcon icon={Delete02Icon} size={14} strokeWidth={1.75} />
+                    </Button>
+                  </li>
+                ))}
+              </ul>
+            ) : character ? (
               <div className={styles.characterRow}>
                 <span className={fb.referenceImage}>
                   {/* eslint-disable-next-line @next/next/no-img-element -- local preview of the chosen file */}
@@ -205,17 +280,41 @@ export function RotoscopeCreate({ disabled, onCreated }: { readonly disabled: bo
                   </Button>
                 </div>
               </div>
-            ) : loadingCharacter ? (
+            ) : null}
+            {loadingCharacter ? (
               <p className={cn(fb.hint, "flex items-center gap-2")}><Spinner className="size-3.5" />Loading your character…</p>
-            ) : (
+            ) : !character || (batch && !full) ? (
               <>
-                <p className={fb.hint}>One full-body character, head to feet, facing the camera, on a plain light background.</p>
+                {!character ? <p className={fb.hint}>One full-body character, head to feet, on a plain light background. Any angle or pose works: it is redrawn facing the camera in a neutral pose.</p> : null}
                 <Button type="button" variant="outline" size="sm" className="w-fit" onClick={() => characterInput.current?.click()}>
-                  <HugeiconsIcon icon={Image02Icon} size={14} strokeWidth={1.75} />Upload image
+                  <HugeiconsIcon icon={batch && character ? Add01Icon : Image02Icon} size={14} strokeWidth={1.75} />{batch && character ? `Add a character (${characters.length}/${MAX_BATCH_CHARACTERS})` : "Upload image"}
                 </Button>
               </>
+            ) : null}
+            {!full ? <CharacterPicker title={batch ? "Or add one of your characters" : "Or pick one of your characters"} selected={batch ? null : character?.savedId ?? null} onPick={(entry) => void loadCharacter(characterUrls.version(entry.id, entry.selectedVersionId), entry.name, entry.id, entry.measures)} /> : null}
+          </section>
+
+          <section className={fb.createCard} aria-labelledby="ro-measures-title">
+            <h2 id="ro-measures-title" className={fb.panelTitle}>Measures</h2>
+            <p className={fb.hint}>{batch ? "Each character’s height and weight sit on its row above." : "The character’s real height and weight, read before it is analysed: every drawing keeps that body."} The video person’s height scales {batch ? "the characters" : "the character"} against them; left empty, {batch ? "each is" : "it is"} drawn exactly as tall as the person.</p>
+            {batch ? (
+              <MeasuresFields id="ro-person" value={{ heightCm: "", weightKg: "", personHeightCm: personHeight }} fields={["personHeightCm"]} onChange={(value) => setPersonHeight(value.personHeightCm ?? "")} />
+            ) : (
+              <MeasuresFields
+                id="ro-measures"
+                value={{ ...(character?.measures ?? EMPTY_MEASURES), personHeightCm: personHeight }}
+                fields={["heightCm", "weightKg", "personHeightCm"]}
+                disabled={!character}
+                onChange={(value) => { setPersonHeight(value.personHeightCm ?? ""); if (character) updateCharacter(character.key, { measures: { heightCm: value.heightCm, weightKg: value.weightKg } }); }}
+              />
             )}
-            <CharacterPicker title="Or pick one of your characters" selected={character?.savedId ?? null} onPick={(entry) => void loadCharacter(characterUrls.version(entry.id, entry.selectedVersionId), entry.name, entry.id)} />
+            <label className={cn(fb.keepScene, styles.fullRow)}>
+              <span className="min-w-0">
+                <span className="block text-xs font-medium text-foreground">Reference poses</span>
+                <span className="block text-[11px] leading-4 text-muted-foreground">Before anything is drawn, the character is drawn in four other poses (one Muse Image drawing{batch ? " each" : ""}). Every frame and every review sees how its arms, legs and joints bend.</span>
+              </span>
+              <Switch checked={poseSheet} onCheckedChange={setPoseSheet} label="Draw reference poses first" />
+            </label>
           </section>
 
           <section className={fb.createCard} aria-labelledby="ro-frames-title">
@@ -245,8 +344,17 @@ export function RotoscopeCreate({ disabled, onCreated }: { readonly disabled: bo
           </section>
 
           <div className={fb.createFooter}>
-            <p className={fb.cost}><span>Frames to draw</span><strong>{frames ?? "—"}</strong></p>
-            <p className={fb.hint}>Up to {frames !== null ? frames * ROTOSCOPE_LIMITS.maxAttempts : "—"} Muse Image drawings if every frame needed every attempt; most frames pass on the first or second.</p>
+            {batch ? (
+              <>
+                <p className={fb.cost}><span>Drawings per round</span><strong>{characters.length || "—"}</strong></p>
+                <p className={fb.hint}>Frame 1 only, one attempt per character{poseSheet ? ", after one reference-pose drawing each" : ""}. Every run keeps its {frames ?? "—"} frames: open one to animate the rest.</p>
+              </>
+            ) : (
+              <>
+                <p className={fb.cost}><span>Frames to draw</span><strong>{frames ?? "—"}</strong></p>
+                <p className={fb.hint}>Up to {frames !== null ? frames * ROTOSCOPE_LIMITS.maxAttempts : "—"} Muse Image drawings if every frame needed every attempt; most frames pass on the first or second.</p>
+              </>
+            )}
             <Disclosure title="How each drawing is checked">
               <ul className={fb.checkList}>
                 {CHECKS.map((check) => <li key={check.name} data-source="review"><strong className="font-medium text-foreground">{check.label}.</strong> {check.note}</li>)}
@@ -263,7 +371,7 @@ export function RotoscopeCreate({ disabled, onCreated }: { readonly disabled: bo
               ) : null}
               <Button className={composer.generate} type="submit" variant="ai" size="lg" disabled={Boolean(blocked) || progress !== null} aria-busy={progress !== null || undefined}>
                 {progress !== null ? <Spinner /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={16} strokeWidth={1.75} />}
-                Prepare {frames ?? ""} frames
+                {batch ? `Test ${characters.length || ""} character${characters.length === 1 ? "" : "s"} on frame 1` : `Prepare ${frames ?? ""} frames`}
               </Button>
               {blocked ? <p className={composer.blocked}>{blocked}</p> : null}
             </div>

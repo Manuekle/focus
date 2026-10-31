@@ -17,6 +17,8 @@ export function VideoStage({
   hud,
   tools,
   freeze,
+  onMedia,
+  bare = false,
 }: {
   readonly video: VideoAsset;
   /** Drawn exactly over the video frame (same box), e.g. the tracking overlay. */
@@ -26,6 +28,10 @@ export function VideoStage({
   /** Extra controls in the caption bar. */
   readonly tools?: ReactNode;
   readonly freeze?: FreezeControl;
+  /** Hands the <video> to a timeline outside the stage (media-timeline.tsx). */
+  readonly onMedia?: (element: HTMLVideoElement | null) => void;
+  /** The timeline under the workspace plays and scrubs: the caption keeps only what it doesn't do. */
+  readonly bare?: boolean;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [playing, setPlaying] = useState(false);
@@ -35,6 +41,10 @@ export function VideoStage({
   const [failed, setFailed] = useState(false);
   const { width, height, fps, hasAudio } = video.normalized;
   useEffect(() => { applySound(ref.current, sound); }, [sound]);
+  useEffect(() => {
+    onMedia?.(ref.current);
+    return () => onMedia?.(null);
+  }, [onMedia]);
 
   useEffect(() => {
     const element = ref.current;
@@ -92,7 +102,7 @@ export function VideoStage({
           }}
           onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
           onError={() => setFailed(true)}
-          className="block h-auto max-h-[min(68dvh,720px)] w-auto max-w-full cursor-pointer"
+          className="block h-auto max-h-[var(--stage-max,min(68dvh,720px))] w-auto max-w-full cursor-pointer"
           aria-label={`Preview of ${video.originalName}`}
         />
         {overlay?.(ref)}
@@ -107,7 +117,8 @@ export function VideoStage({
         ) : null}
       </div>
 
-      <figcaption className="flex flex-wrap items-center gap-3 border-t border-border px-3 py-2.5 sm:px-4">
+      {bare && !freeze && !hasAudio && !tools ? null : <figcaption className="flex flex-wrap items-center gap-3 border-t border-border px-3 py-2.5 sm:px-4">
+        {bare ? null : <>
         <button
           type="button"
           onClick={toggle}
@@ -119,7 +130,8 @@ export function VideoStage({
         <span className="w-[72px] shrink-0 text-xs tabular-nums text-muted-foreground">
           {formatSeconds(time)} / {formatSeconds(duration)}
         </span>
-        {!freeze ? <input
+        </>}
+        {bare ? <span className="min-w-0 flex-1 text-xs text-muted-foreground">{freeze ? "Choose a moment in the original clip" : null}</span> : !freeze ? <input
           type="range"
           min={0}
           max={duration || 0}
@@ -134,7 +146,7 @@ export function VideoStage({
         {hasAudio ? <VolumeControl sound={sound} onVolume={setVolume} onToggle={toggleMute} /> : null}
         {tools}
         {freeze ? <FreezeTimeline media={video.normalized} time={time} control={freeze} onSeek={(value) => { ref.current?.pause(); seek(value); }} /> : null}
-      </figcaption>
+      </figcaption>}
     </figure>
   );
 }

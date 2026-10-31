@@ -46,24 +46,24 @@ const diff = (a: Buffer, b: Buffer) =>
 
 beforeAll(async () => {
   work = await mkdtemp(path.join(tmpdir(), "focus-smooth-"));
-  const ichika = await sharp(
-    await readFile(path.join(process.cwd(), "public/characters/ichika.png")),
+  const shion = await sharp(
+    await readFile(path.join(process.cwd(), "public/characters/shion.png")),
   )
     .resize(28, 56)
     .png()
     .toBuffer();
   frames = [];
   for (let i = 0; i < 8; i++) {
-    const file = path.join(work, `ichika-${i}.png`);
+    const file = path.join(work, `shion-${i}.png`);
     await sharp({
       create: { width: 64, height: 96, channels: 4, background: "#ffffff" },
     })
-      .composite([{ input: ichika, left: 4 + i * 3, top: 20 }])
+      .composite([{ input: shion, left: 4 + i * 3, top: 20 }])
       .png()
       .toFile(file);
     frames.push({
       frameId: `f${i}`,
-      label: `Ichika ${i}`,
+      label: `Shion ${i}`,
       phase: "wave_rest",
       spritePath: file,
     });

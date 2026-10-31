@@ -46,7 +46,7 @@ test("follows the saved theme, then the browser preference", async ({ page }) =>
   await page.emulateMedia({ colorScheme: "light" });
   await page.goto("/");
   await expect(page.locator("html")).toHaveCSS("color-scheme", "light");
-  await page.getByRole("button", { name: "Switch to dark mode" }).click();
+  await page.getByRole("button", { name: "Dark mode", pressed: false }).click();
   await expect(page.locator("html")).toHaveCSS("color-scheme", "dark");
   await expect(page.getByRole("heading", { name: /Your drawings\.\s*In motion\.$/ })).toHaveCSS("color", "rgb(245, 245, 245)");
   await page.reload();

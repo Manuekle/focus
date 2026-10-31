@@ -1,15 +1,27 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { copyFile, cp, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
 import sharp from "sharp";
 import { rotoscopeEnabled } from "../../shared/features";
 import { MAX_SEQUENCE_FRAMES, SEQUENCE_CLOCK } from "../../shared/sequence";
 import {
+  CharacterMeasuresSchema,
+  MAPPING_JOINTS,
+  RendererSchema,
+  MAX_BATCH_CHARACTERS,
   ROTOSCOPE_LIMITS,
   RotoscopeIdSchema,
   RotoscopeLiveSchema,
+  type CharacterMeasures,
+  type FramePrompt,
+  type GeneratorName,
+  type MappingJoint,
+  type MappingView,
+  type PromptAnalysis,
+  type RotoscopeBatch,
+  type Renderer,
   type RotoscopeMedia,
   type RotoscopePhase,
   type RotoscopeRun,
@@ -18,15 +30,19 @@ import {
 import { AppError } from "../errors";
 import { ffmpeg, probe } from "../ffmpeg";
 import { importSequence } from "../animation/flipbooks";
-import { decodeImage } from "../animation/image-input";
+import { drawFrontView } from "../characters/front-view";
 import { readJsonFile, writeAtomic } from "../animation/store";
 import { writeZip } from "../animation/zip";
 import { frameName } from "./extract";
 import { CANVAS } from "./draw";
 import { higgsfieldConfigured } from "./higgsfield";
 import { learn, PROMPT_LESSONS } from "./lessons";
-import { extendRun, generateRun, initRun, poseToolAvailable, readingFile, reguideRun, runsRoot, type LiveEvent } from "./pipeline";
+import { fillCharacterKitFromRun, findCharacterKit, kitFitsBody } from "../characters/kit";
+import { sha256 } from "./provenance";
+import { analyzeFramePrompt, characterSheet, diagnoseFrame, extendRun, fitsPerson, framePromptOf, generateRun, initRun, MEASURES_FILE, POSE_SHEET, poseToolAvailable, readingFile, refitRun, reguideRun, runsRoot, SCALED_CHARACTER, scaledCharacter, type LiveEvent } from "./pipeline";
 import { approveManually, attemptFile, readManifest, requestCorrection, type Manifest } from "./run-state";
+import { readDiagnostics } from "../mapping/diagnostics";
+import { readOverrides, writeOverrides } from "../mapping/engine";
 
 // Rotoscope runs in the app: one folder per run under FOCUS_DATA_DIR/rotoscope,
 // owned by an account. Preparing and drawing run in the background in this
@@ -51,6 +67,16 @@ const StateSchema = z.object({
   dual: z.boolean().default(false),
   /** The video has a sound track; null until measured (runs made before it was stored). */
   audio: z.boolean().nullable().default(null),
+  /** How frames are drawn (pipeline.ts Renderer); runs made before the mapping engine read as "auto". */
+  renderer: RendererSchema.default("auto"),
+  /** The character's height and weight and the video person's height (also in measures.json, where the pipeline reads them). */
+  measures: CharacterMeasuresSchema.default({ heightCm: null, weightKg: null, personHeightCm: null }),
+  /** Draw the character in other poses before its first drawing (pipeline.ts runPoseSheet). */
+  poseSheet: z.boolean().default(true),
+  /** The test batch the run was made in (createBatch). */
+  batch: z.string().uuid().nullable().default(null),
+  /** Made by a test batch: once prepared, and on every round, frames 1 to this are drawn once each, and nothing else. */
+  batchFrames: z.number().int().min(1).nullable().default(null),
 });
 type State = z.infer<typeof StateSchema>;
 
@@ -159,6 +185,12 @@ function view(state: State, manifest: Manifest | null, readings: ReadonlyMap<num
     dualAvailable: higgsfieldConfigured(),
     guidesVersion: "",
     hasAudio: state.audio === true,
+    renderer: state.renderer,
+    measures: state.measures,
+    fitsPerson: true,
+    poseSheet: false,
+    batch: state.batch,
+    batchFrames: state.batchFrames,
     lessons: learn(manifest?.frames ?? []).map(({ rule, count, frames }, i) => ({ rule, count, frames: [...frames], inPrompt: i < PROMPT_LESSONS })),
   };
 }
@@ -175,7 +207,12 @@ export async function getRun(id: string, ownerId: string): Promise<RotoscopeRun>
   }
   const manifest = existsSync(path.join(runDir(id), "manifest.json")) ? await readManifest(runDir(id)) : null;
   const guides = await stat(path.join(runDir(id), "guides", "guides.json")).catch(() => null);
-  return { ...view(state, manifest, await readings(id, manifest)), guidesVersion: guides ? String(Math.round(guides.mtimeMs)) : "" };
+  return {
+    ...view(state, manifest, await readings(id, manifest)),
+    guidesVersion: guides ? String(Math.round(guides.mtimeMs)) : "",
+    fitsPerson: await fitsPerson(runDir(id)),
+    poseSheet: existsSync(path.join(runDir(id), POSE_SHEET)),
+  };
 }
 
 /** The frames' readings (pipeline.ts readingFor), from readings/: one small text file per frame drawn so far. */
@@ -213,8 +250,27 @@ export const CreateRunSchema = z.object({
   seconds: z.union([z.literal("").transform(() => null), z.coerce.number().min(1).max(ROTOSCOPE_LIMITS.maxSeconds)]).nullable(),
 });
 
+export type CreateRunInput = {
+  readonly ownerId: string;
+  /** The uploaded video, or one a batch already stored (linked, not copied again). */
+  readonly video: File | { readonly path: string; readonly name: string };
+  readonly character: File;
+  /** Already drawn front-on by My characters: used as is. */
+  readonly frontOn?: boolean;
+  readonly options: z.input<typeof CreateRunSchema>;
+  /** The character's height and weight, given before it is analysed. */
+  readonly measures?: CharacterMeasures | null;
+  /** Draw the character in other poses while preparing (one Muse Image drawing). */
+  readonly poseSheet?: boolean;
+  readonly batch?: string;
+  /** A test batch's run: once prepared, frames 1 to this are drawn once each, and nothing else. */
+  readonly batchFrames?: number;
+  /** Each drawing by Muse Image and Higgsfield both (needs HF_CREDENTIALS). */
+  readonly dual?: boolean;
+};
+
 /** Stores the original video (frames must match the user's own export) and the character, then prepares in the background. */
-export async function createRun(input: { ownerId: string; video: File; character: File; options: z.input<typeof CreateRunSchema> }): Promise<RotoscopeRun> {
+export async function createRun(input: CreateRunInput): Promise<RotoscopeRun> {
   if (!poseToolAvailable()) throw new AppError("pose_unavailable", 503, "Pose detection (DWPose) isn’t installed on this server, so rotoscope runs can’t be prepared here.");
   const options = CreateRunSchema.parse(input.options);
   const id = randomUUID();
@@ -222,9 +278,11 @@ export async function createRun(input: { ownerId: string; video: File; character
   const inputs = path.join(dir, "input");
   await mkdir(inputs, { recursive: true });
   try {
-    const extension = (path.extname(input.video.name).toLowerCase().match(/^\.[a-z0-9]{1,5}$/)?.[0]) ?? ".mp4";
+    const name = input.video instanceof File ? input.video.name : input.video.name;
+    const extension = (path.extname(name).toLowerCase().match(/^\.[a-z0-9]{1,5}$/)?.[0]) ?? ".mp4";
     const video = path.join(inputs, `video${extension}`);
-    await writeFile(video, Buffer.from(await input.video.arrayBuffer()));
+    if (input.video instanceof File) await writeFile(video, Buffer.from(await input.video.arrayBuffer()));
+    else await link(input.video.path, video).catch(() => copyFile((input.video as { path: string }).path, video));
     const facts = await probe(video, true).catch(() => null);
     const duration = Number(facts?.format?.duration);
     if (!facts || !Number.isFinite(duration) || duration <= 0 || !facts.streams.some((stream) => stream.codec_type === "video")) {
@@ -236,29 +294,118 @@ export async function createRun(input: { ownerId: string; video: File; character
     if (covered > ROTOSCOPE_LIMITS.maxSeconds || Math.round(covered * options.fps) > ROTOSCOPE_LIMITS.maxFrames) {
       throw new AppError("segment_too_long", 422, `One run covers at most ${ROTOSCOPE_LIMITS.maxSeconds} s and ${ROTOSCOPE_LIMITS.maxFrames} frames. Choose a shorter part or fewer frames per second.`);
     }
-    const decoded = await decodeImage(Buffer.from(await input.character.arrayBuffer()), { minDimension: 256 });
     // Measured against a light background (grid.ts figureBox), so transparency becomes white.
     const character = path.join(inputs, "character.png");
-    await sharp(decoded.flat).flatten({ background: "#ffffff" }).png().toFile(character);
+    await writeFile(character, await characterSheet(Buffer.from(await input.character.arrayBuffer())));
+    const measures = input.measures ?? { heightCm: null, weightKg: null, personHeightCm: null };
+    const dual = Boolean(input.dual) && higgsfieldConfigured();
     const state: State = {
       id, ownerId: input.ownerId,
-      name: options.name || path.basename(input.video.name, path.extname(input.video.name)).slice(0, 80) || "Rotoscope",
-      createdAt: new Date().toISOString(), phase: "preparing", error: null, log: [], live: null, fps: options.fps, start: options.start, seconds, duration, dual: false, audio: facts.streams.some((stream) => stream.codec_type === "audio"),
+      name: options.name || path.basename(name, path.extname(name)).slice(0, 80) || "Rotoscope",
+      createdAt: new Date().toISOString(), phase: "preparing", error: null, log: [], live: null, fps: options.fps, start: options.start, seconds, duration, dual, audio: facts.streams.some((stream) => stream.codec_type === "audio"),
+      // A batch compares the generators on every frame: the rig would draw frame 2 on from frame 1 instead.
+      renderer: input.batchFrames ? "muse" : "auto", measures, poseSheet: input.poseSheet ?? true, batch: input.batch ?? null, batchFrames: input.batchFrames ?? null,
     };
     await writeAtomic(statePath(id), `${JSON.stringify(state, null, 2)}\n`);
-    start(id, async () => {
+    start(id, async (signal) => {
       try {
-        await initRun(path.join(dir, "work-init"), { video, character, fps: options.fps, start: options.start, seconds, maxAttempts: ROTOSCOPE_LIMITS.maxAttempts, ownerId: input.ownerId, name: state.name }, (line) => void appendLog(id, line))
+        if (!input.frontOn) await frontOnCharacter(character, signal, (line) => void appendLog(id, line));
+        // A saved character prepared in My characters brings its pose, description, pose sheet, palette and build.
+        const kit = await findCharacterKit(input.ownerId, sha256(await readFile(character))).catch(() => null);
+        await initRun(path.join(dir, "work-init"), { video, character, fps: options.fps, start: options.start, seconds, maxAttempts: ROTOSCOPE_LIMITS.maxAttempts, ownerId: input.ownerId, name: state.name, measures, poseSheet: state.poseSheet, kit: kit ? { dir: kit.dir, body: kitFitsBody(kit, measures) } : null }, (line) => void appendLog(id, line))
           .then(() => moveInto(path.join(dir, "work-init"), dir));
+        // A saved character (sent front-on) without animation data in My characters gets this run's analysis.
+        if (!kit && input.frontOn) {
+          await fillCharacterKitFromRun(input.ownerId, dir, { heightCm: measures.heightCm, weightKg: measures.weightKg }, (line) => void appendLog(id, line))
+            .catch((error: unknown) => void appendLog(id, `Couldn’t save the character’s analysis to My characters (${error instanceof Error ? error.message.slice(0, 120) : "unknown error"}); the run goes on.`));
+        }
         await updateState(id, (current) => ({ ...current, phase: "ready" }));
       } catch (error) {
         await updateState(id, (current) => ({ ...current, phase: "failed", error: friendly(error) }));
+        return;
+      }
+      // A test batch draws its first frames once each, as soon as it is prepared.
+      if (state.batchFrames && !signal.aborted) {
+        await updateState(id, (current) => ({ ...current, phase: "generating", live: null }));
+        await drawRun(id, signal, { frames: state.batchFrames, attempts: 1, renderer: "muse", dual, poseSheet: state.poseSheet });
       }
     });
     return view(state, null);
   } catch (error) {
     await rm(dir, { recursive: true, force: true });
     throw error;
+  }
+}
+
+/**
+ * A test batch: one video and up to MAX_BATCH_CHARACTERS characters, one run each, prepared side by side; each draws
+ * only its first `frames` frames, once each per round (with Higgsfield too when `dual`). The video is stored once and linked.
+ */
+export async function createBatch(input: { readonly ownerId: string; readonly video: File; readonly characters: readonly { readonly file: File; readonly name: string; readonly frontOn: boolean; readonly measures: CharacterMeasures | null }[]; readonly options: z.input<typeof CreateRunSchema>; readonly poseSheet: boolean; readonly frames: number; readonly dual: boolean }): Promise<RotoscopeBatch> {
+  if (input.dual && !higgsfieldConfigured()) throw new AppError("higgsfield_unconfigured", 422, "Comparing with Higgsfield needs it configured on this server (HF_CREDENTIALS).");
+  if (!input.characters.length || input.characters.length > MAX_BATCH_CHARACTERS) throw new AppError("INPUT_INVALID", 400, `Choose one to ${MAX_BATCH_CHARACTERS} characters.`);
+  const batch = randomUUID();
+  const scratch = path.join(runsRoot(), `.batch-${batch}`);
+  await mkdir(scratch, { recursive: true });
+  try {
+    const stored = path.join(scratch, `video${(path.extname(input.video.name).toLowerCase().match(/^\.[a-z0-9]{1,5}$/)?.[0]) ?? ".mp4"}`);
+    await writeFile(stored, Buffer.from(await input.video.arrayBuffer()));
+    const video = { path: stored, name: input.video.name };
+    const base = input.options.name || path.basename(input.video.name, path.extname(input.video.name)).slice(0, 50) || "Batch";
+    const runs: RotoscopeRun[] = [];
+    for (const character of input.characters) {
+      runs.push(await createRun({
+        ownerId: input.ownerId, video, character: character.file, frontOn: character.frontOn, measures: character.measures, poseSheet: input.poseSheet, batch, batchFrames: input.frames, dual: input.dual,
+        options: { ...input.options, name: `${base} · ${character.name}`.slice(0, 80) },
+      }));
+    }
+    return { id: batch, runs };
+  } finally {
+    await rm(scratch, { recursive: true, force: true });
+  }
+}
+
+/** Every run of a test batch, as the batch view shows them. */
+export async function getBatch(batch: string, ownerId: string): Promise<RotoscopeBatch> {
+  const runs: RotoscopeRun[] = [];
+  for (const name of await readdir(runsRoot()).catch(() => [] as string[])) {
+    if (!RotoscopeIdSchema.safeParse(name).success) continue;
+    const state = await readState(name).catch(() => null);
+    if (state?.ownerId === ownerId && state.batch === batch) runs.push(await getRun(name, ownerId));
+  }
+  if (!runs.length) throw new AppError("batch_not_found", 404, "This test batch doesn’t exist.");
+  return { id: batch, runs: runs.sort((a, b) => a.createdAt.localeCompare(b.createdAt)) };
+}
+
+/** Another round of a test batch: every idle run draws its first frames once more each. */
+export async function drawBatch(batch: string, ownerId: string, gate: () => Promise<void>): Promise<RotoscopeBatch> {
+  const { runs } = await getBatch(batch, ownerId);
+  const idle = runs.filter((run) => run.phase === "ready" && run.total > 0);
+  if (!idle.length) throw new AppError("run_busy", 409, "Every run of this batch is still working.");
+  await gate();
+  for (const run of idle) {
+    const state = await ownedState(run.id, ownerId);
+    await startGeneration(run.id, ownerId, async () => undefined, { frames: Math.min(state.batchFrames ?? 1, run.total), attempts: 1, renderer: "muse" });
+  }
+  return getBatch(batch, ownerId);
+}
+
+/**
+ * Whatever angle or pose the upload has, the run is measured and redrawn from the character facing
+ * the camera in a neutral pose. The upload is kept as input/character-original.png; if the model
+ * can't redraw it, the run goes on with the upload as it was.
+ */
+async function frontOnCharacter(character: string, signal: AbortSignal, log: (line: string) => void): Promise<void> {
+  try {
+    log("Redrawing the character front-on in a neutral pose…");
+    const original = await readFile(character);
+    const front = await drawFrontView({ png: original, signal });
+    const sheet = await characterSheet(front);
+    await cp(character, path.join(path.dirname(character), "character-original.png"));
+    await writeFile(character, sheet);
+  } catch (error) {
+    if (signal.aborted) throw error;
+    log(`Couldn’t redraw the character front-on (${error instanceof Error ? error.message.slice(0, 120) : "unknown error"}); using the image as uploaded.`);
   }
 }
 
@@ -277,7 +424,7 @@ const PHASE_BUSY: Partial<Record<RotoscopePhase, string>> = {
 };
 
 /** Draws from the first open frame; approved frames are never drawn again unless a pencil note reopened them. */
-export async function startGeneration(id: string, ownerId: string, gate: () => Promise<void>, options: { dual?: boolean; only?: number } = {}): Promise<RotoscopeRun> {
+export async function startGeneration(id: string, ownerId: string, gate: () => Promise<void>, options: { dual?: boolean; only?: number; renderer?: Renderer; prompt?: string; attempts?: number; /** Frames 1 to this, each drawn once more (a test batch's round). */ frames?: number } = {}): Promise<RotoscopeRun> {
   const state = await ownedState(id, ownerId);
   if (PHASE_BUSY[state.phase]) throw new AppError("run_busy", 409, PHASE_BUSY[state.phase]!);
   const dual = options.dual ?? state.dual;
@@ -288,29 +435,42 @@ export async function startGeneration(id: string, ownerId: string, gate: () => P
   if (only !== undefined && !manifest.frames.some((frame) => frame.index === only)) throw new AppError("frame_not_found", 404, "That frame doesn’t exist.");
   if (only === undefined && manifest.frames.every((frame) => frame.status === "approved")) throw new AppError("run_complete", 409, "Every frame is already approved.");
   await gate();
-  await updateState(id, (current) => ({ ...current, phase: "generating", error: null, live: null, dual }));
-  start(id, async (signal) => {
-    try {
-      const onLive = (event: LiveEvent) => void updateState(id, (current) => ({
-        ...current,
-        live: { ...event, image: event.stage !== "drawing" && event.stage !== "measuring", at: new Date().toISOString() },
-      })).catch(() => undefined);
-      const outcome = await generateRun(runDir(id), { signal, onLive, dual, only, log: (line) => void appendLog(id, line) });
-      const summary = outcome.kind === "complete" ? `all ${outcome.approved} frames approved`
-        : outcome.kind === "halted" ? `FIREWALL: stopped at frame ${outcome.frame}`
-          : outcome.kind === "stopped" ? `stopped by you at frame ${outcome.frame}` : `paused at frame ${outcome.next}`;
-      await appendLog(id, summary);
-      await updateState(id, (current) => ({
-        ...current,
-        phase: "ready",
-        live: null,
-        ...(only !== undefined && outcome.kind === "halted" ? { error: `Frame ${only} couldn’t be redrawn, so its earlier drawing was kept.` } : {}),
-      }));
-    } catch (error) {
-      await updateState(id, (current) => ({ ...current, phase: "ready", live: null, error: error instanceof AppError ? error.message : `Drawing stopped: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}` }));
-    }
-  });
+  // A prompt under test is a setting of that one drawing, not of the run.
+  const renderer = options.renderer ?? state.renderer;
+  await updateState(id, (current) => ({ ...current, phase: "generating", error: null, live: null, dual, ...(options.prompt ? {} : { renderer }) }));
+  start(id, (signal) => drawRun(id, signal, { dual, only, frames: options.frames, renderer: options.prompt ? "muse" : renderer, prompt: options.prompt, attempts: options.attempts, poseSheet: state.poseSheet }));
   return getRun(id, ownerId);
+}
+
+/** The drawing itself, in the run's background job: the run is "generating" when it starts and "ready" when it ends. */
+async function drawRun(id: string, signal: AbortSignal, options: { dual?: boolean; only?: number; frames?: number; renderer: Renderer; prompt?: string; attempts?: number; poseSheet: boolean }): Promise<void> {
+  const { only } = options;
+  try {
+    const onLive = (event: LiveEvent) => void updateState(id, (current) => ({
+      ...current,
+      live: { ...event, image: event.stage !== "drawing" && event.stage !== "measuring", at: new Date().toISOString() },
+    })).catch(() => undefined);
+    if (options.prompt) await appendLog(id, `frame ${only}: drawing once with your prompt from the debug panel`);
+    const draw = (frame: number | undefined) => generateRun(runDir(id), { signal, onLive, dual: options.dual, only: frame, renderer: options.renderer, prompt: options.prompt, attempts: options.attempts, poseSheet: options.poseSheet, log: (line) => void appendLog(id, line) });
+    // A batch round: each of its frames drawn once more, approved or not, one after the other.
+    let outcome = await draw(options.frames ? 1 : only);
+    for (let frame = 2; options.frames && frame <= options.frames && !signal.aborted; frame++) outcome = await draw(frame);
+    const summary = outcome.kind === "complete" ? `all ${outcome.approved} frames approved`
+      : outcome.kind === "partial" ? `${outcome.approved} frames approved; frame${outcome.failed.length === 1 ? "" : "s"} ${outcome.failed.join(", ")} didn’t pass and stay open`
+      : outcome.kind === "halted" ? `FIREWALL: stopped at frame ${outcome.frame}`
+        : outcome.kind === "stopped" ? `stopped by you at frame ${outcome.frame}` : `paused at frame ${outcome.next}`;
+    await appendLog(id, summary);
+    // One test drawing that misses a check is a result to look at, not a failure of the run.
+    const tested = options.prompt || options.attempts === 1 || options.frames;
+    await updateState(id, (current) => ({
+      ...current,
+      phase: "ready",
+      live: null,
+      ...(only !== undefined && outcome.kind === "halted" && !tested ? { error: `Frame ${only} couldn’t be redrawn, so its earlier drawing was kept.` } : {}),
+    }));
+  } catch (error) {
+    await updateState(id, (current) => ({ ...current, phase: "ready", live: null, error: error instanceof AppError ? error.message : `Drawing stopped: ${error instanceof Error ? error.message.slice(0, 200) : String(error)}` }));
+  }
 }
 
 async function videoHasAudio(id: string): Promise<boolean | null> {
@@ -380,11 +540,61 @@ export async function extendRunBy(id: string, ownerId: string, seconds: number):
   return getRun(id, ownerId);
 }
 
-/** The name is only a label: it can change while the run is drawing. */
-export async function renameRun(id: string, ownerId: string, name: string): Promise<RotoscopeRun> {
+/**
+ * The name is only a label: it can change while the run is drawing. New measures reach the next drawing's prompt;
+ * the size the drawings are placed at follows them once the run is refitted (refit).
+ */
+export async function updateRun(id: string, ownerId: string, input: { name?: string; measures?: CharacterMeasures }): Promise<RotoscopeRun> {
   await ownedState(id, ownerId);
-  await updateState(id, (current) => ({ ...current, name }));
+  if (input.measures) await writeFile(path.join(runDir(id), MEASURES_FILE), `${JSON.stringify(input.measures, null, 2)}\n`);
+  await updateState(id, (current) => ({ ...current, ...(input.name ? { name: input.name } : {}), ...(input.measures ? { measures: input.measures } : {}) }));
   return getRun(id, ownerId);
+}
+
+/**
+ * Lays the run out again on the video person's own figure (times the measures' height ratio) and moves every
+ * drawing onto it: local work, no AI call (pipeline.ts refitRun). The old files are kept beside the new ones.
+ */
+export async function refit(id: string, ownerId: string): Promise<RotoscopeRun> {
+  const state = await ownedState(id, ownerId);
+  if (state.phase !== "ready") throw new AppError("run_busy", 409, PHASE_BUSY[state.phase] ?? "This run is busy.");
+  if (runtime.running.has(id)) throw new AppError("run_busy", 409, "This run is already working.");
+  const controller = new AbortController();
+  runtime.running.set(id, controller);
+  try {
+    const moved = await refitRun(runDir(id), (line) => void appendLog(id, line));
+    await appendLog(id, `refitted to the video person: ${moved} frame${moved === 1 ? "" : "s"} moved to the new size`);
+  } catch (error) {
+    throw new AppError("refit_failed", 500, `The run couldn’t be refitted: ${error instanceof Error ? error.message.slice(0, 160) : String(error)}`);
+  } finally {
+    runtime.running.delete(id);
+  }
+  return getRun(id, ownerId);
+}
+
+// ── Prompt debugging ───────────────────────────────────────────────────────
+
+/** A frame's Muse Image prompt: the one an attempt was drawn with, else the one its next drawing gets. No AI call. */
+export async function framePrompt(id: string, ownerId: string, frame: number, attempt: number | null): Promise<FramePrompt> {
+  const state = await ownedState(id, ownerId);
+  if (state.phase === "preparing" || state.phase === "failed") throw new AppError("run_busy", 409, PHASE_BUSY[state.phase]!);
+  const manifest = await readManifest(runDir(id));
+  if (!manifest.frames.some((entry) => entry.index === frame)) throw new AppError("frame_not_found", 404, "That frame doesn’t exist.");
+  const { prompt, images, sent } = await framePromptOf(runDir(id), frame, attempt);
+  return { prompt, images: [...images], sent };
+}
+
+/** Muse Spark reads an edited prompt against the frame's images and an attempt's drawing: what is wrong and a rewrite. */
+export async function analyzePrompt(id: string, ownerId: string, input: { frame: number; attempt: number | null; prompt: string }): Promise<PromptAnalysis> {
+  const state = await ownedState(id, ownerId);
+  if (state.phase === "preparing" || state.phase === "failed") throw new AppError("run_busy", 409, PHASE_BUSY[state.phase]!);
+  try {
+    const analysis = await analyzeFramePrompt(runDir(id), input.frame, input.attempt, input.prompt);
+    return { ...analysis, issues: analysis.issues.map((issue) => ({ ...issue })) };
+  } catch (error) {
+    if (error instanceof AppError) throw error;
+    throw new AppError("analysis_failed", 502, `The prompt couldn’t be analysed: ${error instanceof Error ? error.message.slice(0, 160) : String(error)}`);
+  }
 }
 
 export async function stopGeneration(id: string, ownerId: string): Promise<RotoscopeRun> {
@@ -467,10 +677,13 @@ export async function openInFlipbook(id: string, ownerId: string, options: { sou
   const state = await ownedState(id, ownerId);
   if (PHASE_BUSY[state.phase]) throw new AppError("run_busy", 409, PHASE_BUSY[state.phase]!);
   const manifest = await readManifest(runDir(id));
+  // From the first frame to the last approved one: a frame the run went past without approving holds the drawing before it.
+  const lastApproved = manifest.frames.findLastIndex((frame) => frame.status === "approved" && frame.approved);
   const approved: string[] = [];
-  for (const frame of manifest.frames) {
-    if (frame.status !== "approved" || !frame.approved) break;
-    approved.push(path.join(runDir(id), frame.approved.file));
+  for (const frame of manifest.frames.slice(0, lastApproved + 1)) {
+    if (frame.status === "approved" && frame.approved) approved.push(path.join(runDir(id), frame.approved.file));
+    else if (approved.length) approved.push(approved[approved.length - 1]);
+    else break;
   }
   const seconds = Math.min(FLIPBOOK_MAX_SECONDS, Math.floor(approved.length / state.fps));
   if (seconds < 1) {
@@ -496,15 +709,21 @@ export async function openInFlipbook(id: string, ownerId: string, options: { sou
   return { flipbookId: flipbook.id };
 }
 
-/** Copies a console run (pnpm rotoscope …) into an account, so it opens in the app. The console run is left as it was. */
-export async function importConsoleRun(source: string, ownerId: string): Promise<RotoscopeRun> {
+/**
+ * Copies a console run (pnpm rotoscope …) into an account, so it opens in the app. The console run is left as it was.
+ * With `batch` it joins that test batch, whose rounds draw `batchFrames` frames (with Higgsfield too when `dual`).
+ */
+export async function importConsoleRun(source: string, ownerId: string, options: { batch?: string; batchFrames?: number; dual?: boolean } = {}): Promise<RotoscopeRun> {
   const manifest = await readManifest(source);
   const id = randomUUID();
   const dir = runDir(id);
   await cp(source, dir, { recursive: true, filter: (from) => !from.endsWith("run.lock") });
   const state: State = {
     id, ownerId, name: manifest.name ?? path.basename(source), createdAt: manifest.createdAt, phase: "ready", error: null, live: null,
-    log: [`imported from the console run ${path.basename(source)}`], fps: manifest.fps, start: manifest.start, seconds: manifest.seconds, duration: null, dual: false, audio: null,
+    log: [`imported from the console run ${path.basename(source)}`], fps: manifest.fps, start: manifest.start, seconds: manifest.seconds, duration: null, dual: false, audio: null, renderer: "auto",
+    measures: await readFile(path.join(source, MEASURES_FILE), "utf8").then((text) => CharacterMeasuresSchema.parse(JSON.parse(text)), () => ({ heightCm: null, weightKg: null, personHeightCm: null })),
+    poseSheet: true, batch: options.batch ?? null, batchFrames: options.batch ? options.batchFrames ?? 1 : null,
+    ...(options.dual ? { dual: true, renderer: "muse" as const } : {}),
   };
   await writeAtomic(statePath(id), `${JSON.stringify(state, null, 2)}\n`);
   // The app serves the character from input/, where its own uploads keep it.
@@ -513,14 +732,101 @@ export async function importConsoleRun(source: string, ownerId: string): Promise
   return getRun(id, ownerId);
 }
 
+// ── Character mapping ──────────────────────────────────────────────────────
+
+/** An attempt's mapping diagnostics and the frame's joint corrections, for the overlay inspector. */
+export async function getMapping(id: string, ownerId: string, frame: number, attempt: number): Promise<MappingView> {
+  await ownedState(id, ownerId);
+  const dir = runDir(id);
+  const manifest = await readManifest(dir);
+  if (!manifest.frames.some((entry) => entry.index === frame)) throw new AppError("frame_not_found", 404, "That frame doesn’t exist.");
+  const overrides = (await readOverrides(dir)).frames?.[String(frame)]?.joints ?? {};
+  const kept = (kind: keyof typeof REVIEW_PICTURE) => existsSync(path.join(dir, "work", `${frameName(frame).replace(".png", "")}_a${attempt}_${REVIEW_PICTURE[kind]}.png`));
+  return { diagnostics: await readDiagnostics(dir, frame, attempt) as MappingView["diagnostics"], overrides: overrides as MappingView["overrides"], canvas: CANVAS, review: { overlay: kept("overlay"), build: kept("build"), scan: kept("scan") } };
+}
+
+/**
+ * A person moved target joints in the inspector: the frame's next drawing deforms to them.
+ * An empty set clears the frame's corrections. Approved frames stay approved; the person
+ * redraws the frame to use the correction.
+ */
+export async function correctMapping(id: string, ownerId: string, input: { frame: number; joints: Partial<Record<MappingJoint, readonly [number, number]>> }): Promise<MappingView> {
+  const state = await ownedState(id, ownerId);
+  if (state.phase !== "ready") throw new AppError("run_busy", 409, PHASE_BUSY[state.phase] ?? "This run is busy.");
+  const dir = runDir(id);
+  const manifest = await readManifest(dir);
+  const entry = manifest.frames.find((candidate) => candidate.index === input.frame);
+  if (!entry) throw new AppError("frame_not_found", 404, "That frame doesn’t exist.");
+  const overrides = await readOverrides(dir);
+  const joints = Object.fromEntries(Object.entries(input.joints).filter(([name]) => (MAPPING_JOINTS as readonly string[]).includes(name)));
+  const frames = { ...overrides.frames };
+  if (Object.keys(joints).length) frames[String(input.frame)] = { joints };
+  else delete frames[String(input.frame)];
+  await writeOverrides(dir, { ...overrides, frames });
+  await appendLog(id, Object.keys(joints).length ? `frame ${input.frame}: your mapping correction (${Object.keys(joints).join(", ")}) for its next drawing` : `frame ${input.frame}: mapping corrections cleared`);
+  return getMapping(id, ownerId, input.frame, entry.approved?.attempt ?? entry.attempts.at(-1)?.attempt ?? 1);
+}
+
+/** Measures the frame's attempts that have no mapping diagnostics (drawn before the engine): DWPose locally, no AI call. */
+export async function diagnoseMapping(id: string, ownerId: string, frame: number, attempt: number): Promise<MappingView> {
+  const state = await ownedState(id, ownerId);
+  if (state.phase !== "ready") throw new AppError("run_busy", 409, PHASE_BUSY[state.phase] ?? "This run is busy.");
+  if (!poseToolAvailable()) throw new AppError("pose_unavailable", 503, "Pose detection (DWPose) isn’t installed on this server.");
+  if (runtime.running.has(id)) throw new AppError("run_busy", 409, "This run is already working.");
+  const controller = new AbortController();
+  runtime.running.set(id, controller);
+  try {
+    await diagnoseFrame(runDir(id), frame);
+  } catch (error) {
+    throw new AppError("diagnose_failed", 500, `The mapping couldn’t be measured: ${error instanceof Error ? error.message.slice(0, 160) : String(error)}`);
+  } finally {
+    runtime.running.delete(id);
+  }
+  return getMapping(id, ownerId, frame, attempt);
+}
+
 // ── Media ──────────────────────────────────────────────────────────────────
 
+/** The file each review picture is kept under, next to the attempt it belongs to. */
+const REVIEW_PICTURE = { overlay: "review_overlay", build: "review_build", scan: "scan" } as const;
+
 /** Only files the run's own state names are served. */
-export async function mediaFile(id: string, ownerId: string, kind: RotoscopeMedia, frame?: number, attempt?: number): Promise<string> {
+export async function mediaFile(id: string, ownerId: string, kind: RotoscopeMedia, frame?: number, attempt?: number, by?: GeneratorName): Promise<string> {
   const state = await ownedState(id, ownerId);
   const dir = runDir(id);
   const missing = () => new AppError("media_not_found", 404, "This file is no longer available.");
   if (kind === "character") return path.join(dir, "input", "character.png");
+  if (kind === "posesheet") {
+    if (!existsSync(path.join(dir, POSE_SHEET))) throw missing();
+    return path.join(dir, POSE_SHEET);
+  }
+  if (kind === "scaled") {
+    // Made the first time it is asked for, or when drawing starts; the sheet as it is when the clip's poses aren't there yet.
+    const scaled = path.join(dir, SCALED_CHARACTER);
+    if (!existsSync(scaled)) await scaledCharacter(dir).catch(() => null);
+    return existsSync(scaled) ? scaled : path.join(dir, "input", "character.png");
+  }
+  if (kind === "exposed" || kind === "labels" || kind === "mask") {
+    // Only files an attempt's own diagnostics name.
+    const record = frame && attempt ? await readDiagnostics(dir, frame, attempt) : null;
+    const file = kind === "exposed" ? record?.masks.exposed : kind === "labels" ? record?.masks.labels : record?.masks.character;
+    if (!file || path.isAbsolute(file) || file.split(/[\\/]/).includes("..")) throw missing();
+    return path.join(dir, file);
+  }
+  if (kind === "overlay" || kind === "build" || kind === "scan") {
+    // Kept beside the attempt in work/ when it was reviewed (pipeline.ts validate).
+    if (!frame || !attempt) throw missing();
+    const file = path.join(dir, "work", `${frameName(frame).replace(".png", "")}_a${attempt}_${REVIEW_PICTURE[kind]}.png`);
+    if (!existsSync(file)) throw missing();
+    return file;
+  }
+  if (kind === "drawn") {
+    // Each generator's cut-out, kept in work/ when an attempt was drawn by two (pipeline.ts measure).
+    if (!frame || !attempt || !by) throw missing();
+    const file = path.join(dir, "work", `${frameName(frame).replace(".png", "")}_a${attempt}_${by}_keyed.png`);
+    if (!existsSync(file)) throw missing();
+    return file;
+  }
   if (kind === "audio") {
     if (state.audio === false) throw missing();
     return soundClip(id);

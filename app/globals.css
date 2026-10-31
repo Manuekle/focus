@@ -1,3 +1,6 @@
 @import "../styles/index.css";
 @import "./editor.css";
 @source ".";
+
+/* The studio sidebar restoring its saved state on load: it snaps, never animates (app/_editor/sidebar-resizer.tsx). */
+[data-sidebar-restoring], [data-sidebar-restoring] * { transition: none !important; }

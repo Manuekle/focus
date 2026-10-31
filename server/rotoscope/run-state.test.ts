@@ -48,19 +48,25 @@ describe("runFrames", () => {
     expect(feedbacks[5]).toEqual(["fix 4", "fix 4"]);
   });
 
-  it("halts on the third failure and resumes on that frame without redrawing approved ones", async () => {
+  it("goes past a frame that fails every attempt, draws the rest from the last approved one, and retries it next run", async () => {
     await writeManifest(dir, manifest(6));
-    const first = await runFrames(dir, scripted((frame) => frame === 4));
-    expect(first).toMatchObject({ kind: "halted", frame: 4 });
-    let state = await readManifest(dir);
-    expect(state.frames.map((f) => f.status)).toEqual(["approved", "approved", "approved", "failed", "pending", "pending"]);
-    expect(state.halted?.frame).toBe(4);
-
     const calls: string[] = [];
-    expect(await runFrames(dir, scripted(() => false, calls))).toEqual({ kind: "complete", approved: 6 });
-    expect(calls).toEqual(["4:4", "5:1", "6:1"]);
+    const previous: (string | null)[] = [];
+    const steps = scripted((frame) => frame === 4, calls);
+    const first = await runFrames(dir, { ...steps, draw: async (context) => { previous.push(context.previous?.toString() ?? null); return steps.draw(context); } });
+    expect(first).toEqual({ kind: "partial", approved: 5, failed: [4] });
+    expect(calls).toEqual(["1:1", "2:1", "3:1", "4:1", "4:2", "4:3", "5:1", "6:1"]);
+    // Frame 5 is drawn from frame 3, never from a drawing that didn't pass.
+    expect(previous[6]).toBe("frame-3-a1");
+    let state = await readManifest(dir);
+    expect(state.frames.map((f) => f.status)).toEqual(["approved", "approved", "approved", "failed", "approved", "approved"]);
+    expect(state.halted ?? null).toBeNull();
+
+    const again: string[] = [];
+    expect(await runFrames(dir, scripted(() => false, again))).toEqual({ kind: "complete", approved: 6 });
+    expect(again).toEqual(["4:4"]);
     state = await readManifest(dir);
-    expect(state.halted).toBeNull();
+    expect(state.frames[3].approved?.attempt).toBe(4);
     expect(await readFile(path.join(dir, "frames", frameName(1)), "utf8")).toBe("frame-1-a1");
   });
 
@@ -144,14 +150,16 @@ describe("lock and manual approval", () => {
     await (await acquireLock(dir))();
   });
 
-  it("approves a rejected attempt of the halted frame only", async () => {
+  it("approves a rejected attempt of a frame the run went past, and refuses a frame never drawn", async () => {
     await writeManifest(dir, manifest(3));
-    await runFrames(dir, scripted((frame) => frame === 2));
+    await runFrames(dir, scripted((frame) => frame === 2), { limit: 2 });
     await expect(approveManually(dir, 3, 1)).rejects.toThrow(/only the next open frame \(2\)/);
+    await runFrames(dir, scripted((frame) => frame === 2));
     await approveManually(dir, 2, 2);
     const state = await readManifest(dir);
     expect(state.frames[1]).toMatchObject({ status: "approved", approved: { attempt: 2, manual: true } });
-    expect(state.halted).toBeNull();
+    expect(state.frames[2].status).toBe("approved");
+    expect(state.halted ?? null).toBeNull();
   });
 
   it("lets a person choose a different attempt for a frame that is already approved", async () => {

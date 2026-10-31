@@ -20,6 +20,7 @@ import {
 } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { MediaImage } from "../../components/ui/media-image";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Spinner } from "../../components/ui/spinner";
 import { Tooltip, TooltipContent, TooltipTrigger } from "../../components/ui/tooltip";
@@ -27,6 +28,7 @@ import { cn } from "../../lib/utils";
 import { rotoscopeUrls, type RotoscopeFrame, type RotoscopeRun } from "../../shared/rotoscope";
 import { AttemptTray, TRAY_RESERVE, trayItems } from "./attempt-tray";
 import { STATE_LABEL, frameState, time } from "./frame-state";
+import { ImageGeneration } from "./image-generation";
 import styles from "./rotoscope-canvas.module.css";
 
 const CARD_W = 128;
@@ -636,16 +638,16 @@ export function RotoscopeCanvas({
                   <span className={styles.thumb} data-transparent="">
                     {detailed ? (
                       frame.status === "approved" ? (
-                        // eslint-disable-next-line @next/next/no-img-element -- approved drawing from the run's media route
-                        <img src={`${rotoscopeUrls.media(run.id, "frame", frame.index)}&v=${frame.approvedAttempt}`} alt="" draggable={false} loading="lazy" decoding="async" />
+                        <MediaImage src={`${rotoscopeUrls.media(run.id, "frame", frame.index)}&v=${frame.approvedAttempt}`} alt="" draggable={false} loading="lazy" decoding="async" />
                       ) : live?.image ? (
-                        // eslint-disable-next-line @next/next/no-img-element -- the attempt being checked
-                        <img src={rotoscopeUrls.media(run.id, "attempt", frame.index, live.attempt)} alt="" draggable={false} className={styles.checking} />
+                        <MediaImage src={rotoscopeUrls.media(run.id, "attempt", frame.index, live.attempt)} alt="" draggable={false} className={styles.checking} />
                       ) : live ? (
-                        <Skeleton className={styles.working} />
+                        <ImageGeneration className={styles.workingFx} preset="pixels-organic" pixelScale={0.6}>
+                          {/* eslint-disable-next-line @next/next/no-img-element -- the video frame being drawn, dimmed under the work */}
+                          <img src={rotoscopeUrls.media(run.id, "source", frame.index)} alt="" draggable={false} className={styles.ghost} />
+                        </ImageGeneration>
                       ) : (
-                        // eslint-disable-next-line @next/next/no-img-element -- the video frame, dimmed until drawn
-                        <img src={rotoscopeUrls.media(run.id, "source", frame.index)} alt="" draggable={false} loading="lazy" decoding="async" className={styles.ghost} />
+                        <MediaImage src={rotoscopeUrls.media(run.id, "source", frame.index)} alt="" draggable={false} loading="lazy" decoding="async" className={styles.ghost} />
                       )
                     ) : (
                       <span className={styles.block} aria-hidden />

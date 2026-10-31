@@ -45,7 +45,7 @@ const ENABLED_KEY = "focus:sound-enabled";
 const VOLUME_KEY = "focus:sound-volume";
 const THEME_KEY = "focus:sound-theme";
 const DEFAULT_VOLUME = 0.35;
-const DEFAULT_ENABLED = false;
+const DEFAULT_ENABLED = true;
 // Bubble: knocks, drips, corks and gulps. Picked over the glass `default` for
 // how it sits in this product; anyone can switch in Account.
 const DEFAULT_THEME: SoundTheme = "bubble";
@@ -118,8 +118,9 @@ type SoundContextValue = {
 const SoundContext = createContext<SoundContextValue | null>(null);
 
 /**
- * Focus interaction sounds start muted; an explicit saved mute always wins.
- * Sound only follows interaction. Mutable preferences let an async outcome
+ * Focus interaction sounds start on; an explicit saved mute always wins.
+ * Sound only follows interaction — browsers hold audio until the first
+ * gesture, and cuelume unlocks its context on that first cue. Mutable preferences let an async outcome
  * respect a mute/volume change made while its request was in flight.
  */
 export function SoundProvider({ children }: { readonly children: ReactNode }) {

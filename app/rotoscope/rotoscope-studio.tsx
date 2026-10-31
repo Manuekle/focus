@@ -18,6 +18,7 @@ import { useSession } from "../_auth/session-client";
 import { ago } from "../_editor/ago";
 import { ModeSwitch } from "../_editor/mode-switch";
 import { SidebarResizer, SidebarToggle, useSidebar } from "../_editor/sidebar-resizer";
+import { MediaImage } from "../../components/ui/media-image";
 import { SidebarListSkeleton } from "../_editor/studio-skeletons";
 import { SidebarActivity } from "../_activity/sidebar-activity";
 import shell from "../editor/studio.module.css";
@@ -25,6 +26,7 @@ import fb from "../flipbook/flipbook.module.css";
 import { rotoscopeApi, useRotoscopeRun } from "./rotoscope-client";
 import { RotoscopeCreate } from "./rotoscope-create";
 import { RotoscopeEditor, RotoscopeEditorSkeleton } from "./rotoscope-editor";
+import { BatchView } from "./batch-view";
 import { AnimateNav } from "../_editor/animate-nav";
 
 export const PHASE_LABELS: Record<RotoscopePhase, string> = {
@@ -41,12 +43,14 @@ export const PHASE_LABELS: Record<RotoscopePhase, string> = {
  * redrawn with the user's character, strictly in order. Same studio as
  * Flipbook: the runs in the sidebar, the run as a three-column canvas.
  */
-export function RotoscopeStudio({ initialRunId }: { readonly initialRunId: string | null }) {
+export function RotoscopeStudio({ initialRunId, initialBatchId = null }: { readonly initialRunId: string | null; readonly initialBatchId?: string | null }) {
   const { session } = useSession();
   const user = session?.user ?? null;
   const { toast } = useToast();
   const sidebar = useSidebar();
   const [runId, setRunId] = useState(initialRunId);
+  /** A test batch on show: its runs side by side, until one is opened. */
+  const [batchId, setBatchId] = useState(initialBatchId);
   const { run, setRun, error: pollError } = useRotoscopeRun(runId);
   const [history, setHistory] = useState<RotoscopeRunSummary[] | null>(null);
   // The header field follows the run's name and saves on blur or Enter, as in Flipbook and the video editor.
@@ -66,9 +70,9 @@ export function RotoscopeStudio({ initialRunId }: { readonly initialRunId: strin
   };
 
   useEffect(() => {
-    const url = runId ? `/rotoscope?run=${runId}` : "/rotoscope";
+    const url = runId ? `/rotoscope?run=${runId}` : batchId ? `/rotoscope?batch=${batchId}` : "/rotoscope";
     if (`${window.location.pathname}${window.location.search}` !== url) window.history.replaceState(null, "", url);
-  }, [runId]);
+  }, [runId, batchId]);
 
   const loadHistory = useCallback(() => { void rotoscopeApi.list().then(setHistory, () => setHistory([])); }, []);
   useEffect(() => { if (user) loadHistory(); }, [user, loadHistory]);
@@ -113,7 +117,9 @@ export function RotoscopeStudio({ initialRunId }: { readonly initialRunId: strin
               }}
             />
           ) : null}
-          {run ? <span className={shell.saved}>Saved to your runs</span> : null}
+          {run?.batch ? (
+            <Button size="xs" variant="ghost" onClick={() => { setBatchId(run.batch); setRunId(null); }}>Back to test batch</Button>
+          ) : run ? <span className={shell.saved}>Saved to your runs</span> : null}
         </div>
         <ModeSwitch current="animate" />
         <div className={shell.headerEnd}><AccountButton session={session} next={runId ? `/rotoscope?run=${runId}` : "/rotoscope"} /></div>
@@ -122,12 +128,14 @@ export function RotoscopeStudio({ initialRunId }: { readonly initialRunId: strin
       <div className={cn(shell.body, fb.body)} {...sidebar.bodyProps}>
         <SidebarResizer sidebar={sidebar} showToggle={false} />
         <aside id="rotoscope-library" className={cn(shell.sidebar, fb.sidebar)} aria-label="Your rotoscope runs">
-          <ScrollArea className={shell.sidebarScroll} contentClassName={shell.sidebarContent}>
-            <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => setRunId(null)}>
+          <div data-slot="sidebar-top" className={shell.sidebarTop}>
+            <Button variant="outline" size="sm" className="w-full justify-start" onClick={() => { setRunId(null); setBatchId(null); }}>
               <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
               New run
             </Button>
             <AnimateNav current="rotoscope" />
+          </div>
+          <ScrollArea className={shell.sidebarScroll} contentClassName={shell.sidebarContent}>
             {user ? (
               <nav className={shell.projects} aria-label="Runs">
                 <p className={shell.sideLabel}>Runs</p>
@@ -138,8 +146,9 @@ export function RotoscopeStudio({ initialRunId }: { readonly initialRunId: strin
                     {history.map((entry) => (
                       <li key={entry.id} className={cn(shell.project, entry.id === runId && shell.projectActive)}>
                         <button type="button" className={cn(shell.projectLink, "text-left")} aria-current={entry.id === runId ? "page" : undefined} onClick={() => setRunId(entry.id)}>
-                          {/* eslint-disable-next-line @next/next/no-img-element -- the run's character, from its media route */}
-                          <img src={rotoscopeUrls.media(entry.id, "character")} alt="" className={cn(shell.poster, fb.posterContain)} onError={(event) => { event.currentTarget.style.visibility = "hidden"; }} />
+                          <span className={cn(shell.poster, "relative overflow-hidden")}>
+                            <MediaImage src={rotoscopeUrls.media(entry.id, "character")} className="absolute inset-0 size-full object-contain" iconSize={14} />
+                          </span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-xs text-foreground" title={entry.name}>{entry.name}</span>
                             <span className="block truncate text-[11px] text-muted-foreground">{entry.total ? `${entry.approved}/${entry.total} frames` : PHASE_LABELS[entry.phase]}{entry.phase === "generating" ? " · drawing" : ""} · {ago(entry.createdAt)}</span>
@@ -158,17 +167,23 @@ export function RotoscopeStudio({ initialRunId }: { readonly initialRunId: strin
           <SidebarActivity />
         </aside>
 
-        <ScrollArea key={runId ?? "create"} as="main" className={cn(shell.main, fb.main)} viewportClassName={fb.mainViewport} contentClassName={cn(fb.mainContent, "pt-4")}>
+        <ScrollArea key={runId ?? (batchId ? `batch-${batchId}` : "create")} as="main" className={cn(shell.main, fb.main)} viewportClassName={fb.mainViewport} contentClassName={cn(fb.mainContent, "pt-4")}>
           {session && !user ? (
             <section className={shell.empty} aria-labelledby="rotoscope-title">
               <h1 id="rotoscope-title" className={shell.emptyTitle}>Test a video in Rotoscope</h1>
               <p className="text-sm text-muted-foreground">Sign in to check a video frame by frame with your character before animating it in Flipbook. Runs are saved to your account.</p>
-              <FacebookButton next="/rotoscope" label="Sign in with Facebook" className="h-9 w-fit px-3 text-[13px]" />
+              <FacebookButton next="/rotoscope" label="Sign in with Facebook" size="default" className="w-fit" />
             </section>
           ) : runId ? (
             run ? <RotoscopeEditor key={run.id} run={run} onChange={setRun} /> : pollError ? <Alert tone="error" size="sm">{pollError}</Alert> : <RotoscopeEditorSkeleton />
+          ) : batchId ? (
+            <BatchView batchId={batchId} onOpenRun={setRunId} />
           ) : (
-            <RotoscopeCreate disabled={!user} onCreated={(created) => { setRun(created); setRunId(created.id); loadHistory(); }} />
+            <RotoscopeCreate
+              disabled={!user}
+              onCreated={(created) => { setRun(created); setRunId(created.id); loadHistory(); }}
+              onBatch={(created) => { setBatchId(created.id); loadHistory(); }}
+            />
           )}
         </ScrollArea>
       </div>

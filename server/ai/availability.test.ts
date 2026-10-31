@@ -7,7 +7,7 @@ import { assertModelsAvailable } from "./availability";
 import { guardAiRequest } from "../guard";
 import { generationQuota } from "../quota";
 
-const models = ["muse-spark-1.3", "muse-image-1.0", "sam-3.1"];
+const models = ["muse-spark-1.3-contributor", "muse-image-1.0", "sam-3.1"];
 let work: string;
 beforeEach(async () => {
   work = await mkdtemp(path.join(tmpdir(), "focus-model-check-"));

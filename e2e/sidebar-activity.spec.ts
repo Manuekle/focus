@@ -16,7 +16,7 @@ async function fixture(page: Page) {
   let character: Character = {
     id: randomUUID(), ownerId, name: "Character image", preset: null,
     references: [{ id: "v-000000000001", name: "Original", role: "identity", width: 256, height: 256 }],
-    versions: [], selectedVersionId: null, status: "ready", job: null, error: null,
+    versions: [], selectedVersionId: null, status: "ready", measures: { heightCm: null, weightKg: null }, job: null, error: null,
     budget: { used: 0, limit: 32 }, operations: [], createdAt: now, updatedAt: now,
   };
   let disconnected = false;

@@ -10,8 +10,19 @@
   }
 }
 
+/* The canvas behind the page is the page colour, and a trackpad or mouse
+   wheel no longer rubber-bands past the top and bottom: the bounce tore the
+   hero glow off at the edge and showed a flat band above the header and
+   below the footer. Touch keeps its overscroll so pull-to-refresh works. */
 html {
   height: 100%;
+  background: var(--background);
+}
+
+@media (pointer: fine) {
+  html {
+    overscroll-behavior-y: none;
+  }
 }
 
 body {
@@ -279,6 +290,57 @@ html:has([data-app-viewport]) {
 }
 :root.theme-ready {
   transition: background-color 0.2s ease, color 0.2s ease;
+}
+
+/* Theme switch dissolve (ThemeProvider.toggleTheme). The old theme's
+   snapshot blurs out while the live new theme comes into focus; both are
+   animated from script, so the default crossfade is switched off. Element
+   transitions are held for the switch so the new layer is captured already
+   settled instead of easing its colours in under the circle. */
+:root.theme-switching,
+:root.theme-switching *,
+:root.theme-switching *::before,
+:root.theme-switching *::after {
+  transition: none !important;
+}
+:root.theme-switching::view-transition-old(root),
+:root.theme-switching::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+:root.theme-switching::view-transition-old(root) {
+  z-index: 1;
+}
+:root.theme-switching::view-transition-new(root) {
+  z-index: 2;
+}
+
+/* Icon swap: the incoming glyph turns and blooms into place. Keyed in React,
+   so each state change remounts the span and replays this. */
+@keyframes icon-swap-in {
+  from {
+    opacity: 0;
+    transform: rotate(-80deg) scale(0.4);
+    filter: blur(3px);
+  }
+  60% {
+    opacity: 1;
+    filter: blur(0);
+  }
+  to {
+    opacity: 1;
+    transform: rotate(0) scale(1);
+  }
+}
+.icon-swap {
+  display: inline-grid;
+  place-items: center;
+  animation: icon-swap-in 0.42s cubic-bezier(0.34, 1.56, 0.64, 1) both;
+}
+@media (prefers-reduced-motion: reduce) {
+  .icon-swap {
+    animation: none;
+  }
 }
 
 /* ── Entrance animation ──────────────────────────────────────────── */
@@ -6471,8 +6533,8 @@ html.lenis body {
 
 /* ── Pills ──────────────────────────────────────────────────────
    Geometry and colour for every small label in the product, in two sizes
-   and no others: `.pill` (24px, 12px type, 8px corners) is the StatusBadge
-   and CategoryBadge default; `.pill-sm` (20px, 11px, 6px) is for dense chip
+   and no others: `.pill` (22px, 11px type, fully round) is the StatusBadge
+   and CategoryBadge default; `.pill-sm` (18px, 10.5px, round) is for dense chip
    rows. Here rather than in each component because a pill renders in the
    product, admin and public bundles, and each one scans its own sources.
 
@@ -6490,19 +6552,19 @@ html.lenis body {
     flex-shrink: 0;
     align-items: center;
     gap: 4px;
-    height: 24px;
-    padding-inline: 8px;
-    border-radius: 8px;
-    font-size: 12px;
+    height: 22px;
+    padding-inline: 9px;
+    border-radius: 999px;
+    font-size: 11px;
     font-weight: 500;
+    letter-spacing: -0.005em;
     line-height: 1;
     white-space: nowrap;
   }
   :where(.pill-sm) {
-    height: 20px;
-    padding-inline: 6px;
-    border-radius: 6px;
-    font-size: 11px;
+    height: 18px;
+    padding-inline: 7px;
+    font-size: 10.5px;
   }
   :where(.tone-pill) {
     --tone-bg: var(--status-expired-bg);

@@ -26,6 +26,8 @@ const config: NextConfig = {
     NEXT_PUBLIC_FOCUS_MAX_UPLOAD_MB: String(limits.maxUploadMb),
     NEXT_PUBLIC_FOCUS_MAX_IMAGE_UPLOAD_MB: String(parseLimit(process.env.FOCUS_MAX_IMAGE_UPLOAD_MB, 15, [1, 15])),
   },
+  // The animation-principles SKILL.md files are read at runtime (server/policies/loader.ts) and verified by hash.
+  outputFileTracingIncludes: { "/api/rotoscope/**": ["./server/policies/skills/**/*"] },
   experimental: { optimizePackageImports: ["@hugeicons/core-free-icons", "radix-ui"] },
 };
 export default config;

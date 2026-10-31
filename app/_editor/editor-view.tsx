@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { motion } from "motion/react";
 import { EASE_OUT } from "../../lib/ease";
 import { cn } from "../../lib/utils";
-import { ArrowLeftRightIcon } from "@hugeicons/core-free-icons";
+import { ArrowLeftRightIcon, PanelRightCloseIcon, PanelRightOpenIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
@@ -17,7 +17,7 @@ import { Composer } from "./composer";
 import { EditorNotice } from "./editor-notice";
 import { FlowRail } from "./flow-rail";
 import { ApiRequestError, jobApi, useJob } from "./job-client";
-import { DownloadButton, ProcessingPanel, ReadyPanel, ResultPanel, SelectionPanel } from "./job-panel";
+import { DownloadButton, PLAN_EFFECT_LABEL, ProcessingPanel, ReadyPanel, ResultPanel, SelectionPanel } from "./job-panel";
 import { CompareStage } from "./compare-stage";
 import { TrackingOverlay } from "./tracking-overlay";
 import { VideoStage } from "./video-stage";
@@ -25,6 +25,10 @@ import { editorErrorMessage } from "./messages";
 import { EffectControls } from "./effect-controls";
 import { temporalEffectsEnabled } from "../../shared/features";
 import { prefersReducedMotion, useReducedMotion } from "../../lib/hooks/use-reduced-motion";
+import { MediaTimeline, type TimelineLane } from "./media-timeline";
+import { ScrollArea } from "../../components/ui/scroll-area";
+import { DockResizer, useDockWidth } from "../rotoscope/dock-resizer";
+import roto from "../rotoscope/rotoscope.module.css";
 import styles from "./editor-view.module.css";
 
 function flowStep(job: EditJob | null): FlowStepId {
@@ -87,6 +91,11 @@ export function EditorView({
   const [freezeInvalid, setFreezeInvalid] = useState(false);
   const editorRef = useRef<HTMLElement>(null);
   const reducedMotion = useReducedMotion();
+  // The full page is a workspace like Flipbook's: the controls dock on the right (resizable, hideable) and a timeline runs under both.
+  const page = variant === "page";
+  const [media, setMedia] = useState<HTMLVideoElement | null>(null);
+  const dock = useDockWidth("focus.editor.dock.width");
+  const [dockOpen, setDockOpen] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 861px)").matches);
   // Ideas read from the clip (one cached Muse Spark call). Optional: on any
   // failure the composer keeps its static examples.
   const [suggestions, setSuggestions] = useState<{ videoId: string; value: Suggestions | null } | null>(null);
@@ -231,185 +240,268 @@ export function EditorView({
   }, [panelKey]);
   const currentFrame = tracking ? frameAt(tracking, frameIndex) : undefined;
 
+  // What the timeline lays out: the clip on stage (the edit once there is one), its masks, the effect and the freeze.
+  const showingRender = Boolean(stageRender && !diagnostic && !editingMoment);
+  const { fps } = video.normalized;
+  const timelineDuration = showingRender && stageRender ? stageRender.durationSeconds : video.normalized.durationSeconds;
+  const lanes: TimelineLane[] = [];
+  // Masks run on the source clock; a freeze stretches the edit, so they only line up when nothing was inserted.
+  if (tracking && tracking.frames.length && !(showingRender && stageRender?.temporal)) {
+    const spans: { start: number; end: number }[] = [];
+    for (const { frameIndex: index } of tracking.frames) {
+      const last = spans.at(-1);
+      if (last && Math.round(last.end * fps) === index) last.end = (index + 1) / fps;
+      else spans.push({ start: index / fps, end: (index + 1) / fps });
+    }
+    lanes.push({ id: "masks", label: "Masks", spans: spans.map((span) => ({ ...span, tone: "masks" as const })) });
+  }
+  if (showingRender && stageRender) {
+    const freeze = stageRender.temporal;
+    lanes.push({
+      id: "effect",
+      label: "Effect",
+      spans: [
+        { start: 0, end: stageRender.durationSeconds, tone: "effect", label: PLAN_EFFECT_LABEL[stageRender.params.effect] },
+        ...(freeze ? [{ start: freeze.freezeStart / stageRender.fps, end: (freeze.freezeStart + freeze.freezeFrames) / stageRender.fps, tone: "freeze" as const, label: "Freeze" }] : []),
+      ],
+    });
+  } else if (editingMoment && temporalDraft?.trigger.timestampMs !== undefined) {
+    lanes.push({ id: "freeze", label: "Freeze point", spans: [], markers: [temporalDraft.trigger.timestampMs / 1000] });
+  }
+
+  const preview = (
+    <>
+      {stageRender && !diagnostic && !editingMoment ? (
+        <CompareStage
+          key={stageRender.key}
+          render={stageRender}
+          onMedia={page ? setMedia : undefined}
+          bare={page}
+          updating={job?.status === "rendering" ? { progress: job.progress, label: job.detail ?? "Updating" } : null}
+        />
+      ) : (
+        <VideoStage
+          key={video.id}
+          video={video}
+          onMedia={page ? setMedia : undefined}
+          bare={page}
+          freeze={editingMoment && temporalDraft ? {
+            trigger: temporalDraft.trigger, suggestion: job?.temporalSuggestion ?? null, invalid: freezeInvalid, focus: Boolean(result),
+            onChange: (trigger) => { setDraft({ ...temporalDraft, trigger }); setFreezeInvalid(false); },
+          } : undefined}
+          overlay={
+            showOverlay
+              ? (videoRef) => (
+                  <TrackingOverlay
+                    videoRef={videoRef}
+                    tracking={tracking}
+                    selection={selecting ? pending : job.selection}
+                    mode={selecting ? "pick" : "view"}
+                    diagnostic={diagnostic}
+                    marker={point && point.frameIndex === frameIndex ? point : null}
+                    onFrame={setFrameIndex}
+                    onPick={(source, index) => {
+                      const hit = hitTest(frameAt(tracking, index), source.x, source.y);
+                      if (hit) {
+                        setPoint(null);
+                        setPending((current) => (current.includes(hit) ? current.filter((id) => id !== hit) : [...current, hit]));
+                      } else {
+                        setPoint({ ...source, frameIndex: index });
+                      }
+                    }}
+                  />
+                )
+              : undefined
+          }
+          hud={
+            diagnostic && tracking ? (
+              <>
+                Frame {frameIndex + 1}/{tracking.frameCount} · {currentFrame ? `${currentFrame.objects.length} mask${currentFrame.objects.length === 1 ? "" : "s"}` : "no mask"}
+                <br />
+                SAM {tracking.outcome.status === "completed" ? "complete" : `incomplete (${tracking.outcome.reason})`} · {tracking.frames.length} frames with data
+                {tracking.missingFrames.length ? ` · ${tracking.missingFrames.length} undetected` : ""}
+              </>
+            ) : null
+          }
+        />
+      )}
+      <div className={styles.fileRow}>
+        <div className={styles.fileDetails}>
+          <p className={styles.fileName} title={video.originalName}>{video.originalName}</p>
+          {/* Duration lives in the player; this line carries what the player does not. */}
+          <p className={styles.fileMeta}>{video.source.width}×{video.source.height} · {video.normalized.fps} fps · {formatBytes(video.source.sizeBytes)}</p>
+        </div>
+        <Button variant="ghost" size="sm" onClick={onReset} disabled={active} aria-label="Change clip">
+          <HugeiconsIcon icon={ArrowLeftRightIcon} size={14} strokeWidth={1.5} />{variant === "page" ? "New clip" : "Change clip"}
+        </Button>
+      </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        {job ? <FlowRail current={flowStep(job)} /> : null}
+        {tracking && job && !active ? (
+          <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
+            <Switch checked={diagnostic} onCheckedChange={setDiagnostic} label="Show tracking" />
+            <span aria-hidden>Show tracking</span>
+          </span>
+        ) : null}
+      </div>
+    </>
+  );
+  const controls = (
+    <>
+      {variant === "home" ? <h2 className={styles.heading}>Make it your own.</h2> : null}
+      <motion.div
+        key={panelKey}
+        ref={panelRef}
+        tabIndex={-1}
+        initial={reducedMotion ? false : { opacity: 0, y: 6 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: reducedMotion ? 0 : 0.22, ease: EASE_OUT }}
+        className="flex flex-col gap-5 outline-none"
+      >
+        {job && active ? (
+          <ProcessingPanel job={job} canceling={busy} onCancel={() => void run(() => jobApi.cancel(job.id))} />
+        ) : null}
+
+        {job && selecting ? (
+          <SelectionPanel
+            job={job}
+            frameCount={video.normalized.frameCount}
+            pending={pending}
+            busy={busy}
+            unmatchedPoint={point !== null}
+            onToggle={(id) => setPending((current) => (current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]))}
+            onSelectAll={() => setPending(job.objects.map((object) => object.id))}
+            onConfirm={() => void run(() => jobApi.select(job.id, pending))}
+            onSegmentPoint={() => {
+              if (point) void run(() => jobApi.refine(job.id, point.frameIndex, { x: point.x, y: point.y }));
+            }}
+          />
+        ) : null}
+
+        {job && ready ? (
+          <ReadyPanel
+            job={job}
+            frameCount={video.normalized.frameCount}
+            onChangeSelection={() => void run(() => jobApi.reopen(job.id))}
+            onNewInstruction={reset}
+            onRender={applyDraft}
+            controls={temporalDraft ? <EffectControls family={job.request.effect} value={temporalDraft} onChange={setDraft} /> : undefined}
+            busy={busy}
+          />
+        ) : null}
+
+        {result && draft ? (
+          <ResultPanel
+            job={result}
+            draft={draft}
+            onDraftChange={setDraft}
+            onApply={applyDraft}
+            onEditFreezePoint={() => setEditingMomentFor(editingMomentFor === result.id ? null : result.id)}
+            editingFreezePoint={editingMoment}
+            busy={busy}
+            onChangeSelection={() => void run(() => jobApi.reopen(result.id))}
+            onNewInstruction={reset}
+            onFillGaps={() => void run(() => jobApi.fill(result.id))}
+            chat={{
+              pending: chatPending,
+              disabled: busy,
+              onSend: (message) => void sendChat(result.id, message),
+              onRestore: (messageId) => void run(() => jobApi.restore(result.id, messageId)),
+              // Another subject needs new masks: a new edit, started in plain sight.
+              onStartEdit: (instruction) => {
+                onPromptChange(instruction);
+                void run(() => jobApi.create({ videoId: video.id, effect, prompt: instruction }));
+              },
+            }}
+          />
+        ) : null}
+
+        {showComposer ? (
+          <>
+            {job?.status === "failed" && job.error ? (
+              <EditorNotice title="Edit couldn’t be completed" description={job.error.code === "unsupported_edit" || job.error.code === "no_match" ? job.error.message : editorErrorMessage(job.error.code)} action={{ label: "Retry", onClick: () => void submit() }} />
+            ) : null}
+            {job?.status === "awaiting_clarification" ? (
+              <EditorNotice status="info" title="Add one more detail" description={`${job.detail ?? ""} Add it to your instruction and generate again.`.trim()} />
+            ) : null}
+            {job?.status === "canceled" ? (
+              <EditorNotice status="info" title="Editing canceled" description="Your progress is saved. Adjust your instruction and generate again." duration={4200} />
+            ) : null}
+            <Composer
+              effect={effect}
+              onEffectChange={onEffectChange}
+              prompt={prompt}
+              onPromptChange={onPromptChange}
+              onSubmit={() => void submit()}
+              canSubmit
+              busy={busy}
+              suggestions={clipSuggestions}
+              suggestionsLoading={suggestionsLoading}
+            />
+          </>
+        ) : null}
+      </motion.div>
+
+      {failure ? <EditorNotice title="Action couldn’t be completed" description={failure} /> : null}
+      {pollError ? <EditorNotice title="Connection interrupted" description={pollError} /> : null}
+    </>
+  );
+  const mobileDownload = result ? (
+    // On phones the panel sits below the video: keep the export in reach.
+    <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-[color-mix(in_srgb,var(--background)_94%,transparent)] px-4 pt-3 pb-[max(12px,env(safe-area-inset-bottom))] backdrop-blur-[10px] lg:hidden">
+      <DownloadButton url={result.render.urls.download} />
+    </div>
+  ) : null;
+
+  if (page) {
+    return (
+      <section id="editor" ref={editorRef} tabIndex={-1} aria-label="Clip editor" data-variant={variant} className={cn(styles.workspace, result && "mb-24 lg:mb-0")}>
+        <div className={styles.canvasRow} data-dock={dockOpen} style={dock.style}>
+          <section aria-label="Video" className={styles.canvasCol}>
+            {preview}
+            {/* The controls close from their own header; the canvas only offers to bring them back. */}
+            {dockOpen ? null : (
+              <Button size="icon-sm" variant="outline" className={styles.dockShow} aria-label="Show controls" onClick={() => setDockOpen(true)}>
+                <HugeiconsIcon icon={PanelRightOpenIcon} size={15} strokeWidth={1.75} />
+              </Button>
+            )}
+          </section>
+          {dockOpen ? <DockResizer dock={dock} /> : null}
+          <aside className={roto.dock} data-open={dockOpen} aria-label="Edit controls">
+            <div className={roto.dockInner}>
+              <div className={roto.dockHead}>
+                <p className={styles.dockTitle}>Edit</p>
+                <Button size="icon-xs" variant="ghost" aria-label="Hide controls" onClick={() => setDockOpen(false)}>
+                  <HugeiconsIcon icon={PanelRightCloseIcon} size={15} strokeWidth={1.75} />
+                </Button>
+              </div>
+              <ScrollArea className={roto.dockScroll} viewportClassName={roto.dockViewport} contentClassName={roto.dockContent}>
+                {controls}
+              </ScrollArea>
+            </div>
+          </aside>
+        </div>
+        <MediaTimeline
+          media={media}
+          duration={timelineDuration}
+          film={showingRender && stageRender ? { src: stageRender.urls.video, name: "Edited" } : { src: video.urls.preview, name: video.originalName }}
+          lanes={lanes}
+          audio={showingRender && stageRender ? stageRender.hasAudio : video.normalized.hasAudio}
+        />
+        {mobileDownload}
+      </section>
+    );
+  }
+
   return (
     <section id="editor" ref={editorRef} tabIndex={-1} aria-label="Clip editor" data-variant={variant} className={cn(styles.editor, result && "pb-28 lg:pb-0")}>
       <section aria-label="Video" className={styles.preview}>
-        {stageRender && !diagnostic && !editingMoment ? (
-          <CompareStage
-            key={stageRender.key}
-            render={stageRender}
-            updating={job?.status === "rendering" ? { progress: job.progress, label: job.detail ?? "Updating" } : null}
-          />
-        ) : (
-          <VideoStage
-            key={video.id}
-            video={video}
-            freeze={editingMoment && temporalDraft ? {
-              trigger: temporalDraft.trigger, suggestion: job?.temporalSuggestion ?? null, invalid: freezeInvalid, focus: Boolean(result),
-              onChange: (trigger) => { setDraft({ ...temporalDraft, trigger }); setFreezeInvalid(false); },
-            } : undefined}
-            overlay={
-              showOverlay
-                ? (videoRef) => (
-                    <TrackingOverlay
-                      videoRef={videoRef}
-                      tracking={tracking}
-                      selection={selecting ? pending : job.selection}
-                      mode={selecting ? "pick" : "view"}
-                      diagnostic={diagnostic}
-                      marker={point && point.frameIndex === frameIndex ? point : null}
-                      onFrame={setFrameIndex}
-                      onPick={(source, index) => {
-                        const hit = hitTest(frameAt(tracking, index), source.x, source.y);
-                        if (hit) {
-                          setPoint(null);
-                          setPending((current) => (current.includes(hit) ? current.filter((id) => id !== hit) : [...current, hit]));
-                        } else {
-                          setPoint({ ...source, frameIndex: index });
-                        }
-                      }}
-                    />
-                  )
-                : undefined
-            }
-            hud={
-              diagnostic && tracking ? (
-                <>
-                  Frame {frameIndex + 1}/{tracking.frameCount} · {currentFrame ? `${currentFrame.objects.length} mask${currentFrame.objects.length === 1 ? "" : "s"}` : "no mask"}
-                  <br />
-                  SAM {tracking.outcome.status === "completed" ? "complete" : `incomplete (${tracking.outcome.reason})`} · {tracking.frames.length} frames with data
-                  {tracking.missingFrames.length ? ` · ${tracking.missingFrames.length} undetected` : ""}
-                </>
-              ) : null
-            }
-          />
-        )}
-        <div className={styles.fileRow}>
-          <div className={styles.fileDetails}>
-            <p className={styles.fileName} title={video.originalName}>{video.originalName}</p>
-            {/* Duration lives in the player; this line carries what the player does not. */}
-            <p className={styles.fileMeta}>{video.source.width}×{video.source.height} · {video.normalized.fps} fps · {formatBytes(video.source.sizeBytes)}</p>
-          </div>
-          <Button variant="ghost" size="sm" onClick={onReset} disabled={active} aria-label="Change clip">
-            <HugeiconsIcon icon={ArrowLeftRightIcon} size={14} strokeWidth={1.5} />{variant === "page" ? "New clip" : "Change clip"}
-          </Button>
-        </div>
-        <div className="flex flex-wrap items-center justify-between gap-3">
-          {job ? <FlowRail current={flowStep(job)} /> : null}
-          {tracking && job && !active ? (
-            <span className="flex shrink-0 items-center gap-2 text-xs text-muted-foreground">
-              <Switch checked={diagnostic} onCheckedChange={setDiagnostic} label="Show tracking" />
-              <span aria-hidden>Show tracking</span>
-            </span>
-          ) : null}
-        </div>
+        {preview}
       </section>
-
       <aside className={styles.controls}>
-        {variant === "home" ? <h2 className={styles.heading}>Make it your own.</h2> : null}
-        <motion.div
-          key={panelKey}
-          ref={panelRef}
-          tabIndex={-1}
-          initial={reducedMotion ? false : { opacity: 0, y: 6 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: reducedMotion ? 0 : 0.22, ease: EASE_OUT }}
-          className="flex flex-col gap-5 outline-none"
-        >
-          {job && active ? (
-            <ProcessingPanel job={job} canceling={busy} onCancel={() => void run(() => jobApi.cancel(job.id))} />
-          ) : null}
-
-          {job && selecting ? (
-            <SelectionPanel
-              job={job}
-              frameCount={video.normalized.frameCount}
-              pending={pending}
-              busy={busy}
-              unmatchedPoint={point !== null}
-              onToggle={(id) => setPending((current) => (current.includes(id) ? current.filter((entry) => entry !== id) : [...current, id]))}
-              onSelectAll={() => setPending(job.objects.map((object) => object.id))}
-              onConfirm={() => void run(() => jobApi.select(job.id, pending))}
-              onSegmentPoint={() => {
-                if (point) void run(() => jobApi.refine(job.id, point.frameIndex, { x: point.x, y: point.y }));
-              }}
-            />
-          ) : null}
-
-          {job && ready ? (
-            <ReadyPanel
-              job={job}
-              frameCount={video.normalized.frameCount}
-              onChangeSelection={() => void run(() => jobApi.reopen(job.id))}
-              onNewInstruction={reset}
-              onRender={applyDraft}
-              controls={temporalDraft ? <EffectControls family={job.request.effect} value={temporalDraft} onChange={setDraft} /> : undefined}
-              busy={busy}
-            />
-          ) : null}
-
-          {result && draft ? (
-            <ResultPanel
-              job={result}
-              draft={draft}
-              onDraftChange={setDraft}
-              onApply={applyDraft}
-              onEditFreezePoint={() => setEditingMomentFor(editingMomentFor === result.id ? null : result.id)}
-              editingFreezePoint={editingMoment}
-              busy={busy}
-              onChangeSelection={() => void run(() => jobApi.reopen(result.id))}
-              onNewInstruction={reset}
-              onFillGaps={() => void run(() => jobApi.fill(result.id))}
-              chat={{
-                pending: chatPending,
-                disabled: busy,
-                onSend: (message) => void sendChat(result.id, message),
-                onRestore: (messageId) => void run(() => jobApi.restore(result.id, messageId)),
-                // Another subject needs new masks: a new edit, started in plain sight.
-                onStartEdit: (instruction) => {
-                  onPromptChange(instruction);
-                  void run(() => jobApi.create({ videoId: video.id, effect, prompt: instruction }));
-                },
-              }}
-            />
-          ) : null}
-
-          {showComposer ? (
-            <>
-              {job?.status === "failed" && job.error ? (
-                <EditorNotice title="Edit couldn’t be completed" description={job.error.code === "unsupported_edit" || job.error.code === "no_match" ? job.error.message : editorErrorMessage(job.error.code)} action={{ label: "Retry", onClick: () => void submit() }} />
-              ) : null}
-              {job?.status === "awaiting_clarification" ? (
-                <EditorNotice status="info" title="Add one more detail" description={`${job.detail ?? ""} Add it to your instruction and generate again.`.trim()} />
-              ) : null}
-              {job?.status === "canceled" ? (
-                <EditorNotice status="info" title="Editing canceled" description="Your progress is saved. Adjust your instruction and generate again." duration={4200} />
-              ) : null}
-              <Composer
-                effect={effect}
-                onEffectChange={onEffectChange}
-                prompt={prompt}
-                onPromptChange={onPromptChange}
-                onSubmit={() => void submit()}
-                canSubmit
-                busy={busy}
-                suggestions={clipSuggestions}
-                suggestionsLoading={suggestionsLoading}
-              />
-            </>
-          ) : null}
-        </motion.div>
-
-        {failure ? <EditorNotice title="Action couldn’t be completed" description={failure} /> : null}
-        {pollError ? <EditorNotice title="Connection interrupted" description={pollError} /> : null}
+        {controls}
       </aside>
-
-      {result ? (
-        // On phones the panel sits below the video: keep the export in reach.
-        <div className="fixed inset-x-0 bottom-0 z-30 border-t border-border bg-[color-mix(in_srgb,var(--background)_94%,transparent)] px-4 pt-3 pb-[max(12px,env(safe-area-inset-bottom))] backdrop-blur-[10px] lg:hidden">
-          <DownloadButton url={result.render.urls.download} />
-        </div>
-      ) : null}
+      {mobileDownload}
     </section>
   );
 }

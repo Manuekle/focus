@@ -48,24 +48,24 @@ afterAll(async () => {
   await rm(root, { recursive: true, force: true });
 });
 
-it("copies the selected Ichika design and her original into Flipbook, independent of later changes and upload expiry", async () => {
-  const ichika = await readFile(
-    path.join(process.cwd(), "public/characters/ichika.png"),
+it("copies the selected Shion design and her original into Flipbook, independent of later changes and upload expiry", async () => {
+  const shion = await readFile(
+    path.join(process.cwd(), "public/characters/shion.png"),
   );
   const character = await createCharacter(ownerId, {
-    name: "Ichika",
-    png: ichika,
-    fileName: "ichika.png",
-    preset: "ichika",
+    name: "Shion",
+    png: shion,
+    fileName: "shion.png",
+    preset: "shion",
   });
   characterServices.generate = async () => ({
-    png: ichika,
+    png: shion,
     width: 768,
     height: 1536,
   });
   await generateCharacterVersion(character.id, ownerId, {
     operationId: randomUUID(),
-    prompt: "Prepare Ichika",
+    prompt: "Prepare Shion",
     fromVersionId: null,
   });
   let generated = await getCharacter(character.id, ownerId);
@@ -116,7 +116,7 @@ it("copies the selected Ichika design and her original into Flipbook, independen
     originalReachedCleanReference = Boolean(
       input.identityReference?.equals(originalIdentity),
     );
-    return { png: ichika, width: 768, height: 1536 };
+    return { png: shion, width: 768, height: 1536 };
   };
   const flipbook = await createFlipbook({
     characterSource: { characterId: character.id, versionId: selectedId },
@@ -141,7 +141,7 @@ it("copies the selected Ichika design and her original into Flipbook, independen
   expect(saved.characterSource).toMatchObject({
     characterId: character.id,
     versionId: selectedId,
-    name: "Ichika",
+    name: "Shion",
   });
   expect(
     (await readFile(flipbookFiles.source(saved.id))).equals(selectedImage),
@@ -169,23 +169,23 @@ it("copies the selected Ichika design and her original into Flipbook, independen
 });
 
 it("keeps a requested frontal camera through all eight drawings even if a planner defaults to side view", async () => {
-  const ichika = await readFile(
-    path.join(process.cwd(), "public/characters/ichika.png"),
+  const shion = await readFile(
+    path.join(process.cwd(), "public/characters/shion.png"),
   );
   const character = await createCharacter(ownerId, {
-    name: "Ichika frontal",
-    png: ichika,
-    fileName: "ichika.png",
-    preset: "ichika",
+    name: "Shion frontal",
+    png: shion,
+    fileName: "shion.png",
+    preset: "shion",
   });
   characterServices.generate = async () => ({
-    png: ichika,
+    png: shion,
     width: 768,
     height: 1536,
   });
   await generateCharacterVersion(character.id, ownerId, {
     operationId: randomUUID(),
-    prompt: "Full-body Ichika",
+    prompt: "Full-body Shion",
     fromVersionId: null,
   });
   let source = await getCharacter(character.id, ownerId);
@@ -229,7 +229,7 @@ it("keeps a requested frontal camera through all eight drawings even if a planne
   services.draw = async (input) => {
     views.push(input.plan.view);
     expect(input.identityReference).toBeDefined();
-    return { png: ichika, width: 768, height: 1536 };
+    return { png: shion, width: 768, height: 1536 };
   };
   const created = await createFlipbook({
     characterSource: {

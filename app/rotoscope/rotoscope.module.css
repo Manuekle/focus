@@ -3,11 +3,50 @@
 
 /* ── Create ─────────────────────────────────────────────────────────────── */
 /* The shared player, flush inside the preview card instead of a card of its own. */
-.createVideo.createVideo { width: 100%; max-width: 100%; border: 0; border-radius: 0; background: transparent; }
-.createVideo video { max-height: min(62vh, 620px); background: transparent; }
+.createVideo.createVideo {
+  width: 100%;
+  max-width: 100%;
+  border: 0;
+  border-radius: 0;
+  /* A lit stage instead of letterbox bars: the clip sits in it at its own shape. */
+  background:
+    radial-gradient(60% 55% at 50% 40%, color-mix(in srgb, var(--primary) 9%, transparent), transparent 72%),
+    color-mix(in srgb, var(--foreground) 2%, var(--background));
+}
+/* Fills the stage's height; the clip is centred in what the controls leave. */
+.createVideo.createVideo { align-self: stretch; justify-self: stretch; height: 100%; container-type: size; }
+.createVideo.createVideo video {
+  width: auto;
+  max-width: calc(100cqw - 48px);
+  /* What the toolbar (about 56px) and the clip's margin leave of the player. */
+  max-height: calc(100cqh - 56px - 48px);
+  margin: auto;
+  border-radius: 12px;
+  background: transparent;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--foreground) 8%, transparent), 0 24px 48px -20px #00000066;
+}
+/* Stacked under the controls the stage has no set height: the clip sizes to the page instead. */
+@container flipbook-workspace (max-width: 760px) {
+  .createVideo.createVideo { height: auto; container-type: normal; }
+  .createVideo.createVideo video { max-width: calc(100% - 32px); max-height: min(60vh, 560px); margin: 16px auto; }
+}
 .characterRow { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: start; gap: 14px; }
 .fullRow { grid-column: 1 / -1; }
 .uploading { display: flex; align-items: center; justify-content: space-between; gap: 8px; color: var(--muted-foreground); font-size: 12px; }
+
+/* The character's height and weight (and the video person's height): compact fields with their unit inside. */
+.measures { display: grid; grid-template-columns: repeat(auto-fit, minmax(92px, 1fr)); gap: 8px; }
+.measure { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.measureInput { position: relative; display: block; }
+.measureInput input { padding-right: 34px; font-variant-numeric: tabular-nums; }
+.measureUnit { position: absolute; top: 50%; right: 10px; transform: translateY(-50%); color: var(--muted-foreground); font-size: 11px; pointer-events: none; }
+
+/* A test batch's characters: one row each, picture, name and measures. */
+.batchList { display: flex; flex-direction: column; gap: 14px; }
+.batchCharacter { display: grid; grid-template-columns: 56px minmax(0, 1fr) auto; align-items: start; gap: 10px; }
+.batchThumb { position: relative; overflow: hidden; width: 56px; aspect-ratio: 2 / 3; border-radius: 8px; background: var(--muted); }
+.batchThumb img { width: 100%; height: 100%; object-fit: contain; }
+.batchFields { display: flex; min-width: 0; flex-direction: column; gap: 6px; }
 
 /* Inside the dock the stage sits flat on the panel, with no table surface around it. */
 .compactTable.compactTable { padding: 0; border-radius: 0; background: none; }
@@ -23,9 +62,9 @@
   margin-inline: auto;
 }
 .stagePair > * { max-height: none; }
-.stagePane { position: relative; display: grid; aspect-ratio: 2 / 3; place-items: center; }
+.stagePane { position: relative; }
 .stagePane img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
-.stagePane > span:not([aria-hidden]) { max-width: 100%; padding: 0 16px; text-align: center; text-wrap: balance; }
+.stagePane span:not([aria-hidden]) { max-width: 100%; padding: 0 16px; text-align: center; text-wrap: balance; }
 .stagePane[data-background="white"] { background: #fff; }
 .stagePane[data-background="dark"] { background: #111214; }
 .speedRow { display: flex; width: 100%; flex-direction: column; gap: 8px; }
@@ -39,25 +78,23 @@
 .liveRow { display: flex; align-items: center; gap: 8px; color: var(--foreground); font-size: 12px; }
 /* The attempt being drawn: its video frame, dimmed, under a slow sweep, with where the work is. */
 .drawingNow { background: color-mix(in srgb, var(--foreground) 1.6%, transparent); }
-.drawingGhost.drawingGhost { opacity: 0.18; filter: grayscale(1) blur(1px); }
-.drawingSweep {
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(105deg, transparent 30%, color-mix(in srgb, var(--primary) 12%, transparent) 50%, transparent 70%) 0 0 / 300% 100%;
-  animation: drawing-sweep 2.4s linear infinite;
-}
-@keyframes drawing-sweep { from { background-position: 100% 0; } to { background-position: 0% 0; } }
+.drawingFx.drawingFx { max-width: 100%; }
+.drawingGhost.drawingGhost { display: block; height: clamp(280px, 46dvh, 440px); width: auto; max-width: 100%; opacity: 0.18; filter: grayscale(1) blur(1px); transition: opacity 200ms; }
+.drawingGhost.drawingGhost[data-revealing] { opacity: 0; }
 .drawingStatus {
   position: relative;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
+  gap: 7px;
+  height: 28px;
+  padding-inline: 11px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--background) 72%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.1%, transparent);
-  font-size: 12px;
-  backdrop-filter: blur(6px);
+  background: color-mix(in srgb, var(--card) 82%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 7%, transparent), 0 6px 18px -8px #00000059;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  backdrop-filter: blur(10px);
 }
 .drawingTry { padding-left: 8px; border-left: 1px solid color-mix(in srgb, var(--foreground) 7.8%, transparent); color: var(--muted-foreground); font-size: 11px; font-variant-numeric: tabular-nums; }
 .checkRows { display: flex; flex-direction: column; gap: 8px; font-size: 12px; line-height: 1.5; }
@@ -95,7 +132,8 @@
    inspector docks on the right. A fixed height keeps the canvas usable while
    the page itself still scrolls on narrow screens. */
 .workspace {
-  --dock-w: 344px;
+  /* The inspector's width: the person's own (dock-resizer.tsx), else the default. */
+  --dock-w: var(--dock-user, 400px);
   /** How much of the canvas a floating inspector covers; the canvas's own controls step aside by this much. */
   --dock-covered: 0px;
   position: relative;
@@ -110,7 +148,32 @@
   box-shadow: var(--shadow-soft);
 }
 /* The preview tab needs room for two stages side by side. */
-.workspace[data-wide="true"] { --dock-w: 440px; }
+.workspace[data-wide="true"] { --dock-w: max(var(--dock-user, 400px), 440px); }
+/* The drag edge sits on the inspector's border; its hit area is wider than the line. */
+.dockResizer {
+  position: absolute;
+  z-index: 31;
+  top: 0;
+  bottom: 0;
+  right: calc(min(var(--dock-w), 100%) - 5px);
+  width: 9px;
+  transition: right 320ms var(--ease-smooth-out);
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.dockResizer::after {
+  position: absolute;
+  inset: 0 4px;
+  background: var(--primary);
+  content: "";
+  opacity: 0;
+  transition: opacity 150ms var(--ease-smooth-out);
+}
+.dockResizer:hover::after, .dockResizer:focus-visible::after, .dockResizer[data-dragging]::after { opacity: 0.7; }
+/* While the edge is dragged the inspector follows the pointer, not an ease. */
+.workspace:has(.dockResizer[data-dragging]) { cursor: col-resize; user-select: none; }
+.workspace:has(.dockResizer[data-dragging]) :is(.dock, .dockInner, .dockResizer) { transition: none; }
 .stage { position: relative; display: flex; min-width: 0; min-height: 0; flex: 1; }
 
 .dock {
@@ -202,7 +265,7 @@
 
 @media (prefers-reduced-motion: reduce) {
   .dock, .dockInner { transition: none !important; }
-  .swap, .arrive, .drawingSweep { animation: none; }
+  .swap, .arrive { animation: none; }
 }
 /* Pencil note: red marks drawn over the drawing at its own pixels. */
 .pencil { display: flex; flex-direction: column; gap: 10px; }
@@ -236,7 +299,7 @@
   backdrop-filter: blur(12px);
 }
 .stepTabs :global(.t-tab) { padding-inline: 10px; font-size: 12px; font-variant-numeric: tabular-nums; }
-.barStatus { display: inline-flex; height: 32px; align-items: center; gap: 8px; padding-inline: 14px; border-radius: 999px; background: color-mix(in srgb, var(--card) 88%, transparent); box-shadow: var(--shadow-float); backdrop-filter: blur(12px); font-size: 12px; font-variant-numeric: tabular-nums; }
+.barStatus { display: inline-flex; height: 32px; align-items: center; gap: 8px; padding-inline: 14px; border-radius: 999px; background: color-mix(in srgb, var(--card) 88%, transparent); box-shadow: var(--shadow-float); backdrop-filter: blur(12px); font-size: 11px; font-weight: 500; font-variant-numeric: tabular-nums; }
 
 /* ── Compare: video, pose guide and drawing side by side, over the canvas ── */
 .panelActions { display: flex; align-items: center; gap: 4px; }
@@ -290,3 +353,38 @@
   .compareImage { min-height: 220px; }
 }
 @media (prefers-reduced-motion: reduce) { .compare { animation: none; } }
+
+/* ── Mapping inspector ─────────────────────────────────────────────────── */
+/* The drawing at the canvas's 2:3, so the skeleton overlay lines up with its pixels. */
+.mapBox { position: relative; height: 100%; max-width: 100%; aspect-ratio: 2 / 3; }
+.mapBox > img, .mapLayer { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; pointer-events: none; }
+/* The repaint mask is white on black: screen-blended in red it tints only the repainted pixels. */
+.mapRepaint { mix-blend-mode: screen; opacity: 0.6; filter: sepia(1) saturate(8) hue-rotate(-50deg); }
+.mapSvg { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: none; }
+.mapJoint { cursor: grab; }
+.mapJoint:active { cursor: grabbing; }
+
+/* ── Test batch ─────────────────────────────────────────────────────────── */
+/* One row per character, one column per frame (the video's first), flat on the page; scrolls sideways when narrow. */
+.batchTable { display: flex; flex-direction: column; gap: 22px; overflow-x: auto; padding-bottom: 4px; }
+.batchRow { display: grid; grid-template-columns: 150px repeat(var(--batch-frames, 1), minmax(170px, 1fr)); align-items: start; gap: 14px; min-width: calc(150px + var(--batch-frames, 1) * 184px); }
+.batchWho { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 6px; }
+.batchAvatar { position: relative; overflow: hidden; width: 40px; aspect-ratio: 2 / 3; border-radius: 6px; background: var(--muted); }
+.batchAvatar img { width: 100%; height: 100%; object-fit: contain; }
+.batchCell { display: flex; min-width: 0; flex-direction: column; gap: 6px; margin: 0; }
+.batchPair { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; }
+.batchDrawing { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.batchDrawing[data-kept] .batchImage { box-shadow: inset 0 0 0 2px var(--primary); }
+.batchImage.batchImage { height: auto; aspect-ratio: 2 / 3; }
+.batchImage .drawingStatus { max-width: 90%; }
+.batchLabel { color: var(--muted-foreground); font-size: 11px; line-height: 1.4; overflow-wrap: anywhere; }
+.batchVerdict { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; color: var(--muted-foreground); font-size: 11px; line-height: 1.4; }
+
+/* The reference poses: one landscape sheet, full width of the panel. */
+.poseSheet { display: flex; flex-direction: column; gap: 6px; margin: 0; }
+.poseSheet > span { width: 100%; aspect-ratio: 3 / 2; }
+
+/* The prompt lab: the images' roles, the editable prompt in a mono face, Muse Spark's reading under it. */
+.promptImages { display: flex; flex-direction: column; gap: 6px; padding-left: 0; font-size: 11px; line-height: 1.5; color: var(--muted-foreground); }
+.promptText.promptText { min-height: 220px; max-height: 420px; overflow-y: auto; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11.5px; line-height: 1.55; }
+.promptAnalysis { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }

@@ -1,0 +1,236 @@
+{
+  "run": "60bd847f-d485-4c71-a27d-2b3336ed6d62",
+  "at": "2026-10-31T01:00:15.408Z",
+  "rows": [
+    {
+      "frame": 1,
+      "base": "character sheet",
+      "ms": 1519,
+      "triangles": 22862,
+      "flipped": 260,
+      "collapsed": 43,
+      "foldedBy": {
+        "torso": 59,
+        "leftUpperArm": 74,
+        "rightUpperArm": 38,
+        "leftForearm": 113,
+        "rightForearm": 17,
+        "rightHand": 2
+      },
+      "distortedShare": 0.033,
+      "exposedArea": 5849,
+      "clamped": [
+        "rightUpperArm"
+      ],
+      "torsoFit": "affine",
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightUpperArm",
+        "solid-drawing/structure: 260 folded and 43 collapsed triangles (leftForearm 113, leftUpperArm 74, torso 59, rightUpperArm 38, rightForearm 17, rightHand 2), 3.3 % over-stretched, area ×0.87"
+      ]
+    },
+    {
+      "frame": 2,
+      "base": "character sheet",
+      "ms": 1264,
+      "triangles": 23332,
+      "flipped": 178,
+      "collapsed": 22,
+      "foldedBy": {
+        "torso": 8,
+        "leftUpperArm": 51,
+        "leftForearm": 124,
+        "rightForearm": 17
+      },
+      "distortedShare": 0.035,
+      "exposedArea": 19216,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": "affine",
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 178 folded and 22 collapsed triangles (leftForearm 124, leftUpperArm 51, rightForearm 17, torso 8), 3.5 % over-stretched, area ×0.96"
+      ]
+    },
+    {
+      "frame": 3,
+      "base": "character sheet",
+      "ms": 1320,
+      "triangles": 23674,
+      "flipped": 193,
+      "collapsed": 16,
+      "foldedBy": {
+        "torso": 2,
+        "leftUpperArm": 26,
+        "rightUpperArm": 14,
+        "leftForearm": 111,
+        "rightForearm": 56
+      },
+      "distortedShare": 0.035,
+      "exposedArea": 18314,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": "affine",
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 193 folded and 16 collapsed triangles (leftForearm 111, rightForearm 56, leftUpperArm 26, rightUpperArm 14, torso 2), 3.5 % over-stretched, area ×1.01"
+      ]
+    },
+    {
+      "frame": 4,
+      "base": "character sheet",
+      "ms": 1259,
+      "triangles": 22958,
+      "flipped": 224,
+      "collapsed": 16,
+      "foldedBy": {
+        "torso": 27,
+        "leftUpperArm": 22,
+        "rightUpperArm": 13,
+        "leftForearm": 114,
+        "rightForearm": 59,
+        "rightHand": 5
+      },
+      "distortedShare": 0.042,
+      "exposedArea": 17879,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": "affine",
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 224 folded and 16 collapsed triangles (leftForearm 114, rightForearm 59, torso 27, leftUpperArm 22, rightUpperArm 13, rightHand 5), 4.2 % over-stretched, area ×1.01"
+      ]
+    },
+    {
+      "frame": 5,
+      "base": "character sheet",
+      "ms": 1207,
+      "triangles": 22960,
+      "flipped": 223,
+      "collapsed": 16,
+      "foldedBy": {
+        "torso": 29,
+        "leftUpperArm": 22,
+        "rightUpperArm": 14,
+        "leftForearm": 114,
+        "rightForearm": 59,
+        "rightHand": 1
+      },
+      "distortedShare": 0.043,
+      "exposedArea": 17552,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": "affine",
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 223 folded and 16 collapsed triangles (leftForearm 114, rightForearm 59, torso 29, leftUpperArm 22, rightUpperArm 14, rightHand 1), 4.3 % over-stretched, area ×1.01"
+      ]
+    },
+    {
+      "frame": 6,
+      "base": "character sheet",
+      "ms": 1239,
+      "triangles": 22796,
+      "flipped": 266,
+      "collapsed": 17,
+      "foldedBy": {
+        "torso": 24,
+        "leftUpperArm": 123,
+        "rightUpperArm": 21,
+        "leftForearm": 8,
+        "rightForearm": 67,
+        "rightHand": 40
+      },
+      "distortedShare": 0.036,
+      "exposedArea": 16521,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": "affine",
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 266 folded and 17 collapsed triangles (leftUpperArm 123, rightForearm 67, rightHand 40, torso 24, rightUpperArm 21, leftForearm 8), 3.6 % over-stretched, area ×0.95"
+      ]
+    },
+    {
+      "frame": 7,
+      "base": "character sheet",
+      "ms": 1190,
+      "triangles": 22806,
+      "flipped": 256,
+      "collapsed": 22,
+      "foldedBy": {
+        "torso": 24,
+        "leftUpperArm": 126,
+        "rightUpperArm": 21,
+        "leftForearm": 8,
+        "rightForearm": 64,
+        "rightHand": 35
+      },
+      "distortedShare": 0.036,
+      "exposedArea": 15704,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": "affine",
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 256 folded and 22 collapsed triangles (leftUpperArm 126, rightForearm 64, rightHand 35, torso 24, rightUpperArm 21, leftForearm 8), 3.6 % over-stretched, area ×0.94"
+      ]
+    },
+    {
+      "frame": 8,
+      "base": "character sheet",
+      "ms": 1145,
+      "triangles": 23584,
+      "flipped": 269,
+      "collapsed": 28,
+      "foldedBy": {
+        "torso": 33,
+        "leftUpperArm": 132,
+        "rightUpperArm": 18,
+        "leftForearm": 1,
+        "rightForearm": 68,
+        "rightHand": 45
+      },
+      "distortedShare": 0.043,
+      "exposedArea": 16091,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": "affine",
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 269 folded and 28 collapsed triangles (leftUpperArm 132, rightForearm 68, rightHand 45, torso 33, rightUpperArm 18, leftForearm 1), 4.3 % over-stretched, area ×0.91"
+      ]
+    },
+    {
+      "frame": 9,
+      "base": "character sheet",
+      "ms": 1143,
+      "triangles": 23750,
+      "flipped": 247,
+      "collapsed": 29,
+      "foldedBy": {
+        "torso": 32,
+        "leftUpperArm": 110,
+        "rightUpperArm": 20,
+        "rightForearm": 65,
+        "rightHand": 49
+      },
+      "distortedShare": 0.043,
+      "exposedArea": 14970,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": "affine",
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 247 folded and 29 collapsed triangles (leftUpperArm 110, rightForearm 65, rightHand 49, torso 32, rightUpperArm 20), 4.3 % over-stretched, area ×0.89"
+      ]
+    }
+  ]
+}

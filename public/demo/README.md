@@ -1,6 +1,6 @@
 # Video-effect demos
 
-Updated on 2026-10-29 from the user-supplied `270507.mp4`. These files replace the previous Gojo/anime-scene demos. This is the separate video-effects comparison; the Ichika illustration and pending Flipbook animation are unchanged.
+Updated on 2026-10-29 from the user-supplied `270507.mp4`. These files replace the previous Gojo/anime-scene demos. This is the separate video-effects comparison; the Shion illustration and pending Flipbook animation are unchanged.
 
 - Source SHA-256: `2c556faa1aa3ef1edbd3c4a07cad18379ea24d5f7cdb4a5f777264c04cc9f587`.
 - Excerpt: first 8 seconds, normalized once to 960×540, 24 fps, 192 frames, H.264/yuv420p. The source has no audio.

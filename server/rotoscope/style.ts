@@ -34,7 +34,7 @@ export function outlineDensity(image: Rgba): number {
 export function checkStyle(image: Rgba, anchorDensity: number): Check {
   const density = outlineDensity(image);
   const ratio = anchorDensity > 0 ? density / anchorDensity : 1;
-  const detail = `outlines ${(ratio * 100).toFixed(0)} % of the first frame's (${(density * 100).toFixed(1)} % vs ${(anchorDensity * 100).toFixed(1)} % of the figure)`;
+  const detail = `outlines ${(ratio * 100).toFixed(0)} % of the approved frames' average (${(density * 100).toFixed(1)} % vs ${(anchorDensity * 100).toFixed(1)} % of the figure)`;
   if (ratio >= LOWEST && ratio <= HIGHEST) return { name: "style", passed: true, detail, score: Math.round(Math.abs(1 - ratio) * 1000) / 1000 };
   return {
     name: "style",

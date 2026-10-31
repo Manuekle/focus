@@ -18,6 +18,7 @@ import { ffmpeg } from "../ffmpeg";
 import { storeProposal, readProposal } from "./proposals";
 import { planWaveSequence, waveAnchorIndexes } from "./wave-sequence";
 import { sequenceAnchorIndexes } from "./motion-continuity";
+import { SkeletonRefused } from "./skeleton-inbetween";
 import { toSequencePlan } from "./pose-to-pose-planning";
 import { exposures } from "../../shared/flipbook";
 import { inbetweenTasks, keyIndexes, type TimingChart, type TimingKey } from "../../shared/timing-chart";
@@ -427,6 +428,48 @@ describe("complete continuous workflow", () => {
     expect((await motionGuide(book.id, attached.motionReference!, 23))?.length).toBeGreaterThan(0);
     expect((await readFile(path.join(motionDir(book.id, attached.motionReference!.version), "source.mp4"))).length).toBeGreaterThan(0);
     await expect(uploadMotionReference(book.id, body(Buffer.from("#EXTM3U\nfile:///etc/passwd")), undefined, "fake.mp4")).rejects.toMatchObject({ code: "unreadable_media" });
+  });
+  it("moves every tick between the keys along the video's pose, and draws only the keys and what can't be moved", async () => {
+    const book = await make(1, 24);
+    const source = path.join(work, "follow.mp4");
+    await ffmpeg(["-f", "lavfi", "-i", "testsrc2=size=160x240:rate=24:duration=2", "-c:v", "libx264", source]);
+    const draft = await uploadMotionReference(book.id, body(await readFile(source)), undefined, "follow.mp4");
+    await attachMotionReference(book.id, { version: draft.motionDraft!.version, start: 0, durationSeconds: 1, useAudio: false });
+    const attached = await settled(book.id);
+    expect(attached.frames).toHaveLength(24);
+    const anchors = sequenceAnchorIndexes(attached.plan!, true);
+    expect(anchors).toEqual([0, 6, 12, 18, 23]);
+
+    const track = Array.from({ length: 24 }, (_, index) => ({ keypoints: [], scores: [], index, swapped: false, flags: { occluded: [], bridged: [], offSubject: [] } }));
+    const followed: number[] = [];
+    const originalFollow = services.follow;
+    const originalTrack = services.videoTrack;
+    services.videoTrack = async () => track as never;
+    services.follow = async ({ key, sourceNow }) => {
+      const tick = (sourceNow as unknown as { index: number }).index;
+      followed.push(tick);
+      // The engine refuses these two the way it does a pose that would fold.
+      if (tick === 9 || tick === 14) throw new SkeletonRefused("the drawing folds over itself in this pose");
+      return { raw: key.raw, cutout: key.cutout, measure: key.measure, turn: 12, quality: { exposed: 0, distorted: 0, size: 1, torn: 0 } };
+    };
+    try {
+      const before = drawings;
+      const used = attached.budget.used;
+      await generateMissing(book.id, true);
+      const result = await settled(book.id);
+      expect(result.error).toBeNull();
+      expect(result.frames.every((frame) => frame.status === "ready" && frame.version)).toBe(true);
+      const sources = result.frames.map((frame) => frame.versions.find((version) => version.id === frame.version)?.source);
+      expect(sources.filter((entry) => entry === "skeleton")).toHaveLength(17);
+      // The five keys and the two refused ticks are the only drawings Muse Image made.
+      expect(drawings - before).toBe(7);
+      expect(result.budget.used - used).toBe(7);
+      expect(followed).toHaveLength(19);
+      expect(followed.every((tick) => !anchors.includes(tick))).toBe(true);
+    } finally {
+      services.follow = originalFollow;
+      services.videoTrack = originalTrack;
+    }
   });
   it("rejects incomplete plans and multiple-person reference windows", () => {
     expect(() => parseSequenceWindow(JSON.stringify({ poses: [] }), [0, 1])).toThrow();

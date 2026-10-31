@@ -5,7 +5,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { listZip } from "../animation/zip";
 import { frameName } from "./extract";
 import { writeManifest, type Manifest } from "./run-state";
-import { approveAttempt, deleteRun, exportZip, getRun, importConsoleRun, listRuns, mediaFile, startGeneration } from "./service";
+import { approveAttempt, deleteRun, exportZip, getMapping, getRun, importConsoleRun, listRuns, mediaFile, startGeneration } from "./service";
 
 let root: string;
 let previous: string | undefined;
@@ -59,6 +59,21 @@ describe("rotoscope service", () => {
     await expect(mediaFile(run.id, "owner-a", "frame", 2)).rejects.toThrow(/no longer available/);
     await expect(mediaFile(run.id, "owner-a", "attempt", 2, 9)).rejects.toThrow(/no longer available/);
     await expect(mediaFile("../../etc", "owner-a", "source", 1)).rejects.toThrow(/doesn’t exist/);
+  });
+
+  it("serves the review pictures an attempt kept, and says which it has", async () => {
+    const run = await importConsoleRun(await consoleRun(), "owner-a");
+    const work = path.join(root, "rotoscope", run.id, "work");
+    await mkdir(work, { recursive: true });
+    await writeFile(path.join(work, "frame_0002_a1_review_overlay.png"), "overlay");
+    await writeFile(path.join(work, "frame_0002_a1_scan.png"), "scan");
+    expect((await getMapping(run.id, "owner-a", 2, 1)).review).toEqual({ overlay: true, build: false, scan: true });
+    expect((await getMapping(run.id, "owner-a", 2, 2)).review).toEqual({ overlay: false, build: false, scan: false });
+    expect(await readFile(await mediaFile(run.id, "owner-a", "overlay", 2, 1), "utf8")).toBe("overlay");
+    expect(await readFile(await mediaFile(run.id, "owner-a", "scan", 2, 1), "utf8")).toBe("scan");
+    await expect(mediaFile(run.id, "owner-a", "build", 2, 1)).rejects.toThrow(/no longer available/);
+    await expect(mediaFile(run.id, "owner-a", "overlay", 2)).rejects.toThrow(/no longer available/);
+    await expect(mediaFile(run.id, "owner-b", "overlay", 2, 1)).rejects.toThrow(/doesn’t exist/);
   });
 
   it("approves the halted frame's attempt by hand and exports approved frames", async () => {

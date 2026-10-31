@@ -420,6 +420,24 @@ export async function extractSubject(input: {
   return measureAndCut(image, cleaned, { method, multiple, background: border, leakShare: leak });
 }
 
+/**
+ * A drawing Muse Image painted on a flat key color (every generated drawing
+ * is): cut out locally, by the key, which costs nothing and takes a fraction
+ * of a second. SAM 3.1, a paid call per image, is only the way out for one
+ * the key can't separate, so a whole animation uses it once (the character's
+ * own reference) plus the odd drawing that needs it.
+ */
+export async function extractKeyed(input: Parameters<typeof extractSubject>[0]): Promise<Extraction> {
+  try {
+    const keyed = await extractSubject({ ...input, useSegmentation: false });
+    if (keyed.measure.coverage > 0.01) return keyed;
+  } catch (error) {
+    const recoverable = error instanceof AppError && (error.code === "extraction_failed" || error.code === "no_subject");
+    if (!recoverable) throw error;
+  }
+  return extractSubject({ ...input, useSegmentation: true });
+}
+
 /** The union of the figures SAM finds for each concept, until `expected` figures were found. Null when it finds none. */
 async function segmentGroup(input: { readonly png: Buffer; readonly width: number; readonly height: number; readonly concepts: readonly string[]; readonly expected: number; readonly flipbookId: string; readonly signal?: AbortSignal }): Promise<Uint8Array | null> {
   const total = input.width * input.height;
@@ -438,7 +456,7 @@ async function segmentGroup(input: { readonly png: Buffer; readonly width: numbe
   return union;
 }
 
-async function measureAndCut(image: Rgba, alpha: Uint8Array, info: { method: Measure["method"]; multiple: boolean; background: { rgb: [number, number, number]; uniformity: number }; leakShare?: number }): Promise<Extraction> {
+export async function measureAndCut(image: Rgba, alpha: Uint8Array, info: { method: Measure["method"]; multiple: boolean; background: { rgb: [number, number, number]; uniformity: number }; leakShare?: number }): Promise<Extraction> {
   const { width, height, data } = image;
   let left = width, right = -1, top = height, bottom = -1, opaque = 0;
   const rowCounts = new Int32Array(height);

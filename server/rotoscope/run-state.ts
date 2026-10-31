@@ -1,13 +1,18 @@
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { copyFile, mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { decide, type Decision } from "./decision";
 import { frameName } from "./extract";
 
-// The rotoscope run on disk and its firewall. Frames are drawn strictly in
-// order; a frame advances only when every check passes. After maxAttempts
-// failures, or any error, the run halts on that frame with the reason saved.
-// The next run resumes there. An approved frame is immutable: its hash is
-// checked on every resume and it is never drawn again.
+// The rotoscope run on disk and its firewall. Frames are drawn in order; a
+// frame is approved only when every check passes. A frame that doesn't get
+// there (maxAttempts rejections, or a finding only a person can settle) is
+// left "failed" and the run carries on with the next one: it never builds on
+// that drawing, because the previous drawing is always the last approved
+// one. Only an error (network, quota, a crashed tool) halts the run, on that
+// frame with the reason saved; the next run resumes there. The next run also
+// retries the failed frames first. An approved frame is immutable: its hash
+// is checked on every resume and it is never drawn again.
 
 export type Check = {
   readonly name: string;
@@ -17,14 +22,34 @@ export type Check = {
   /** What the next attempt should fix, said to the generator. */
   readonly feedback?: string;
   readonly score?: number;
+  /**
+   * The verdict beyond pass/fail: "inconclusive" when too little could be measured to say either way,
+   * "warn" when a finding is real but not worth another attempt. Absent: `passed` says it all.
+   */
+  readonly status?: CheckStatus;
+  /** How much a failed finding matters (decision.ts); absent: the check's usual severity. */
+  readonly severity?: Severity;
 };
+
+export type CheckStatus = "pass" | "fail" | "inconclusive" | "warn";
+export type Severity = "critical" | "major" | "minor" | "info";
+
+/**
+ * Bumped when how frames are drawn or checked changes materially: what attempts of an older
+ * revision were rejected for says nothing about the current one (lessons.ts skips them).
+ */
+export const DRAWING_REVISION = 2;
 
 export type Attempt = {
   readonly attempt: number;
   readonly at: string;
+  /** DRAWING_REVISION when it was drawn; absent on attempts from before revisions were kept. */
+  readonly revision?: number;
   readonly file: string;
   readonly passed: boolean;
   readonly checks: readonly Check[];
+  /** The decision engine's verdict (decision.ts); absent on attempts from before it. */
+  readonly decision?: Decision;
 };
 
 export type FrameState = {
@@ -82,6 +107,8 @@ export type RunSteps = {
 
 export type RunOutcome =
   | { readonly kind: "complete"; readonly approved: number }
+  /** Every frame was tried; these didn't pass and stay open for another run or a person. */
+  | { readonly kind: "partial"; readonly approved: number; readonly failed: readonly number[] }
   | { readonly kind: "halted"; readonly frame: number; readonly reason: string }
   | { readonly kind: "stopped"; readonly frame: number }
   | { readonly kind: "limit"; readonly approved: number; readonly next: number };
@@ -156,7 +183,7 @@ async function anchorFor(dir: string, manifest: Manifest, frame: FrameState): Pr
  * Draws every open frame in order. With `only`, it draws just that frame: an approved one is reopened,
  * but its drawing is kept until a new attempt passes, so a redraw can never leave it worse off.
  */
-export async function runFrames(dir: string, steps: RunSteps, options: { limit?: number; signal?: AbortSignal; only?: number } = {}): Promise<RunOutcome> {
+export async function runFrames(dir: string, steps: RunSteps, options: { limit?: number; signal?: AbortSignal; only?: number; /** Tries per frame in this run, when fewer than the manifest's (a single test drawing). */ attempts?: number } = {}): Promise<RunOutcome> {
   const log = steps.log ?? (() => undefined);
   const release = await acquireLock(dir);
   try {
@@ -170,6 +197,8 @@ export async function runFrames(dir: string, steps: RunSteps, options: { limit?:
 
     let drawn = 0;
     let previous: Buffer | null = null;
+    /** Frames this run gave up on and went past: open again for the next run. */
+    const skipped: number[] = [];
     for (const frame of manifest.frames) {
       const only = options.only;
       if (only !== undefined && frame.index !== only) {
@@ -197,7 +226,10 @@ export async function runFrames(dir: string, steps: RunSteps, options: { limit?:
       }
       drawn++;
       const feedback: string[] = [];
-      for (let tries = 0; tries < manifest.maxAttempts; tries++) {
+      /** The frame was set aside for a person: no more attempts, and the run goes on. */
+      let settled = false;
+      const maxAttempts = Math.min(manifest.maxAttempts, options.attempts ?? manifest.maxAttempts);
+      for (let tries = 0; tries < maxAttempts; tries++) {
         // A stop asked between attempts leaves the frame open, not failed: the next run tries it fresh.
         if (options.signal?.aborted) {
           keepPrior();
@@ -206,7 +238,7 @@ export async function runFrames(dir: string, steps: RunSteps, options: { limit?:
         }
         const attempt = (frame.attempts.at(-1)?.attempt ?? 0) + 1;
         const context: DrawContext = { frame, attempt, previous, anchor: await anchorFor(dir, manifest, frame), feedback: [...feedback] };
-        log(`frame ${frame.index}: attempt ${tries + 1}/${manifest.maxAttempts}`);
+        log(`frame ${frame.index}: attempt ${tries + 1}/${maxAttempts}`);
         let png: Buffer;
         let checks: readonly Check[];
         try {
@@ -231,9 +263,29 @@ export async function runFrames(dir: string, steps: RunSteps, options: { limit?:
           await writeManifest(dir, manifest);
           return { kind: "halted", frame: frame.index, reason };
         }
-        const passed = checks.every((check) => check.passed);
-        frame.attempts.push({ attempt, at: new Date().toISOString(), file: attemptFile(frame.index, attempt), passed, checks });
-        for (const check of checks) log(`  ${check.passed ? "ok  " : "FAIL"} ${check.name}: ${check.detail}`);
+        const verdict = decide(checks);
+        const passed = verdict.decision === "ACCEPTED";
+        frame.attempts.push({ attempt, at: new Date().toISOString(), revision: DRAWING_REVISION, file: attemptFile(frame.index, attempt), passed, checks, decision: verdict.decision });
+        for (const check of checks) log(`  ${check.passed ? "ok  " : check.status === "inconclusive" ? "n/m " : check.status === "warn" ? "warn" : "FAIL"} ${check.name}: ${check.detail}`);
+        log(`  ${verdict.decision}${verdict.reasons.length ? `: ${verdict.reasons[0]}` : ""}`);
+        if (verdict.decision === "INCONCLUSIVE" || verdict.decision === "REVIEW_NEEDED") {
+          // Not wrong enough to draw again, not proven right: a person decides (approve this attempt, redraw or correct).
+          // No attempt is spent on it. The frame stays open and the run goes on with the next one: nothing is built
+          // on an unverified frame, because the next frame's previous drawing is the last approved one.
+          const reason = `${verdict.decision === "INCONCLUSIVE" ? "needs review (not measurable)" : "needs review"}: ${verdict.reasons.join("; ")}`;
+          if (prior) keepPrior();
+          else frame.status = "failed";
+          if (prior || only !== undefined) {
+            if (!prior) manifest.halted = { frame: frame.index, reason, at: new Date().toISOString() };
+            await writeManifest(dir, manifest);
+            return { kind: "halted", frame: frame.index, reason };
+          }
+          skipped.push(frame.index);
+          settled = true;
+          log(`frame ${frame.index}: not approved (${reason}); going on with the next frame`);
+          await writeManifest(dir, manifest);
+          break;
+        }
         if (passed) {
           await approve(dir, frame, attempt, png);
           await writeManifest(dir, manifest);
@@ -244,19 +296,25 @@ export async function runFrames(dir: string, steps: RunSteps, options: { limit?:
         feedback.push(checks.filter((check) => !check.passed).map((check) => check.feedback ?? check.detail).join(" "));
         await writeManifest(dir, manifest);
       }
-      if ((frame.status as FrameState["status"]) !== "approved") {
+      if (!settled && (frame.status as FrameState["status"]) !== "approved") {
         const last = frame.attempts.at(-1);
-        const reason = `failed ${manifest.maxAttempts} attempts; last: ${last?.checks.filter((c) => !c.passed).map((c) => `${c.name} (${c.detail})`).join("; ") ?? "no attempt"}`;
+        const reason = `failed ${maxAttempts} attempt${maxAttempts === 1 ? "" : "s"}; last: ${last?.checks.filter((c) => !c.passed).map((c) => `${c.name} (${c.detail})`).join("; ") ?? "no attempt"}`;
         if (prior) keepPrior();
-        else {
-          frame.status = "failed";
-          manifest.halted = { frame: frame.index, reason, at: new Date().toISOString() };
+        else frame.status = "failed";
+        if (prior || only !== undefined) {
+          if (!prior) manifest.halted = { frame: frame.index, reason, at: new Date().toISOString() };
+          await writeManifest(dir, manifest);
+          return { kind: "halted", frame: frame.index, reason };
         }
+        // The frame's best isn't good enough: no more attempts on it, and the next frame is drawn from the last approved one.
+        skipped.push(frame.index);
+        log(`frame ${frame.index}: not approved (${reason}); going on with the next frame`);
         await writeManifest(dir, manifest);
-        return { kind: "halted", frame: frame.index, reason };
       }
     }
-    return { kind: "complete", approved: options.only === undefined ? manifest.frames.length : manifest.frames.filter((entry) => entry.status === "approved").length };
+    const approved = manifest.frames.filter((entry) => entry.status === "approved").length;
+    if (skipped.length) return { kind: "partial", approved, failed: skipped };
+    return { kind: "complete", approved: options.only === undefined ? manifest.frames.length : approved };
   } finally {
     await release();
   }
@@ -270,9 +328,9 @@ export async function approveManually(dir: string, index: number, attempt: numbe
     const target = manifest.frames.find((frame) => frame.index === index);
     if (!target) throw new Error(`frame ${index} doesn't exist`);
     const next = manifest.frames.find((frame) => frame.status !== "approved");
-    // The next open frame can be approved, and so can one that is already approved (to choose a different attempt);
-    // a frame further on cannot, so the approved frames always form an unbroken run from the first.
-    if (target.status !== "approved" && next?.index !== index) throw new Error(`only the next open frame (${next?.index ?? "none"}) can be approved`);
+    // A frame the run gave up on can be approved, and so can the next open one and one that is already approved
+    // (to choose a different attempt); a frame never drawn further on cannot.
+    if (target.status === "pending" && next?.index !== index) throw new Error(`only the next open frame (${next?.index ?? "none"}) or one that wasn't approved can be approved`);
     const record = target.attempts.find((entry) => entry.attempt === attempt);
     if (!record) throw new Error(`frame ${index} has no attempt ${attempt}`);
     await approve(dir, target, attempt, await readFile(path.join(dir, record.file)), true);

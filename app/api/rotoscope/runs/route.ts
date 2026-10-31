@@ -4,6 +4,7 @@ import { requireUser } from "../../../../server/auth/require";
 import { SERVER_MAX_UPLOAD_BYTES } from "../../../../server/media-limits";
 import { declaredLength } from "../../../../server/animation/http";
 import { activeRuns, assertRotoscopeEnabled, createRun, listRuns } from "../../../../server/rotoscope/service";
+import { measuresFrom } from "../../../../server/rotoscope/measures";
 
 export async function GET(request: Request) {
   try {
@@ -16,7 +17,7 @@ export async function GET(request: Request) {
 }
 
 // One multipart request: the movement video (kept as uploaded, so its frames
-// match the user's own export), the character image and the frame rate.
+// match the user's own export), the character image, its measures and the frame rate.
 export async function POST(request: Request) {
   try {
     assertRotoscopeEnabled();
@@ -24,8 +25,9 @@ export async function POST(request: Request) {
     const bytes = declaredLength(request);
     if (bytes !== undefined && bytes > SERVER_MAX_UPLOAD_BYTES + 32 * 1024 * 1024) throw new AppError("upload_too_large", 413, "These files are too large.");
     await guardUpload(request);
-    // Preparing asks Muse Spark to describe the character once; drawing is charged when it starts.
-    await guardAiRequest(request, { activeJobs: activeRuns(), estimatedFrames: 0 }, { charge: false, models: ["planner"] });
+    // Preparing redraws an uploaded character front-on, asks Muse Spark to describe it once and draws it in other poses;
+    // drawing is charged when it starts.
+    await guardAiRequest(request, { activeJobs: activeRuns(), estimatedFrames: 0 }, { charge: false, models: ["planner", "image"] });
     const form = await request.formData().catch(() => null);
     const video = form?.get("video");
     const character = form?.get("character");
@@ -35,6 +37,9 @@ export async function POST(request: Request) {
       ownerId: user.id,
       video,
       character,
+      frontOn: form?.get("frontOn") === "1",
+      measures: measuresFrom({ heightCm: String(form?.get("heightCm") ?? ""), weightKg: String(form?.get("weightKg") ?? ""), personHeightCm: String(form?.get("personHeightCm") ?? "") }),
+      poseSheet: form?.get("poseSheet") !== "0",
       options: { name: String(form?.get("name") ?? "") || undefined, fps: String(form?.get("fps") ?? ""), start: String(form?.get("start") ?? "0"), seconds: String(form?.get("seconds") ?? "") },
     });
     return Response.json(run, { status: 201 });

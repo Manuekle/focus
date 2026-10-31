@@ -2,29 +2,33 @@
 
 import { useState } from "react";
 import { FacebookIcon } from "../../components/icons/social-icons";
+import { Button } from "../../components/ui/button";
 import { Spinner } from "../../components/ui/spinner";
 import { cn } from "../../lib/utils";
 import { signInWithFacebook } from "./session-client";
 
-/** "Continue with Facebook", in Facebook's own blue. */
-export function FacebookButton({ next, className, label = "Continue with Facebook" }: { readonly next: string; readonly className?: string; readonly label?: string }) {
+/** "Continue with Facebook", as the app's own primary button. */
+export function FacebookButton({ next, className, label = "Continue with Facebook", size = "lg" }: {
+  readonly next: string;
+  readonly className?: string;
+  readonly label?: string;
+  /** `lg` fills a dialog; `default` sits inline beside other controls. */
+  readonly size?: "default" | "lg";
+}) {
   const [leaving, setLeaving] = useState(false);
   return (
-    <button
-      type="button"
+    <Button
+      size={size}
       disabled={leaving}
+      aria-busy={leaving || undefined}
       onClick={() => {
         setLeaving(true);
         signInWithFacebook(next);
       }}
-      className={cn(
-        "flex h-10 w-full items-center justify-center gap-2.5 rounded-[10px] bg-[#1877F2] px-4 text-sm font-medium text-white transition-[background-color,transform] duration-150",
-        "hover:bg-[#166FE5] active:scale-[0.98] disabled:opacity-80 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-[#1877F2]",
-        className,
-      )}
+      className={cn("w-full gap-2", className)}
     >
-      {leaving ? <Spinner className="size-4" /> : <FacebookIcon width={18} height={18} />}
+      {leaving ? <Spinner className="size-4" /> : <FacebookIcon width={16} height={16} />}
       {label}
-    </button>
+    </Button>
   );
 }

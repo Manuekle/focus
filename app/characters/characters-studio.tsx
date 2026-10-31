@@ -2,6 +2,7 @@
 
 /* eslint-disable @next/next/no-img-element -- private media requires browser session cookies */
 
+import { MediaImage } from "../../components/ui/media-image";
 import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
@@ -193,21 +194,23 @@ export function CharactersStudio({
           className={`${shell.sidebar} ${styles.librarySidebar}`}
           aria-label="Character library"
         >
+          <div data-slot="sidebar-top" className={shell.sidebarTop}>
+            <Button
+              variant="outline"
+              size="sm"
+              className="w-full justify-start"
+              disabled={Boolean(creating) || loading}
+              onClick={() => {
+                if (!user) setLogin(true);
+                else fileRef.current?.click();
+              }}
+            >
+              <HugeiconsIcon icon={Add01Icon} size={14} />
+              New character
+            </Button>
+            <AnimateNav current={!initialId ? "characters" : null} />
+          </div>
           <ScrollArea className={shell.sidebarScroll} contentClassName={shell.sidebarContent}>
-          <Button
-            variant="outline"
-            size="sm"
-            className="w-full justify-start"
-            disabled={Boolean(creating) || loading}
-            onClick={() => {
-              if (!user) setLogin(true);
-              else fileRef.current?.click();
-            }}
-          >
-            <HugeiconsIcon icon={Add01Icon} size={14} />
-            New character
-          </Button>
-          <AnimateNav current={!initialId ? "characters" : null} />
           {user ? (
             <div className={styles.sideList}>
               <p className={shell.sideLabel}>Characters</p>
@@ -325,7 +328,7 @@ export function CharactersStudio({
                       href={`/characters?c=${entry.id}`}
                     >
                       <div className={styles.cardArt}>
-                        <img src={entry.coverUrl} alt={entry.name} />
+                        <MediaImage src={entry.coverUrl} alt={entry.name} />
                       </div>
                       <div className={styles.cardCaption}>
                         <span>
@@ -350,7 +353,7 @@ export function CharactersStudio({
                   <Badge size="sm">Character templates</Badge>
                   <h2 id="starter-title">Choose your starting character.</h2>
                   <p>
-                    Start with Ichika or Seita. Keep the original reference,
+                    Start with Shion or Tomohito. Keep the original reference,
                     create a full-body design, then try a new outfit.
                   </p>
                   <button

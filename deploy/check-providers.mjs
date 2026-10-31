@@ -25,7 +25,7 @@ for (const [provider, url] of [
       if (Array.isArray(body?.data)) {
         result.models = body.data.map((model) => model.id);
         const required = [
-          process.env.META_PLANNER_MODEL?.trim() || "muse-spark-1.3",
+          process.env.META_PLANNER_MODEL?.trim() || "muse-spark-1.3-contributor",
           process.env.META_SEGMENTATION_MODEL?.trim() || "sam-3.1",
           ...(process.env.NEXT_PUBLIC_ENABLE_FLIPBOOK === "true" ? [process.env.META_IMAGE_MODEL?.trim() || "muse-image-1.0"] : []),
         ];

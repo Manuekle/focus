@@ -15,8 +15,10 @@
   flex: 1;
   overflow-y: auto;
   overscroll-behavior-y: contain;
-  scrollbar-gutter: stable;
+  /* The soft edges are the scroll affordance; a bar would only crowd them. */
+  scrollbar-width: none;
 }
+.viewport::-webkit-scrollbar { display: none; }
 
 .edge {
   position: absolute;

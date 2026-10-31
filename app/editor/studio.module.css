@@ -87,9 +87,12 @@
   padding: 16px 12px;
   border-right: 1px solid var(--border);
 }
-.sidebarScroll { min-height: 48px; flex: 1; }
-/* Block padding keeps the first button's rim and shadow inside the scroll viewport, which would otherwise clip them. */
-.sidebarContent { display: flex; min-width: 0; flex-direction: column; gap: 18px; padding-block: 6px; }
+/* Bleeds into the sidebar padding by the content's inline padding, so the list lines up with what sits outside the scroll. */
+/* New-item button and section nav: pinned above the list, which scrolls on its own. */
+.sidebarTop { display: flex; flex-shrink: 0; flex-direction: column; gap: 18px; }
+.sidebarScroll { min-height: 48px; flex: 1; margin-inline: -6px; }
+/* Padding keeps every button's rim and shadow inside the scroll viewport, which clips on both axes. */
+.sidebarContent { display: flex; min-width: 0; flex-direction: column; gap: 18px; padding: 6px; }
 .sideLabel { padding-inline: 8px; color: var(--muted-foreground); font-size: 11px; font-weight: 500; }
 .sidebarNav { display: grid; gap: 4px; }
 .projects { display: flex; min-width: 0; flex-direction: column; gap: 8px; }
@@ -126,12 +129,16 @@
   transition: opacity 150ms;
 }
 .project:hover .projectDelete, .projectDelete:focus-visible { opacity: 1; }
-.projectDelete:hover { background: var(--card); color: var(--foreground); }
+.projectDelete:hover { background: color-mix(in oklab, var(--destructive) 12%, transparent); color: var(--destructive); }
 .guest { display: flex; flex-direction: column; gap: 10px; padding: 14px; border: 1px solid var(--border); border-radius: 14px; background: var(--card); }
 
 .main { display: flex; min-width: 0; flex-direction: column; gap: 24px; padding: 24px clamp(16px, 3vw, 36px) 48px; }
 .body[data-collapsed] .main { padding-left: clamp(16px, 3vw, 36px); }
-.empty { display: flex; max-width: 640px; flex-direction: column; gap: 12px; margin: 6vh auto 0; width: 100%; }
+/* Centred in what is left of the page, not pinned under the header with a void beneath. */
+/* Centred, then lifted 2vh for optical balance. The lift is a translate, not
+   uneven padding: padding cannot shrink, so on a short window it pushed the
+   column a few pixels past the fold and left a scroll that hid nothing. */
+.empty { display: flex; max-width: 640px; flex-direction: column; gap: 12px; margin: auto; width: 100%; translate: 0 -2vh; }
 .emptyTitle { font-family: var(--font-sn-pro); font-size: 24px; font-weight: 600; letter-spacing: -0.02em; }
 .drop { margin-top: 8px; }
 

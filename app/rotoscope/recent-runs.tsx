@@ -1,5 +1,6 @@
 "use client";
 
+import { MediaImage } from "../../components/ui/media-image";
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { cn } from "../../lib/utils";
@@ -26,8 +27,9 @@ export function RecentRuns({ limit = 5 }: { readonly limit?: number }) {
         {runs.slice(0, limit).map((entry) => (
           <li key={entry.id} className={shell.project}>
             <Link href={`/rotoscope?run=${entry.id}`} className={shell.projectLink}>
-              {/* eslint-disable-next-line @next/next/no-img-element -- the run's character, from its media route */}
-              <img src={rotoscopeUrls.media(entry.id, "character")} alt="" className={cn(shell.poster)} style={{ objectFit: "contain" }} />
+              <span className={cn(shell.poster, "relative overflow-hidden")}>
+                <MediaImage src={rotoscopeUrls.media(entry.id, "character")} className="absolute inset-0 size-full object-contain" iconSize={14} />
+              </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-xs text-foreground" title={entry.name}>{entry.name}</span>
                 <span className="block truncate text-[11px] text-muted-foreground">{entry.total ? `${entry.approved}/${entry.total} frames approved` : "Preparing"}</span>

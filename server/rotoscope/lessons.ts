@@ -1,4 +1,4 @@
-import type { Check, FrameState } from "./run-state";
+import { DRAWING_REVISION, type Attempt, type Check, type FrameState } from "./run-state";
 
 // What the generator keeps getting wrong in this run, learned from every
 // rejected attempt in the manifest: each failed check becomes a general rule
@@ -77,10 +77,21 @@ export function mistakes(check: Check): { key: string; rule: string }[] {
 export const RECENT_REJECTIONS = 15;
 
 /** The mistakes in the run's latest rejected attempts, most frequent first (ties: most recent first). */
+/**
+ * Whether a rejected attempt teaches the generator anything: drawn by a generator from a prompt (the
+ * character rig and its repairs have none) and checked the way frames are checked now, not by an
+ * older revision whose since-fixed mistakes would come back as rules.
+ */
+export function teaches(attempt: Attempt): boolean {
+  if (attempt.passed || attempt.revision !== DRAWING_REVISION) return false;
+  const made = attempt.checks.find((check) => check.name === "alpha")?.detail ?? "";
+  return /Muse Image|Higgsfield/.test(made) && !/healed/.test(made);
+}
+
 export function learn(frames: readonly FrameState[]): Lesson[] {
   const seen = new Map<string, { rule: string; count: number; frames: Set<number>; last: number }>();
   // Frames are drawn in order, but a redraw adds attempts to an earlier frame: order by time.
-  const rejected = frames.flatMap((frame) => frame.attempts.filter((attempt) => !attempt.passed).map((attempt) => ({ frame: frame.index, attempt })))
+  const rejected = frames.flatMap((frame) => frame.attempts.filter(teaches).map((attempt) => ({ frame: frame.index, attempt })))
     .sort((a, b) => a.attempt.at.localeCompare(b.attempt.at))
     .slice(-RECENT_REJECTIONS);
   for (const [order, { frame, attempt }] of rejected.entries()) {
@@ -99,17 +110,21 @@ export function learn(frames: readonly FrameState[]): Lesson[] {
     .map(([key, entry]) => ({ key, rule: entry.rule, count: entry.count, frames: [...entry.frames].sort((x, y) => x - y) }));
 }
 
-/** How many lessons a prompt carries: the generator follows a few rules, not a list. */
-export const PROMPT_LESSONS = 5;
+/**
+ * How many lessons a prompt carries. None: the frame that drew the character most faithfully was
+ * made from a short prompt without them, and a list of "mistakes already made" pulls attention
+ * from the character sheet. The lessons are still learned and shown for people to read.
+ */
+export const PROMPT_LESSONS = 0;
 
 /**
  * The prompt lines: the most frequent mistakes of this run, and this frame's own last rejection
  * when the current run has no feedback for it yet (a resume or a redraw starts fresh otherwise).
  */
-export function lessonLines(frames: readonly FrameState[], index: number, withEarlier = true): string[] {
-  const lessons = learn(frames).slice(0, PROMPT_LESSONS);
+export function lessonLines(frames: readonly FrameState[], index: number, withEarlier = true, limit = PROMPT_LESSONS): string[] {
+  const lessons = learn(frames).slice(0, limit);
   const frame = frames.find((entry) => entry.index === index);
-  const last = !withEarlier ? undefined : frame?.attempts.filter((attempt) => !attempt.passed).at(-1);
+  const last = !withEarlier ? undefined : frame?.attempts.filter(teaches).at(-1);
   const earlier = last ? last.checks.filter((check) => !check.passed).map((check) => check.feedback ?? check.detail).join(" ") : "";
   return [
     ...(lessons.length ? [`Mistakes already made in this animation, do not repeat them:\n${lessons.map((lesson) => `- ${lesson.rule}`).join("\n")}`] : []),

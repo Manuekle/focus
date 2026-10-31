@@ -18,9 +18,32 @@ export type ImageReference = {
   readonly png: Buffer;
   /** What this image is for, said to the model right before it. */
   readonly role: string;
+  /** How the prompt names this image; default "Image <n>" by position. */
+  readonly label?: string;
+  /** The bytes this image was made from by a fixed transform (a character sheet rescaled), when it isn't sent as they were. */
+  readonly derivedFrom?: Buffer;
 };
 
-export type GeneratedImage = { readonly png: Buffer; readonly width: number; readonly height: number };
+export type GeneratedImage = {
+  /** The drawing as an sRGB PNG with alpha: what every later step reads. */
+  readonly png: Buffer;
+  readonly width: number;
+  readonly height: number;
+  /** The bytes Muse Image returned, decoded from base64 and otherwise untouched. */
+  readonly raw?: Buffer;
+  /** What the provider said about the call, without the image: for the debug record. */
+  readonly response?: ImageResponse;
+};
+
+export type ImageResponse = {
+  readonly id: string | null;
+  readonly status: string | null;
+  readonly model: string | null;
+  readonly usage: { readonly inputTokens: number | null; readonly outputTokens: number | null } | null;
+  /** How many requests reached the provider for this one drawing (retries after a transient error included). */
+  readonly requests: number;
+  readonly durationMs: number;
+};
 
 /** References travel at most this large: enough detail, bounded request size. */
 const REFERENCE_LONG_SIDE = 1024;
@@ -40,27 +63,27 @@ function blocked(error: unknown): boolean {
   return code === "content_policy_violation" || error.message.toLowerCase().includes("content_policy");
 }
 
-export async function generateImage(input: {
+export type ImageRequest = {
   readonly prompt: string;
   readonly references: readonly ImageReference[];
   /** Aspect ratio hint, "WxH"; Muse Image may return other exact pixels. Omitted, an edit keeps Image 1's aspect. */
   readonly size?: string;
   /** "edit" reworks Image 1 instead of drawing a new picture. */
   readonly action?: "edit";
-  readonly flipbookId?: string;
-  readonly characterId?: string;
-  readonly signal?: AbortSignal;
-}): Promise<GeneratedImage> {
-  const config = requireMetaConfig();
-  const client = metaClient(config);
+  /** "low" is a single refinement pass (same price); default "high". */
+  readonly reasoning?: "high" | "low";
+};
+
+/** The exact Responses API body generateImage sends (images as data URLs, already resized). */
+export async function imageRequestBody(input: ImageRequest, model: string): Promise<ResponseCreateParamsNonStreaming> {
   const content: unknown[] = [];
   for (const [index, reference] of input.references.entries()) {
-    content.push({ type: "input_text", text: `Image ${index + 1}: ${reference.role}` });
+    content.push({ type: "input_text", text: `${reference.label ?? `Image ${index + 1}`}: ${reference.role}` });
     content.push({ type: "input_image", image_url: await dataUrl(reference.png) });
   }
   content.push({ type: "input_text", text: input.prompt });
-  const body = {
-    model: config.imageModel,
+  return {
+    model,
     input: [{ type: "message", role: "user", content }],
     store: false,
     tools: [
@@ -69,17 +92,34 @@ export async function generateImage(input: {
         ...(input.size ? { size: input.size } : {}),
         ...(input.action ? { action: input.action } : {}),
         output_format: "png",
-        reasoning_strength: "high",
+        reasoning_strength: input.reasoning ?? "high",
         enable_image_search: false,
         enable_web_search: false,
         enable_shell: false,
       },
     ],
   } as unknown as ResponseCreateParamsNonStreaming;
+}
+
+export async function generateImage(input: ImageRequest & {
+  readonly flipbookId?: string;
+  readonly characterId?: string;
+  readonly signal?: AbortSignal;
+  /**
+   * Requests allowed for this drawing (default 2: one retry after a transient error). A timeout is
+   * retried too, and the provider may have drawn — and billed — the first one: 1 guarantees at most
+   * one generation per call.
+   */
+  readonly attempts?: number;
+}): Promise<GeneratedImage> {
+  const config = requireMetaConfig();
+  const client = metaClient(config);
+  const body = await imageRequestBody(input, config.imageModel);
 
   const started = Date.now();
+  let requests = 0;
   try {
-    const response = await limiter.run(() => withRetry(() => client.responses.create(body, { signal: input.signal }), { signal: input.signal, attempts: 2, baseDelayMs: 1500 }));
+    const response = await limiter.run(() => withRetry(() => { requests++; return client.responses.create(body, { signal: input.signal }); }, { signal: input.signal, attempts: input.attempts ?? 2, baseDelayMs: 1500 }));
     const call = response.output.find((item) => item.type === "image_generation_call");
     await recordUsage({
       model: config.imageModel,
@@ -101,7 +141,8 @@ export async function generateImage(input: {
       const png = await sharp(decoded, { failOn: "error" }).toColourspace("srgb").ensureAlpha().png().toBuffer();
       const meta = await sharp(png).metadata();
       if (!meta.width || !meta.height) throw new Error("no size");
-      return { png, width: meta.width, height: meta.height };
+      const usage = response.usage ? { inputTokens: response.usage.input_tokens ?? null, outputTokens: response.usage.output_tokens ?? null } : null;
+      return { png, width: meta.width, height: meta.height, raw: decoded, response: { id: response.id ?? null, status: response.status ?? null, model: response.model ?? null, usage, requests, durationMs: Date.now() - started } };
     } catch {
       throw new AppError("image_unreadable", 502, "Muse Image returned an image we couldn’t read. Try again.");
     }

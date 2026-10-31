@@ -51,7 +51,7 @@ export function rotoscopeActivity(run: RotoscopeSnapshot): ActivityInput {
     : run.phase === "stopping" ? "Stopping after this drawing…"
       : run.live ? `Frame ${run.live.frame} of ${run.total} · attempt ${run.live.tries}/${run.maxAttempts}`
         : active ? "Drawing…"
-          : run.error ?? (complete ? `All ${run.total} frames approved` : run.halted ? `Stopped at frame ${run.halted.frame}: needs your review` : `${run.approved}/${run.total} frames approved`);
+          : run.error ?? (complete ? `All ${run.total} frames approved` : run.halted ? `Stopped at frame ${run.halted.frame}: needs your review` : `${run.approved}/${run.total} frames approved${run.approved < run.total ? " · the rest need another try" : ""}`);
   return {
     ...identity({ kind: "rotoscope", id: run.id }), title: run.name || "Rotoscope", state, detail,
     progress: run.phase === "generating" && run.total ? run.approved / run.total : complete && !active ? 1 : null,

@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import { GuideReplySchema, type GuideMessage } from "../../shared/flipbook-onboarding";
 import {
   ACTIVE_FLIPBOOK_STATUSES,
   ExportRecordSchema,
@@ -121,7 +122,8 @@ const trackFlipbook = (title: string, work: () => Promise<Flipbook>, id?: string
 const ACTION_ACTIVITY: Partial<Record<FlipbookAction["action"], string>> = {
   retry: "Preparing animation", generate: "Generating animation", enhance_flagged: "Repairing drawings",
   sequence: "Planning sequence", inbetweens: "Drawing in-betweens", reference: "Preparing reference",
-  scene: "Preparing scene", background: "Generating background", review: "Reviewing animation",
+  scene: "Preparing scene", background: "Generating background", review: "Reviewing animation", plan_inbetweens: "Calculating in-betweens",
+  check_motion: "Checking the motion", fix_motion: "Fixing the motion",
 };
 const upload = (file: File, method: "PUT" | "POST" = "PUT"): RequestInit => ({
   method,
@@ -142,6 +144,8 @@ export const flipbookApi = {
   createEnsemble: (request: CreateEnsembleRequest) => trackFlipbook("Preparing scene", () => call("/api/flipbooks", json(request), parseFlipbook)),
   /** What Focus sees in an upload; read once, then cached with it. */
   look: (imageId: string) => call(imageUrls.look(imageId), { method: "POST" }, (value) => ImageLookSchema.parse(value)),
+  /** One turn of the guided setup: Muse Spark asks what it can't decide, or returns every setting. */
+  guide: (picture: { readonly imageId: string } | { readonly characterSource: CharacterSource }, messages: readonly GuideMessage[]) => call("/api/flipbooks/guide", json({ ...picture, messages }), (value) => GuideReplySchema.parse(value)),
   get: (id: string) => call(`/api/flipbooks/${id}`, { cache: "no-store" }, parseFlipbook),
   /** The signed-in user's saved animations. */
   list: () => call("/api/flipbooks", { cache: "no-store" }, parseFlipbookList),
@@ -162,6 +166,14 @@ export const flipbookApi = {
   frame: (id: string, frameId: string, action: FrameAction) => {
     const work = () => call(`/api/flipbooks/${id}/frames/${frameId}`, json(action), parseFlipbook);
     return action.action === "regenerate" || action.action === "enhance" ? trackFlipbook("Generating drawing", work, id) : work();
+  },
+  /** A pencil note: the red marks as a transparent PNG, and what to change. Repairs the frame from them (one drawing). */
+  correctFrame: (id: string, frameId: string, note: { comment: string; marks: Blob; confirmExtra?: boolean }) => {
+    const form = new FormData();
+    form.set("comment", note.comment);
+    form.set("marks", note.marks, "marks.png");
+    if (note.confirmExtra) form.set("confirmExtra", "true");
+    return trackFlipbook("Generating drawing", () => call(`/api/flipbooks/${id}/frames/${frameId}/correct`, { method: "POST", body: form }, parseFlipbook), id);
   },
   /** Asks the animation assistant (one Muse Spark call). Returns a proposal; nothing is drawn. */
   chat: (id: string, request: FlipbookChatRequest) => call(`/api/flipbooks/${id}/chat`, json(request), (value) => FlipbookProposalSchema.parse(value)),

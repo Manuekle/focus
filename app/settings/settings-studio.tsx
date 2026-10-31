@@ -1,11 +1,12 @@
 "use client";
 
-import Link from "next/link";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { Input } from "../../components/ui/input";
 import { Textarea } from "../../components/ui/textarea";
+import { SiteHeader } from "../_auth/site-header";
+import shell from "../editor/studio.module.css";
 import {
   parseEnv,
   SETTING_GROUPS,
@@ -160,15 +161,15 @@ export function SettingsStudio() {
   }, [snapshot]);
 
   return (
-    <div className="min-h-dvh bg-background text-foreground">
-      <header className="mx-auto flex w-full max-w-4xl flex-wrap items-center justify-between gap-4 px-4 py-6 md:px-6">
-        <Link href="/" className="text-lg font-semibold">Focus</Link>
-        {snapshot ? <Badge tone={production ? "warning" : "info"}>{production ? "Production server" : "Local install"}</Badge> : null}
-      </header>
+    <div className={shell.studio}>
+      <SiteHeader label="Settings" />
 
-      <main className="mx-auto grid w-full max-w-4xl gap-10 px-4 pt-4 pb-24 md:px-6">
+      <main className="page-enter mx-auto grid w-full max-w-4xl gap-10 px-5 pt-12 pb-24 md:px-6 md:pt-16">
         <section className="grid gap-2">
-          <h1 className="text-3xl leading-tight font-semibold">Settings</h1>
+          <div className="flex flex-wrap items-center gap-3">
+            <h1 className="font-[family-name:var(--font-sn-pro)] text-2xl leading-tight font-semibold tracking-[-0.02em]">Settings</h1>
+            {snapshot ? <Badge size="sm" tone={production ? "warning" : "info"}>{production ? "Production server" : "Local install"}</Badge> : null}
+          </div>
           <p className="max-w-2xl text-sm leading-6 text-muted-foreground">
             Load every environment variable this server needs, locally or in production. Values are saved on the server’s own disk
             {snapshot ? <> in <code className="font-mono text-xs">{snapshot.file}</code></> : null}, never in a database, and secrets are never sent back to the browser.
@@ -202,7 +203,7 @@ export function SettingsStudio() {
         {snapshot ? (
           <>
             <section className="grid gap-3" aria-labelledby="import-heading">
-              <h2 id="import-heading" className="text-lg font-semibold">Import a .env file</h2>
+              <h2 id="import-heading" className="text-[15px] font-semibold tracking-[-0.01em]">Import a .env file</h2>
               <p className="text-sm text-muted-foreground">
                 Choose a file or paste its contents. Empty values (<code className="font-mono text-xs">KEY=</code>) are skipped, so a template never blanks a variable your platform already sets.
               </p>
@@ -258,7 +259,7 @@ export function SettingsStudio() {
 
             {groups.map(([group, settings]) => (
               <section key={group} className="grid gap-1" aria-labelledby={`group-${group}`}>
-                <h2 id={`group-${group}`} className="mb-2 text-lg font-semibold">{group}</h2>
+                <h2 id={`group-${group}`} className="mb-2 text-[15px] font-semibold tracking-[-0.01em]">{group}</h2>
                 {settings.map((setting) => {
                   const draft = drafts[setting.key] ?? (setting.secret ? "" : setting.value ?? "");
                   const dirty = setting.secret ? draft !== "" : draft !== (setting.value ?? "");
@@ -295,9 +296,9 @@ export function SettingsStudio() {
                             placeholder={setting.secret ? (setting.value ?? "Not set") : "Not set"}
                             onChange={(event) => setDrafts((current) => ({ ...current, [setting.key]: event.target.value }))}
                           />
-                          <Button type="submit" size="sm" variant="secondary" disabled={busy || !dirty} className="h-9">Save</Button>
+                          <Button type="submit" variant="secondary" disabled={busy || !dirty}>Save</Button>
                           {setting.source === "settings" ? (
-                            <Button type="button" size="sm" variant="ghost" disabled={busy} className="h-9" onClick={() => void save({ unset: [setting.key] })}>
+                            <Button type="button" variant="ghost" disabled={busy} onClick={() => void save({ unset: [setting.key] })}>
                               Remove
                             </Button>
                           ) : null}

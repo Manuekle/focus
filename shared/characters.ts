@@ -1,27 +1,28 @@
 import { z } from "zod";
+import { CharacterMeasuresSchema } from "./rotoscope";
 
-export const CharacterPresetSchema = z.enum(["ichika", "seita"]);
+export const CharacterPresetSchema = z.enum(["shion", "tomohito"]);
 export type CharacterPreset = z.infer<typeof CharacterPresetSchema>;
 export const CHARACTER_PRESETS = {
-  ichika: {
-    name: "Ichika",
-    label: "Female template",
-    fileName: "ichika.png",
-    width: 768,
+  shion: {
+    name: "Shion",
+    label: "Character template",
+    fileName: "shion.png",
+    width: 1024,
     height: 1536,
-    alt: "Ichika, with long blonde hair, golden eyes, a white sleeveless shirt, black ribbon, black shorts and thigh-high socks",
+    alt: "Shion, with very long straight black hair, brown eyes, a calm expression, a black V-neck sweater over a white collared shirt and red bow, a black pleated skirt, black socks and white-and-blue school shoes",
     prompt:
-      "Keep Ichika exactly as drawn: long straight blonde hair with bangs, golden eyes, face, white sleeveless button-up shirt, black neck ribbon, black shorts, black thigh-high socks and dark loafers. Preserve her proportions, colors, anime line work, pose and original front-facing view. Show the whole body on a plain background.",
+      "Keep Shion exactly as drawn: very long straight black hair with bangs, brown eyes, calm neutral expression, face, black oversized V-neck sweater, white collared shirt, red bow, black pleated miniskirt, black socks and white-and-blue school shoes. Preserve her proportions, colors, anime line work, pose and original front-facing view. Show the whole body on a plain background.",
   },
-  seita: {
-    name: "Seita",
-    label: "Male template",
-    fileName: "seita.png",
-    width: 768,
+  tomohito: {
+    name: "Tomohito",
+    label: "Character template",
+    fileName: "tomohito.png",
+    width: 1024,
     height: 1536,
-    alt: "Seita, with short black hair, a white rolled-sleeve shirt, loose black tie, dark trousers and red-and-white high-top sneakers",
+    alt: "Tomohito, with short messy black hair, dark eyes, a calm expression, a black V-neck sweater over a white collared shirt and red tie, black trousers and white-and-blue school shoes",
     prompt:
-      "Keep Seita exactly as drawn: short tousled black hair, dark eyes, face, white rolled-sleeve shirt, loose black tie, dark belt and trousers, and red-and-white high-top sneakers. Preserve his proportions, colors, anime line work, pose and original front-facing view. Show the whole body on a plain background.",
+      "Keep Tomohito exactly as drawn: short messy black hair with a loose fringe, dark eyes, calm neutral expression, face, black oversized V-neck sweater, white collared shirt with the hem showing below the sweater, red tie, straight black trousers and white-and-blue school shoes. Preserve his proportions, colors, anime line work, pose and original front-facing view. Show the whole body on a plain background.",
   },
 } as const satisfies Record<CharacterPreset, {
   name: string;
@@ -61,6 +62,10 @@ export const CharacterVersionSchema = z.object({
   createdAt: z.iso.datetime(),
 });
 export type CharacterVersion = z.infer<typeof CharacterVersionSchema>;
+/** The character's real height and weight: every animation drawn from it keeps that body. */
+export const CharacterBodySchema = CharacterMeasuresSchema.pick({ heightCm: true, weightKg: true });
+export type CharacterBody = z.infer<typeof CharacterBodySchema>;
+export const NO_BODY: CharacterBody = { heightCm: null, weightKg: null };
 export const CharacterJobSchema = z.object({
   operationId: z.uuid(),
   fingerprint: z.string().length(64),
@@ -74,7 +79,7 @@ export const CharacterSchema = z.object({
   ownerId: z.uuid(),
   name: z.string().trim().min(1).max(80),
   // Retired templates remain readable without appearing in the starter list.
-  preset: z.union([CharacterPresetSchema, z.enum(["elf-chan", "denji", "reze"]).transform(() => null)]).nullable(),
+  preset: z.union([CharacterPresetSchema, z.enum(["elf-chan", "denji", "reze", "ichika", "seita"]).transform(() => null)]).nullable(),
   references: z
     .array(CharacterReferenceSchema)
     .min(1)
@@ -82,6 +87,7 @@ export const CharacterSchema = z.object({
   versions: z.array(CharacterVersionSchema).max(CHARACTER_VERSION_MAX),
   selectedVersionId: CharacterAssetIdSchema.nullable(),
   status: z.enum(["ready", "generating", "failed"]),
+  measures: CharacterBodySchema.default(NO_BODY),
   job: CharacterJobSchema.nullable(),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
   budget: z.object({
@@ -102,6 +108,7 @@ export const CharacterSummarySchema = CharacterSchema.pick({
   status: true,
   selectedVersionId: true,
   updatedAt: true,
+  measures: true,
 }).extend({
   versions: z.number().int().nonnegative(),
   coverUrl: z.string(),
@@ -145,12 +152,46 @@ export const UpdateCharacterSchema = z.discriminatedUnion("action", [
       referenceId: CharacterAssetIdSchema,
     })
     .strict(),
+  z
+    .object({
+      action: z.literal("measures"),
+      heightCm: CharacterBodySchema.shape.heightCm,
+      weightKg: CharacterBodySchema.shape.weightKg,
+    })
+    .strict(),
 ]);
+/**
+ * What a version's sheet alone decides for animation, prepared once and copied into every rotoscope run drawn
+ * from it: its pose, description, pose sheet, palette and body measurements (server/characters/kit.ts).
+ */
+export const CharacterKitSchema = z.object({
+  versionId: CharacterAssetIdSchema,
+  status: z.enum(["none", "preparing", "ready", "failed"]),
+  error: z.string().nullable(),
+  /** The height and weight it was prepared with: the description and the pose sheet say them. */
+  measures: CharacterBodySchema.nullable(),
+  preparedAt: z.iso.datetime().nullable(),
+  description: z.string().nullable(),
+  /** The body measured on the grid, in heads (rotoscope draw.ts buildText). */
+  build: z.string().nullable(),
+  /** The palette's named colours (rotoscope colour.ts paletteText). */
+  palette: z.string().nullable(),
+  /** How the sheet is drawn, one labelled line per part (rotoscope draw.ts describeStyle). */
+  style: z.string().nullable().default(null),
+  poseSheet: z.boolean(),
+});
+export type CharacterKit = z.infer<typeof CharacterKitSchema>;
+export const KIT_IMAGES = ["pose-sheet", "palette"] as const;
+export type KitImage = (typeof KIT_IMAGES)[number];
 export const characterUrls = {
   reference: (id: string, asset: string) =>
     `/api/characters/${id}/media?reference=${asset}`,
   version: (id: string, asset: string, download = false) =>
     `/api/characters/${id}/media?version=${asset}${download ? "&download=1" : ""}`,
+  kit: (id: string, asset: string) => `/api/characters/${id}/kit?version=${asset}`,
+  /** `stamp` (the kit's preparedAt) changes the URL when the kit is prepared again. */
+  kitImage: (id: string, asset: string, image: KitImage, stamp: string) =>
+    `/api/characters/${id}/kit/media?version=${asset}&image=${image}&v=${encodeURIComponent(stamp)}`,
 };
 export function characterCover(character: Character): string {
   return character.selectedVersionId

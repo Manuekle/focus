@@ -4,9 +4,9 @@ import { useEffect, useRef, useState } from "react";
 import { ArrowLeft01Icon, ArrowRight01Icon, Cancel01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
-import { MediaLightbox, ZoomButton, type LightboxMedia } from "../../components/ui/media-lightbox";
+import { ImageViewer, ImageViewerContent, ImageViewerThumbnail, type ImageViewerImage } from "../../components/motion/image-viewer";
 import { ToggleChip } from "../../components/ui/toggle-chip";
-import { rotoscopeUrls, type RotoscopeFrame, type RotoscopeRun } from "../../shared/rotoscope";
+import { FRAME_SIZE, rotoscopeUrls, type RotoscopeFrame, type RotoscopeRun } from "../../shared/rotoscope";
 import { time } from "./frame-state";
 import styles from "./rotoscope.module.css";
 
@@ -61,7 +61,7 @@ export function CompareSheet({ run, frame, initialAttempt, onFrame, canApprove, 
 
   // Only the pictures that exist can open large; the arrow keys walk them in the lightbox.
   const shown = panes.flatMap((pane) => (pane.src ? [{ ...pane, src: pane.src }] : []));
-  const items: LightboxMedia[] = shown.map((pane) => ({ kind: "image", src: pane.src, alt: pane.alt, caption: `Frame ${frame.index} · ${pane.label}`, transparent: pane.transparent }));
+  const items: ImageViewerImage[] = shown.map((pane) => ({ id: pane.key, width: FRAME_SIZE.width, height: FRAME_SIZE.height, src: pane.src, alt: pane.alt, caption: `Frame ${frame.index} · ${pane.label}`, transparent: pane.transparent }));
 
   return (
     <div className={styles.compare} role="dialog" aria-label={`Compare frame ${frame.index}`}>
@@ -80,23 +80,33 @@ export function CompareSheet({ run, frame, initialAttempt, onFrame, canApprove, 
         </div>
       </div>
 
-      <div className={styles.compareBody} key={frame.index}>
-        {panes.map((pane) => (
-          <figure key={pane.key} className={styles.comparePane}>
-            {pane.src ? (
-              <ZoomButton className={styles.compareImage} data-transparent={pane.transparent ? "" : undefined} label={`Open ${pane.label.toLowerCase()} larger`} onOpen={() => setZoomed(shown.findIndex((entry) => entry.key === pane.key))}>
-                {/* eslint-disable-next-line @next/next/no-img-element -- from the run's media route */}
-                <img key={pane.src} src={pane.src} alt={pane.alt} draggable={false} className={styles.arrive} onError={(event) => { event.currentTarget.style.visibility = "hidden"; }} />
-              </ZoomButton>
-            ) : (
-              <span className={styles.compareImage} data-transparent={pane.transparent ? "" : undefined}><span className={styles.compareEmpty}>Not drawn yet</span></span>
-            )}
-            <figcaption>{pane.label}{pane.key === "drawing" && record ? <span className={styles.compareVerdict} data-passed={record.passed}><HugeiconsIcon icon={record.passed ? Tick02Icon : Cancel01Icon} size={11} strokeWidth={2.2} />{frame.approvedAttempt === record.attempt ? "approved" : record.passed ? "passed" : "rejected"}</span> : null}</figcaption>
-          </figure>
-        ))}
-      </div>
-
-      <MediaLightbox items={items} index={zoomed} onIndexChange={setZoomed} onClose={() => setZoomed(null)} />
+      <ImageViewer
+        images={items}
+        label="Frame pictures"
+        value={zoomed !== null ? shown[zoomed]?.key ?? null : null}
+        onValueChange={(id) => setZoomed(id === null ? null : shown.findIndex((entry) => entry.key === id))}
+      >
+        <div className={styles.compareBody} key={frame.index}>
+          {panes.map((pane) => (
+            <figure key={pane.key} className={styles.comparePane}>
+              {pane.src ? (
+                <ImageViewerThumbnail
+                  key={pane.src}
+                  imageId={pane.key}
+                  className={`${styles.compareImage} rounded-xl bg-transparent`}
+                  imageClassName={styles.arrive}
+                  data-transparent={pane.transparent ? "" : undefined}
+                  onErrorCapture={(event) => { (event.target as HTMLElement).style.visibility = "hidden"; }}
+                />
+              ) : (
+                <span className={styles.compareImage} data-transparent={pane.transparent ? "" : undefined}><span className={styles.compareEmpty}>Not drawn yet</span></span>
+              )}
+              <figcaption>{pane.label}{pane.key === "drawing" && record ? <span className={styles.compareVerdict} data-passed={record.passed}><HugeiconsIcon icon={record.passed ? Tick02Icon : Cancel01Icon} size={11} strokeWidth={2.2} />{frame.approvedAttempt === record.attempt ? "approved" : record.passed ? "passed" : "rejected"}</span> : null}</figcaption>
+            </figure>
+          ))}
+        </div>
+        <ImageViewerContent />
+      </ImageViewer>
 
       {attempts.length > 1 || (canApprove && record && frame.approvedAttempt !== record.attempt) ? (
         <div className={styles.compareFoot} role="group" aria-label="Attempts">

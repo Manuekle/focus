@@ -1,5 +1,6 @@
 "use client";
 
+import { MediaThumb } from "../../components/ui/media-image";
 import Image from "next/image";
 import Link from "next/link";
 import { useCallback, useEffect, useRef, useState } from "react";
@@ -194,14 +195,15 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
       <div className={cn(shell.body, styles.body)} {...sidebar.bodyProps}>
         <SidebarResizer sidebar={sidebar} showToggle={false} />
         <aside id="flipbook-library" className={cn(shell.sidebar, styles.sidebar)} aria-label={user ? "Your animations" : "Account"}>
+          <div data-slot="sidebar-top" className={shell.sidebarTop}>
+            <Button variant="outline" size="sm" className="w-full justify-start" onClick={startOver}>
+              <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
+              New animation
+            </Button>
+
+            <AnimateNav current={together && !flipbook ? "together" : "flipbook"} />
+          </div>
           <ScrollArea className={shell.sidebarScroll} contentClassName={shell.sidebarContent}>
-          <Button variant="outline" size="sm" className="w-full justify-start" onClick={startOver}>
-            <HugeiconsIcon icon={Add01Icon} size={14} strokeWidth={1.75} />
-            New animation
-          </Button>
-
-          <AnimateNav current={together && !flipbook ? "together" : "flipbook"} />
-
           {user ? (
             <nav className={shell.projects} aria-label="Animations">
               <p className={shell.sideLabel}>Animations</p>
@@ -214,8 +216,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
                   {saved.map((entry) => (
                     <li key={entry.id} className={cn(shell.project, entry.id === flipbook?.id && shell.projectActive)}>
                       <Link href={`/flipbook?f=${entry.id}`} className={shell.projectLink} aria-current={entry.id === flipbook?.id ? "page" : undefined}>
-                        {/* eslint-disable-next-line @next/next/no-img-element -- the illustration, from the media route */}
-                        <img src={entry.posterUrl} alt="" className={cn(shell.poster, styles.posterContain)} />
+                        <MediaThumb src={entry.posterUrl} className={shell.poster} />
                         <span className="min-w-0 flex-1">
                           <span className="block truncate text-xs text-foreground" title={entry.title}>{entry.title}</span>
                           <span className="block truncate text-[11px] text-muted-foreground">
@@ -240,7 +241,7 @@ export function FlipbookStudio({ flipbookId, characterSource, together = false }
               </div>
               <ProgressMeter size="sm" value={Math.round((session.quota.used / Math.max(1, session.quota.limit)) * 100)} aria-label="Free generations used" />
               <p className="text-xs leading-5 text-muted-foreground">Sign in to save your animations. The generation allowance stays the same.</p>
-              <FacebookButton next={here} label="Sign in with Facebook" className="h-9 whitespace-nowrap px-3 text-[13px]" />
+              <FacebookButton next={here} label="Sign in with Facebook" size="default" className="w-fit" />
             </section>
           ) : null}
           {user && rotoscopeEnabled() ? <RecentRuns /> : null}

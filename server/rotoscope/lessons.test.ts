@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { learn, lessonLines, mistakes, RECENT_REJECTIONS } from "./lessons";
-import type { Check, FrameState } from "./run-state";
+import { DRAWING_REVISION, type Check, type FrameState } from "./run-state";
 
 let clock = 0;
-const attempt = (passed: boolean, checks: Check[]) => ({ attempt: ++clock, at: new Date(clock * 1000).toISOString(), file: "", passed, checks });
+/** A drawing by Muse Image under the current revision: the attempts lessons learn from. */
+const drawn: Check = { name: "alpha", passed: true, detail: "clean cutout; Muse Image" };
+const attempt = (passed: boolean, checks: Check[]) => ({ attempt: ++clock, at: new Date(clock * 1000).toISOString(), revision: DRAWING_REVISION, file: "", passed, checks: [...checks, drawn] });
 const frame = (index: number, attempts: FrameState["attempts"]): FrameState => ({ index, source: "", status: "pending", attempts });
 const failed = (name: string, detail: string, feedback?: string): Check => ({ name, passed: false, detail, ...(feedback ? { feedback } : {}) });
 
@@ -48,14 +50,18 @@ describe("lessonLines", () => {
   ];
 
   it("puts the run's lessons and this frame's last rejection into the prompt", () => {
-    const lines = lessonLines(frames, 2);
+    const lines = lessonLines(frames, 2, true, 5);
     expect(lines[0]).toMatch(/^Mistakes already made in this animation/);
     expect(lines[0]).toMatch(/too big/);
     expect(lines[1]).toBe("An earlier drawing of this same frame was rejected for: Bring the feet together.");
   });
 
   it("leaves the frame's own rejection out when this run already passes its feedback", () => {
-    expect(lessonLines(frames, 2, false)).toHaveLength(1);
+    expect(lessonLines(frames, 2, false, 5)).toHaveLength(1);
+  });
+
+  it("carries no general rules by default, only this frame's own last rejection", () => {
+    expect(lessonLines(frames, 2)).toEqual(["An earlier drawing of this same frame was rejected for: Bring the feet together."]);
   });
 
   it("says nothing before the first rejection", () => {

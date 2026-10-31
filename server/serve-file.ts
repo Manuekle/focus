@@ -4,16 +4,24 @@ import { Readable } from "node:stream";
 import { AppError } from "./errors";
 import { parseRange } from "./http-range";
 
-/** Streams a local file, honoring Range. `downloadName` turns it into an attachment. */
-export async function serveFile(request: Request, file: string, type: string, downloadName?: string): Promise<Response> {
+/**
+ * Streams a local file, honoring Range. `downloadName` turns it into an attachment. `revalidate` is for a file that
+ * can be rewritten under the same URL: the browser asks every time and gets 304 while it is unchanged.
+ */
+export async function serveFile(request: Request, file: string, type: string, downloadName?: string, options: { readonly revalidate?: boolean } = {}): Promise<Response> {
   const info = await stat(file).catch(() => null);
   if (!info) throw new AppError("media_not_found", 404, "This file is no longer available.");
   const size = info.size;
   const headers = new Headers({
     "Content-Type": type,
     "Accept-Ranges": "bytes",
-    "Cache-Control": "private, max-age=3600",
+    "Cache-Control": options.revalidate ? "private, no-cache" : "private, max-age=3600",
   });
+  if (options.revalidate) {
+    const tag = `"${size.toString(36)}-${Math.round(info.mtimeMs).toString(36)}"`;
+    headers.set("ETag", tag);
+    if (request.headers.get("if-none-match") === tag) return new Response(null, { status: 304, headers });
+  }
   if (downloadName) {
     headers.set("Content-Disposition", `attachment; filename="${downloadName.replace(/[^\w.-]/g, "_")}"; filename*=UTF-8''${encodeURIComponent(downloadName)}`);
   }

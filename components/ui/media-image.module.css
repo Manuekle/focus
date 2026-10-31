@@ -1,0 +1,19 @@
+/* A picture that arrives gracefully: nothing (but the skeleton under it) until
+   it has loaded, then a short fade. One that cannot load shows a quiet mark
+   instead of the browser's broken-image glyph. */
+.image { transition: opacity 180ms var(--ease-smooth-out, ease-out); }
+.image[data-status="loading"] { opacity: 0; }
+.image[data-status="error"] { visibility: hidden; }
+.cover { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; box-shadow: none; }
+.fallback {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+  pointer-events: none;
+}
+@media (prefers-reduced-motion: reduce) {
+  .image { transition: none; }
+}

@@ -1,6 +1,7 @@
 import sharp from "sharp";
 import type { Check } from "./run-state";
 import type { Pose } from "./pose-match";
+import { fromBackdrop } from "../mapping/mask";
 
 // A measuring grid shared by every image the generator sees (pose skeleton,
 // greyscale source frame, previous drawing), so the character is drawn at
@@ -13,7 +14,13 @@ export const GRID = { columns: 8, rows: 12, cell: 128 } as const;
 /** Grid lines are counted from the top: line 0 is the top edge, line 12 the bottom. */
 export const toLine = (y: number) => Math.round((y / GRID.cell) * 10) / 10;
 
-export type Marks = { readonly head: number; readonly feet: number; readonly center: number };
+export type Marks = {
+  readonly head: number;
+  readonly feet: number;
+  readonly center: number;
+  /** A drawing's marks only: a hand covers the crown, so `head` is where it should be, not where it was seen. */
+  readonly headHidden?: boolean;
+};
 
 export async function withGrid(png: Buffer, marks?: Marks): Promise<Buffer> {
   const { width = 0, height = 0 } = await sharp(png).metadata();
@@ -21,6 +28,8 @@ export async function withGrid(png: Buffer, marks?: Marks): Promise<Buffer> {
   for (let c = 1; c < GRID.columns; c++) lines.push(`<line x1="${c * GRID.cell}" y1="0" x2="${c * GRID.cell}" y2="${height}"/>`);
   for (let r = 1; r < GRID.rows; r++) lines.push(`<line x1="0" y1="${r * GRID.cell}" x2="${width}" y2="${r * GRID.cell}"/>`);
   const labels = Array.from({ length: GRID.rows + 1 }, (_, r) => `<text x="6" y="${Math.min(height - 6, Math.max(22, r * GRID.cell + 8))}">${r}</text>`);
+  // Columns lettered A–H along the top, so a cell has one name on every image ("C4": column C, between lines 3 and 4).
+  for (let c = 0; c < GRID.columns; c++) labels.push(`<text x="${c * GRID.cell + GRID.cell / 2 - 7}" y="22">${"ABCDEFGH"[c]}</text>`);
   const targets = marks
     ? `<g stroke="#00a651" fill="none">
         <line x1="0" y1="${marks.head}" x2="${width}" y2="${marks.head}" stroke-width="4" stroke-dasharray="18 10"/>
@@ -61,6 +70,32 @@ export type Proportions = { readonly headAboveNose: number; readonly solesBelowA
 
 /** COCO-WholeBody: the chin is face point 8. */
 export const CHIN = 31;
+
+/**
+ * The top of the hair over the face, one rule for the sheet and for every drawing: from the nose
+ * straight up each column within a fifth of the shoulders' span either side, until the figure ends;
+ * the median column. A spike, a bow or a topknot off to one side is not the top of the head.
+ */
+export function hairTop(solid: (x: number, y: number) => boolean, width: number, height: number, nose: readonly [number, number], shoulderSpan: number): number {
+  const half = Math.max(2, Math.round(shoulderSpan * 0.2));
+  const tops: number[] = [];
+  for (let x = Math.max(0, Math.round(nose[0]) - half); x <= Math.min(width - 1, Math.round(nose[0]) + half); x++) {
+    let y = Math.min(height - 1, Math.round(nose[1]));
+    while (y > 0 && solid(x, y - 1)) y--;
+    tops.push(y);
+  }
+  tops.sort((a, b) => a - b);
+  return tops[Math.floor(tops.length / 2)];
+}
+
+/** The sheet's hair top by hairTop's rule; its figure is everything not connected to the backdrop. */
+export async function sheetHairTop(png: Buffer, reference: Pose): Promise<number | null> {
+  const [nose, ls, rs] = [at(reference, 0), at(reference, 5), at(reference, 6)];
+  if (!nose || !ls || !rs) return null;
+  const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+  const mask = fromBackdrop({ data, width: info.width, height: info.height });
+  return hairTop((x, y) => Boolean(mask.data[y * info.width + x]), info.width, info.height, nose, Math.abs(ls[0] - rs[0]));
+}
 
 export function proportions(reference: Pose, box: { top: number; bottom: number }): Proportions {
   const [nose, la, ra, chin] = [at(reference, 0), at(reference, 15), at(reference, 16), at(reference, CHIN)];

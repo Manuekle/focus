@@ -8,11 +8,12 @@ export const metadata: Metadata = {
   description: "Redraw a video frame by frame with your character.",
 };
 
-type Props = { searchParams: Promise<{ run?: string | string[] }> };
+type Props = { searchParams: Promise<{ run?: string | string[]; batch?: string | string[] }> };
 
 export default async function Page({ searchParams }: Props) {
   if (!rotoscopeEnabled()) notFound();
-  const { run } = await searchParams;
-  const runId = typeof run === "string" && /^[0-9a-f-]{36}$/.test(run) ? run : null;
-  return <RotoscopeStudio key={runId ?? "new"} initialRunId={runId} />;
+  const { run, batch } = await searchParams;
+  const id = (value: string | string[] | undefined) => (typeof value === "string" && /^[0-9a-f-]{36}$/.test(value) ? value : null);
+  const [runId, batchId] = [id(run), id(batch)];
+  return <RotoscopeStudio key={runId ?? batchId ?? "new"} initialRunId={runId} initialBatchId={batchId} />;
 }

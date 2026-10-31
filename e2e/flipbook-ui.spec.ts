@@ -53,6 +53,7 @@ test("sequence, audio and character controls use compact system components", asy
   const fixture = await studio(page);
   await page.goto(`/flipbook?f=${fixture.book.id}`);
   await expect(page.getByRole("heading", { name: "Layout test", exact: true })).toBeVisible();
+  await page.getByRole("button", { name: "Advanced", exact: true }).click();
   const sequence = page.getByRole("region", { name: "Continuous sequence", exact: true });
   await sequence.getByRole("slider", { name: "Length", exact: true }).focus();
   await page.keyboard.press("ArrowRight");
@@ -89,6 +90,7 @@ test("desktop panes scroll independently and narrower layouts keep every panel r
   await page.setViewportSize({ width: 1600, height: 900 });
   const { book } = await studio(page);
   await page.goto(`/flipbook?f=${book.id}`);
+  await page.getByRole("button", { name: "Advanced", exact: true }).click();
   const sequence = page.getByRole("heading", { name: "Continuous sequence", exact: true });
   await expect(sequence).toBeAttached();
   const header = page.getByRole("banner");
@@ -146,6 +148,8 @@ test("starting from a saved character uses the system upload and scrolls below t
   await page.setViewportSize({ width: 1600, height: 900 });
   const { character } = await studio(page);
   await page.goto(`/flipbook?character=${character.id}&version=${character.selectedVersionId}`);
+  // The manual form sits behind Advanced; Guided asks Muse Spark, which is off here.
+  await page.getByRole("button", { name: "Advanced", exact: true }).click();
   await expect(page.getByRole("slider", { name: "Length", exact: true })).toBeVisible();
   await expect(page.getByRole("img", { name: "Your character illustration", exact: true })).toBeVisible();
   const setup = page.getByRole("region", { name: "Animation setup", exact: true });
@@ -214,6 +218,8 @@ test("video movement replaces manual controls and uploads and applies the exact 
     return route.fulfill({ json: pending });
   });
   await page.goto(`/flipbook?character=${character.id}&version=${character.selectedVersionId}`);
+  // The manual form sits behind Advanced; Guided asks Muse Spark, which is off here.
+  await page.getByRole("button", { name: "Advanced", exact: true }).click();
   await page.getByRole("button", { name: "From a video", exact: true }).click();
   await expect(page.getByRole("region", { name: "Motion & direction", exact: true })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Video movement", exact: true })).toBeVisible();
@@ -251,6 +257,8 @@ test("reference video uses system controls, keyboard seeking and bounded segment
   await page.setViewportSize({ width: 1600, height: 900 });
   const { character } = await studio(page);
   await page.goto(`/flipbook?character=${character.id}&version=${character.selectedVersionId}`);
+  // The manual form sits behind Advanced; Guided asks Muse Spark, which is off here.
+  await page.getByRole("button", { name: "Advanced", exact: true }).click();
   await page.getByRole("button", { name: "From a video", exact: true }).click();
   const chooser = page.waitForEvent("filechooser");
   await page.getByRole("button", { name: "Choose reference video", exact: true }).click();
@@ -346,6 +354,7 @@ test("scroll edges blur during movement and clear at the start, end and idle", a
   await page.setViewportSize({ width: 1600, height: 900 });
   const { book } = await studio(page);
   await page.goto(`/flipbook?f=${book.id}`);
+  await page.getByRole("button", { name: "Advanced", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Continuous sequence", exact: true })).toBeAttached();
   const area = page.locator('[class*="columnSide"]').last();
   const viewport = area.locator('[data-slot="scroll-area-viewport"]').first();

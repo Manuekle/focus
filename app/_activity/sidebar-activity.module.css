@@ -14,11 +14,20 @@
 .empty { padding-inline: 8px; color: var(--muted-foreground); font-size: 11px; line-height: 1.4; }
 .list { max-height: min(28dvh, 220px); }
 .listViewport { scrollbar-gutter: auto; }
-.items { display: flex; flex-direction: column; gap: 2px; }
-.item { display: grid; min-width: 0; grid-template-columns: minmax(0, 1fr) 32px; align-items: start; border-radius: 8px; }
-.item:hover, .item:focus-within { background: var(--accent); }
-.item:hover .title, .item:focus-within .title { color: var(--accent-foreground); }
-.task { display: flex; grid-area: 1 / 1 / 2 / -1; min-width: 0; gap: 6px; padding: 6px 36px 6px 8px; color: inherit; text-decoration: none; border-radius: inherit; }
+.items { display: flex; flex-direction: column; }
+/* The row collapses through its grid track, so its height eases to zero without being measured. */
+.item {
+  --exit: 300ms;
+  display: grid;
+  min-width: 0;
+  grid-template-rows: 1fr;
+  transition: grid-template-rows var(--exit) var(--ease-smooth-out), opacity calc(var(--exit) * 0.7) var(--ease-smooth-out), transform var(--exit) var(--ease-smooth-out);
+}
+.item[data-leaving] { grid-template-rows: 0fr; opacity: 0; transform: translateX(-10px); pointer-events: none; }
+.collapse { min-height: 0; min-width: 0; overflow: hidden; }
+.row { display: grid; margin-bottom: 2px; min-width: 0; grid-template-columns: minmax(0, 1fr) 28px; align-items: center; border-radius: 8px; transition: background-color 150ms var(--ease-smooth-out); }
+.row:hover, .row:focus-within { background: var(--muted); }
+.task { display: flex; grid-area: 1 / 1 / 2 / -1; min-width: 0; align-items: flex-start; gap: 8px; padding: 6px 32px 6px 8px; color: inherit; text-decoration: none; border-radius: inherit; }
 .item[data-state="running"] .task { padding-inline-end: 8px; }
 .link:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 .icon { display: flex; flex-shrink: 0; align-items: flex-start; padding-top: 1px; color: var(--muted-foreground); }
@@ -27,17 +36,17 @@
 .icon[data-state="failed"], .state[data-state="failed"] { color: var(--status-failed-fg); }
 .icon[data-state="waiting"], .state[data-state="waiting"] { color: var(--status-pending-fg); }
 .content { display: flex; min-width: 0; flex: 1; flex-direction: column; gap: 1px; }
+.content > :last-child:not(.meta) { margin-top: 4px; }
 .titleRow { display: flex; min-width: 0; align-items: baseline; justify-content: space-between; gap: 8px; }
 .title { overflow: hidden; color: var(--foreground); font-size: 12px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .meta { display: flex; min-width: 0; align-items: baseline; gap: 4px; color: var(--muted-foreground); font-size: 11px; line-height: 14px; }
 .state, .separator { flex-shrink: 0; }
 .detail { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.meta[data-state="failed"], .meta[data-state="waiting"] { flex-wrap: wrap; column-gap: 4px; }
-.meta[data-state="failed"] .separator, .meta[data-state="waiting"] .separator { display: none; }
-.meta[data-state="failed"] .detail, .meta[data-state="waiting"] .detail { flex-basis: 100%; overflow-wrap: anywhere; white-space: normal; }
-.dismiss { z-index: 1; grid-area: 1 / 2; width: 28px; height: 28px; margin-top: 3px; color: var(--muted-foreground); opacity: 0; pointer-events: none; }
-.item:hover .dismiss, .item:focus-within .dismiss { opacity: 1; pointer-events: auto; }
-.dismiss:hover { color: var(--accent-foreground); }
+.dismiss { z-index: 1; display: grid; grid-area: 1 / 2; width: 22px; height: 22px; place-items: center; padding: 0; border: 0; border-radius: 6px; background: transparent; color: var(--muted-foreground); cursor: pointer; opacity: 0; pointer-events: none; transition: opacity 150ms var(--ease-smooth-out), color 150ms; }
+.row:hover .dismiss, .row:focus-within .dismiss { opacity: 1; pointer-events: auto; }
+.dismiss:hover { color: var(--foreground); }
+.dismiss:focus-visible { outline: 2px solid var(--ring); outline-offset: -2px; }
 @media (hover: none), (pointer: coarse) { .dismiss { opacity: 1; pointer-events: auto; } }
 @media (max-width: 860px) { .list { max-height: 144px; } }
+@media (prefers-reduced-motion: reduce) { .item, .row, .dismiss { transition: none; } }
 @media (forced-colors: active) { .icon, .state { color: CanvasText !important; } .link:focus-visible { outline-color: Highlight; } }

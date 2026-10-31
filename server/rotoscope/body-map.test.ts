@@ -70,7 +70,7 @@ describe("checkProportions", () => {
     expect(check.feedback).toMatch(/upper arm on the LEFT of the image is 41 % longer than the character's own: even fully extended it measures at most 1.20 cells/);
   });
 
-  it("measures against the drawing's own height, whatever size it came out", () => {
+  it("measures against the drawing's own size (its torso), whatever size it came out", () => {
     const half = onCanvas(standing(), { scale: 0.5, x: 0, y: 0 });
     expect(checkProportions(spec, half, { head: 100, feet: 620, center: 256 }, marks).passed).toBe(true);
   });

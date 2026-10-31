@@ -4,7 +4,7 @@ import { LOOK_INSTRUCTIONS, LOOK_JSON_SCHEMA, assessInput, parseAnalysisOutput, 
 import { decideReference, depthLayers } from "./reference-manager";
 import sharp from "sharp";
 import { defaultMotion } from "./flipbooks";
-import { actionFor, keyColorFor, parsePlanOutput, planInstructions, planJsonSchema, posePrompt, referencePrompt, repairPrompt } from "./pose-planning";
+import { actionFor, inbetweenPrompt, keyColorFor, movementScale, pacedPlan, paceFromInstruction, parsePlanOutput, planInstructions, planJsonSchema, posePrompt, referencePrompt, repairPrompt } from "./pose-planning";
 import { parseReview } from "./quality-control";
 import { poseCandidates, poseReferenceFor } from "./pose-catalog";
 import { CreateFlipbookRequestSchema, FlipbookPlanSchema } from "../../shared/flipbook";
@@ -391,5 +391,31 @@ describe("scene depth", () => {
     expect(defaultMotion({ action: "run", motion: "in_place" }, false)).toBe("scroll");
     expect(defaultMotion({ action: "walk", motion: "right" }, true)).toBe("static");
     for (const action of ["jump", "wave", "idle", "fight"] as const) expect(defaultMotion({ action, motion: "in_place" }, true)).toBe("zoom");
+  });
+});
+
+describe("pace and view of a cycle", () => {
+  const front: CharacterAnalysis = { ...analysis, view: "front", facing: "front", requestedAction: "walk" };
+  const walkJson = (pace?: string) => JSON.stringify({ direction: "right", motion: "in_place", ...(pace ? { pace } : {}), poses: ACTION_SPECS.walk.poses.map((pose) => ({ phase: pose.phase, detail: "" })) });
+
+  it("keeps the planner's pace and reads an older plan's from its instruction", () => {
+    expect(parsePlanOutput(walkJson("gentle"), front, "walk", undefined, "front").pace).toBe("gentle");
+    const older = parsePlanOutput(walkJson(), front, "walk", undefined, "front");
+    expect(older.pace).toBeUndefined();
+    expect(pacedPlan(older, "Walk in place, slow walking\n\nCreate one coherent repeating eight-pose action").pace).toBe("gentle");
+    expect(pacedPlan(older, "camina despacio de frente").pace).toBe("gentle");
+    expect(pacedPlan(older, "run fast to the right").pace).toBe("brisk");
+    // Focus's own standing rules after the instruction never set the pace.
+    expect(paceFromInstruction("walk\n\nAdvance smoothly between timed drawings, gentle arcs")).toBe("normal");
+  });
+
+  it("projects a walk's stride toward the camera in a front view and keeps a gentle walk small", () => {
+    const plan = parsePlanOutput(walkJson("gentle"), front, "walk", undefined, "front");
+    const prompt = posePrompt({ analysis: front, plan, index: 3, hasNeighbor: false });
+    expect(prompt).toContain("the stride travels toward and away from the camera, never sideways");
+    expect(prompt).toContain("A lifted foot rises only to about mid-shin");
+    expect(prompt).toContain("no flying hair, flaring skirt, high kick or dramatic pose");
+    expect(movementScale({ ...plan, view: "side" })).not.toContain("never sideways");
+    expect(inbetweenPrompt({ analysis: front, plan, fromIndex: 0, toIndex: 1 })).toContain("Pace: slow and gentle");
   });
 });

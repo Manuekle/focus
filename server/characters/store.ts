@@ -5,6 +5,7 @@ import {
   CharacterAssetIdSchema,
   CharacterIdSchema,
   CharacterSchema,
+  NO_BODY,
   characterCover,
   type Character,
   type CharacterPreset,
@@ -124,6 +125,7 @@ export async function listCharacters(
       status: entry.status,
       selectedVersionId: entry.selectedVersionId,
       updatedAt: entry.updatedAt,
+      measures: entry.measures,
       versions: entry.versions.length,
       coverUrl: characterCover(entry),
     }));
@@ -157,6 +159,7 @@ export async function createCharacter(
       versions: [],
       selectedVersionId: null,
       status: "ready",
+      measures: NO_BODY,
       job: null,
       error: null,
       budget: {

@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { AiPaintbrushIcon, Cancel01Icon } from "@hugeicons/core-free-icons";
+import { AiPaintbrushIcon, Cancel01Icon, PanelRightCloseIcon, PanelRightOpenIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Alert, useDismissedNotices } from "../../components/ui/alert";
 import { Button } from "../../components/ui/button";
@@ -37,19 +37,28 @@ import { ChatPanel } from "./chat-panel";
 import { ExportPanel, backgroundAllowed } from "./export-panel";
 import { FlipbookApiError, flipbookApi, isActive, messageFor } from "./flipbook-client";
 import { FramePanel } from "./frame-panel";
-import { FrameStrip, frameThumb } from "./frame-strip";
+import { frameThumb } from "./frame-strip";
+import { FrameWorking, STAGE_LABEL, drawStage, ghostOf } from "./frame-working";
 import { InbetweenPanel } from "./inbetween-panel";
+import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
+import composer from "../_editor/composer.module.css";
 import { SequenceControls } from "./sequence-controls";
 import { AudioPanel } from "./audio-panel";
 import { DuplicatePanel } from "./duplicate-panel";
 import { MotionReferencePanel } from "./motion-reference-panel";
 import { ProgressSteps, ReferencePanel } from "./reference-panel";
-import { SequencePlayer, type PlayerBackground } from "./sequence-player";
+import { SequencePlayer, type PlayerBackground, type PlayerFrame } from "./sequence-player";
 import styles from "./flipbook.module.css";
+import roto from "../rotoscope/rotoscope.module.css";
+import { DockResizer, useDockWidth } from "../rotoscope/dock-resizer";
+import { MediaImage } from "../../components/ui/media-image";
 import { ScrollArea } from "../../components/ui/scroll-area";
 
 type Confirm = { readonly message: string; readonly run: () => Promise<Flipbook> };
 type RequestFailure = { readonly message: string; readonly request: (confirmExtra: boolean) => Promise<Flipbook> };
+
+type DockTab = "motion" | "frame" | "look" | "export" | "advanced";
+const DOCK_LABEL: Readonly<Record<DockTab, string>> = { motion: "Motion", frame: "Frame", look: "Look", export: "Export", advanced: "Advanced" };
 
 export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly flipbook: Flipbook; readonly onChange: (flipbook: Flipbook) => void; readonly onStartOver: () => void }) {
   const { toast } = useToast();
@@ -86,6 +95,15 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
     planApplied.current = true;
     setSettings((current) => ({ ...current, drawingFps: plan.drawingFps, durationSeconds: plan.durationSeconds, motion: plan.motion }));
   }, [plan]);
+  // A new in-between calculation sets the speed: playback takes its cycle length, once per calculation.
+  const inbetweenPlanAt = flipbook.inbetweenPlan?.createdAt;
+  const inbetweenCycle = flipbook.inbetweenPlan?.cycleSeconds;
+  const appliedInbetweenPlan = useRef(inbetweenPlanAt);
+  useEffect(() => {
+    if (!inbetweenPlanAt || appliedInbetweenPlan.current === inbetweenPlanAt) return;
+    appliedInbetweenPlan.current = inbetweenPlanAt;
+    setSettings((current) => ({ ...current, cycleSeconds: inbetweenCycle }));
+  }, [inbetweenPlanAt, inbetweenCycle]);
   const [format, setFormat] = useState<ExportFormat>("mp4");
   const [background, setBackground] = useState<FlipbookBackground>(() => flipbook.look?.background ?? { kind: "color", color: "#ffffff" });
   const [backgroundStamp, setBackgroundStamp] = useState("1");
@@ -140,13 +158,36 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
     }
   }, [onChange]);
 
+  // While drawings are made the selection follows the one being drawn, like Rotoscope's canvas; picking a frame by hand stops it until the next run.
+  const [following, setFollowing] = useState(true);
+  // One inspector beside the preview, as in Rotoscope: the movement first, everything else a tab away.
+  // Its width is dragged and remembered like Rotoscope's; it hides into the canvas and comes back from there.
+  const [dockTab, setDockTab] = useState<DockTab>("motion");
+  const dock = useDockWidth("focus.flipbook.dock.width");
+  const [dockOpen, setDockOpen] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 861px)").matches);
   const select = (index: number) => {
+    setFollowing(false);
     setSelected(index);
     setSeekNonce((value) => value + 1);
+    setDockTab("frame");
+    setDockOpen(true);
   };
+  const wasActive = useRef(active);
+  useEffect(() => {
+    if (active && !wasActive.current) setFollowing(true);
+    wasActive.current = active;
+  }, [active]);
+  const drawingIndex = frames.findIndex((entry) => drawStage(flipbook, entry) === "drawing");
+  useEffect(() => {
+    if (active && following && drawingIndex >= 0) setSelected(drawingIndex);
+  }, [active, following, drawingIndex]);
 
   const selectedIndex = Math.min(selected, Math.max(0, frames.length - 1));
   const frame = frames[selectedIndex];
+  // The movement tab has the chat and the in-betweens; a scene has neither, so it opens on its drawings.
+  const hasMotionTab = !(scene || flipbook.importedFrom) || !(scene || finite);
+  const dockTabs: readonly DockTab[] = hasMotionTab ? ["motion", "frame", "look", "export", "advanced"] : ["frame", "look", "export", "advanced"];
+  const shownTab: DockTab = dockTabs.includes(dockTab) ? dockTab : dockTabs[0];
   // Stable props for the player: new objects only when what they describe changes.
   const alignment = flipbook.alignment;
   const cellWidth = alignment?.cellWidth ?? 512;
@@ -161,9 +202,20 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
     const transform = flipbook.alignment?.transforms[drawing.id];
     return transform ? flipbookUrls.sprite(flipbook.id, drawing.id, transform.key) : null;
   };
-  const frameKey = cycle.map((drawing) => `${drawing.id}:${drawingSrc(drawing) ?? ""}:${drawing.label}:${drawing.position ?? ""}`).join("|");
+  // A key drawing's state as the timeline shows it: drawn, waiting, being drawn or failed.
+  const keyState = (id: string): Pick<PlayerFrame, "status" | "stateLabel" | "approved" | "flagged"> => {
+    const entry = frames.find((candidate) => candidate.id === id);
+    if (!entry) return {};
+    const stage = drawStage(flipbook, entry);
+    const status = stage ? "working" : entry.status === "failed" ? "failed" : entry.status === "ready" && frameThumb(flipbook, entry) ? "ready" : "pending";
+    return { status, stateLabel: stage ? STAGE_LABEL[stage] : status === "ready" ? undefined : status === "failed" ? "failed" : "not drawn", approved: entry.approved, flagged: frameNeedsAttention(entry) };
+  };
+  const frameKey = cycle.map((drawing) => {
+    const state = drawing.inbetween ? null : keyState(drawing.id);
+    return `${drawing.id}:${drawingSrc(drawing) ?? ""}:${drawing.label}:${drawing.position ?? ""}:${state ? `${state.status}${state.stateLabel}${state.approved}${state.flagged}` : ""}`;
+  }).join("|");
   const playerFrames = useMemo(
-    () => cycle.map((drawing) => ({ id: drawing.id, label: drawing.label, phase: drawing.phase, inbetween: drawing.inbetween, position: drawing.position, src: drawingSrc(drawing) })),
+    () => cycle.map((drawing): PlayerFrame => ({ id: drawing.id, label: drawing.label, phase: drawing.phase, inbetween: drawing.inbetween, position: drawing.position, src: drawingSrc(drawing), ...(drawing.inbetween ? null : keyState(drawing.id)) })),
     // frameKey captures every value the list depends on.
     // eslint-disable-next-line react-hooks/exhaustive-deps
     [frameKey],
@@ -216,6 +268,16 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
   };
 
   const applyPlayback = (patch: PlaybackPatch) => setSettings((current) => applyPlaybackPatch(current, patch));
+
+  // A key drawing's picture on the timeline: the drawing itself, or the work in progress over its ghost.
+  const clipThumb = (drawing: PlayerFrame) => {
+    const entry = frames.find((candidate) => candidate.id === drawing.id);
+    if (!entry) return null;
+    const thumb = frameThumb(flipbook, entry);
+    const stage = drawStage(flipbook, entry);
+    if (stage) return <FrameWorking flipbook={flipbook} frame={entry} stage={stage} ghost={ghostOf(flipbook, thumb ? `${thumb}&thumb=1` : null)} />;
+    return thumb ? <MediaImage src={`${thumb}&thumb=1`} alt="" draggable={false} loading="lazy" decoding="async" /> : null;
+  };
 
   const onFrameAction = (action: FrameAction) => {
     if (!frame) return;
@@ -349,6 +411,7 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
         <div className={styles.progress}>
           <ProgressSteps flipbook={flipbook} />
           {active && flipbook.detail ? <p className={styles.hint} role="status">{flipbook.detail}</p> : null}
+          {!following && drawingIndex >= 0 ? <Button size="xs" variant="outline" className="w-fit" onClick={() => setFollowing(true)}>Follow the drawing</Button> : null}
         </div>
       ) : null}
 
@@ -393,116 +456,169 @@ export function FlipbookEditor({ flipbook, onChange, onStartOver }: { readonly f
         </Alert>
       ) : null}
 
-      <div className={styles.grid}>
-        <ScrollArea className={styles.columnSide} viewportClassName={styles.columnViewport} contentClassName={styles.columnContent}>
-          <ReferencePanel
-            flipbook={flipbook}
-            busy={editingLocked}
-            onReference={(kind) => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "reference", kind, confirmExtra }))}
-            onUploadReferences={(files, asAnchor) => void uploadReferences(files, asAnchor)}
-            onRemoveReference={(version) => void run(() => flipbookApi.removeReference(flipbook.id, version))}
-          />
-          {flipbook.plan && flipbook.reference && missing > 0 && !active ? (
-            <div className={styles.cta}>
-              <p className="text-xs text-muted-foreground">{missing === total ? `The reference is ready. Next: ${total} drawings, one per ${scene ? "beat" : "pose"}.` : `${missing} of ${total} frames have no drawing.`}</p>
-              <Button className="w-full" variant="ai" disabled={editingLocked} onClick={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "generate", confirmExtra }))}>
-                {missing === total ? `Generate ${total} frames` : `Draw ${missing} missing ${missing === 1 ? "frame" : "frames"}`}
-              </Button>
+      <SequencePlayer
+        key={`${flipbook.id}:${finite}:${sequenceFps}:${sequenceSeconds}`}
+        frames={playerFrames}
+        cell={cell}
+        settings={settings}
+        onSettingsChange={setSettings}
+        background={playerBackground}
+        selectedIndex={selectedIndex}
+        seekNonce={seekNonce}
+        strideMeasured={flipbook.alignment?.strideMeasured ?? false}
+        travel={!finite && spec.travels ? { verb: spec.action === "run" ? "Run" : "Walk" } : null}
+        facing={flipbook.plan?.direction ?? "right"}
+        onSelect={setSelected}
+        onPick={select}
+        onMove={scene || finite || editingLocked ? undefined : move}
+        clipThumb={clipThumb}
+        inbetweenCount={inbetweenCount}
+        fixedPace={scene || finite}
+        finite={finite}
+        audio={flipbook.audio ?? undefined}
+        audioUrl={flipbook.audio ? `/api/flipbooks/${flipbook.id}/audio?v=${flipbook.audio.version}` : undefined}
+        layout={({ stage, timeline, controls }) => (
+          <div className={styles.workspace}>
+            {/* Rotoscope's arrangement: the preview fills the room, the inspector docks on the right, resizable and hideable. */}
+            <div className={styles.canvasRow} data-dock={dockOpen} style={dock.style}>
+              <div className={styles.canvasCol}>
+                {flipbook.plan && flipbook.reference && missing > 0 && !active ? (
+                  <div className={styles.canvasCta}>
+                    <p className="text-xs text-muted-foreground">{missing === total ? `The reference is ready. Next: ${total} drawings, one per ${scene ? "beat" : "pose"}.` : `${missing} of ${total} frames have no drawing.`}</p>
+                    <Button size="sm" variant="ai" disabled={editingLocked} onClick={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "generate", confirmExtra }))}>
+                      {missing === total ? `Generate ${total} frames` : `Draw ${missing} missing ${missing === 1 ? "frame" : "frames"}`}
+                    </Button>
+                  </div>
+                ) : null}
+                {stage}
+                {/* The inspector closes from its own header; the canvas only offers to bring it back. */}
+                {dockOpen ? null : (
+                  <Button size="icon-sm" variant="outline" className={styles.dockShow} aria-label="Show inspector" onClick={() => setDockOpen(true)}>
+                    <HugeiconsIcon icon={PanelRightOpenIcon} size={15} strokeWidth={1.75} />
+                  </Button>
+                )}
+              </div>
+
+              {dockOpen ? <DockResizer dock={dock} /> : null}
+              <aside className={roto.dock} data-open={dockOpen} aria-label="Animation inspector">
+                <div className={roto.dockInner}>
+                  <div className={roto.dockHead}>
+                    <SlidingTabs
+                      className={`${composer.tabs} ${roto.dockTabs} ${styles.dockTabs}`}
+                      tabs={dockTabs.map((id) => ({ id, label: DOCK_LABEL[id] }))}
+                      value={shownTab}
+                      onValueChange={(id) => setDockTab(id as DockTab)}
+                    />
+                    <Button size="icon-xs" variant="ghost" aria-label="Hide inspector" onClick={() => setDockOpen(false)}>
+                      <HugeiconsIcon icon={PanelRightCloseIcon} size={15} strokeWidth={1.75} />
+                    </Button>
+                  </div>
+                  <ScrollArea className={roto.dockScroll} viewportClassName={roto.dockViewport} contentClassName={roto.dockContent}>
+                    {/* Keyed by what it shows, so a new tab or frame eases in instead of replacing the old one on the spot. */}
+                    <div key={shownTab === "frame" ? `frame-${frame?.id ?? "none"}` : shownTab} className={styles.dockSwap}>
+                  {shownTab === "motion" ? (
+                    <>
+                    {scene || flipbook.importedFrom ? null : <ChatPanel
+                      flipbook={flipbook}
+                      settings={settings}
+                      busy={editingLocked}
+                      onPlayback={applyPlayback}
+                      onApplyPoses={(changes, confirmExtra, proposalId) => run((extra) => flipbookApi.applyChat(flipbook.id, { ...(proposalId ? { proposalId } : { changes: changes.map((change) => ({ frame: change.frame as FrameId, description: change.description })) }), confirmExtra: extra }), confirmExtra)}
+                    />}
+                    {scene || finite ? null : <InbetweenPanel
+                      flipbook={flipbook}
+                      drawingFps={flipbook.plan?.drawingFps ?? settings.drawingFps}
+                      cycleSeconds={settings.cycleSeconds}
+                      keysReady={notReady.length === 0}
+                      disabled={editingLocked}
+                      onPlan={() => void run(() => flipbookApi.action(flipbook.id, { action: "plan_inbetweens" }))}
+                      onDrawPlanned={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "inbetweens", planned: true, confirmExtra }))}
+                      onDraw={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "inbetweens", drawingFps: flipbook.plan?.drawingFps ?? settings.drawingFps, confirmExtra }))}
+                      onCheckMotion={() => void run(() => flipbookApi.action(flipbook.id, { action: "check_motion" }))}
+                      onFixMotion={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "fix_motion", confirmExtra }))}
+                    />}
+                    </>
+                  ) : shownTab === "frame" ? (
+                    <>
+                    {frame ? (
+                      <FramePanel
+                        key={frame.id}
+                        flipbook={flipbook}
+                        frame={frame}
+                        index={selectedIndex}
+                        count={frames.length}
+                        busy={editingLocked}
+                        onAction={onFrameAction}
+                        onReplace={(file) => void run(() => flipbookApi.replaceFrame(flipbook.id, frame.id, file))}
+                        onCorrect={(note) => void run((confirmExtra) => flipbookApi.correctFrame(flipbook.id, frame.id, { ...note, confirmExtra }))}
+                        onMove={(delta) => move(selectedIndex, selectedIndex + delta)}
+                        canMove={!scene && !finite}
+                      />
+                    ) : null}
+                      {frame ? null : <p className={styles.hint}>Select a drawing on the timeline to redraw, improve or replace it.</p>}
+                    </>
+                  ) : shownTab === "look" ? (
+                    <>
+                    <BackgroundPanel
+                      flipbook={flipbook}
+                      background={background}
+                      onBackgroundChange={setBackground}
+                      busy={editingLocked}
+                      generating={generatingBackground}
+                      onGenerate={generateBackground}
+                      creatingScene={creatingScene}
+                      onCreateScene={createScene}
+                      stamp={backgroundStamp}
+                      onUploadReference={(file) => void run(() => flipbookApi.uploadBackgroundReference(flipbook.id, file))}
+                      onRemoveReference={() => void run(() => flipbookApi.removeBackgroundReference(flipbook.id))}
+                      onUploadBackground={(file) => void run(async () => {
+                        const next = await flipbookApi.uploadBackground(flipbook.id, file);
+                        setBackground({ kind: "custom" });
+                        setBackgroundStamp(String(Date.now()));
+                        return next;
+                      })}
+                    />
+                    <AudioPanel key={flipbook.audio?.version ?? "no-audio"} flipbook={flipbook} disabled={editingLocked} onUpload={(file) => void run(() => flipbookApi.uploadAudio(flipbook.id, file))} onSave={(settings) => void run(() => flipbookApi.audioSettings(flipbook.id, settings))} onRemove={() => void run(() => flipbookApi.removeAudio(flipbook.id))} />
+                    </>
+                  ) : shownTab === "export" ? (
+                  <ExportPanel
+                    flipbook={flipbook}
+                    settings={settings}
+                    onSettingsChange={setSettings}
+                    format={format}
+                    onFormatChange={setFormat}
+                    background={background}
+                    exportable={exportable}
+                    exporting={exporting}
+                    onExport={() => void exportNow()}
+                    sending={sending}
+                    onSendToEditor={() => void sendToEditor()}
+                  />
+                  ) : (
+                    <>
+                      <p className={styles.hint}>Manual controls. Nothing here asks Muse Spark to decide for you.</p>
+                    {controls}
+                    <ReferencePanel
+                      flipbook={flipbook}
+                      busy={editingLocked}
+                      onReference={(kind) => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "reference", kind, confirmExtra }))}
+                      onUploadReferences={(files, asAnchor) => void uploadReferences(files, asAnchor)}
+                      onRemoveReference={(version) => void run(() => flipbookApi.removeReference(flipbook.id, version))}
+                    />
+                    {!scene && !flipbook.importedFrom ? <SequenceControls key={JSON.stringify(flipbook.sequence)} flipbook={flipbook} disabled={editingLocked} onPlan={(settings) => void run(() => flipbookApi.action(flipbook.id, { action: "sequence", settings }))} onRestore={(id) => void run(() => flipbookApi.action(flipbook.id, { action: "revision", id }))} /> : null}
+                    {!scene && !flipbook.importedFrom ? <MotionReferencePanel key={flipbook.motionDraft?.version ?? flipbook.motionReference?.version ?? "no-motion"} flipbook={flipbook} disabled={locked || (!prepared && !videoMotion)} onUpload={(file) => void run(() => flipbookApi.uploadMotion(flipbook.id, file))} onAttach={(input) => void run(() => flipbookApi.attachMotion(flipbook.id, input))} /> : null}
+                    {!scene && !flipbook.importedFrom ? <DuplicatePanel flipbook={flipbook} disabled={editingLocked} onCreated={(copy) => router.push(`/flipbook?f=${copy.id}`)} /> : null}
+                    </>
+                  )}
+                    </div>
+                  </ScrollArea>
+                </div>
+              </aside>
             </div>
-          ) : null}
-          <BackgroundPanel
-            flipbook={flipbook}
-            background={background}
-            onBackgroundChange={setBackground}
-            busy={editingLocked}
-            generating={generatingBackground}
-            onGenerate={generateBackground}
-            creatingScene={creatingScene}
-            onCreateScene={createScene}
-            stamp={backgroundStamp}
-            onUploadReference={(file) => void run(() => flipbookApi.uploadBackgroundReference(flipbook.id, file))}
-            onRemoveReference={() => void run(() => flipbookApi.removeBackgroundReference(flipbook.id))}
-            onUploadBackground={(file) => void run(async () => {
-              const next = await flipbookApi.uploadBackground(flipbook.id, file);
-              setBackground({ kind: "custom" });
-              setBackgroundStamp(String(Date.now()));
-              return next;
-            })}
-          />
-        </ScrollArea>
-
-        <ScrollArea className={styles.columnMain} viewportClassName={styles.columnViewport} contentClassName={styles.columnContent}>
-          <SequencePlayer
-            key={`${flipbook.id}:${finite}:${sequenceFps}:${sequenceSeconds}`}
-            frames={playerFrames}
-            cell={cell}
-            settings={settings}
-            onSettingsChange={setSettings}
-            background={playerBackground}
-            selectedIndex={selectedIndex}
-            seekNonce={seekNonce}
-            strideMeasured={flipbook.alignment?.strideMeasured ?? false}
-            travel={!finite && spec.travels ? { verb: spec.action === "run" ? "Run" : "Walk" } : null}
-            facing={flipbook.plan?.direction ?? "right"}
-            onSelect={setSelected}
-            inbetweenCount={inbetweenCount}
-            fixedPace={scene || finite}
-            finite={finite}
-            audio={flipbook.audio ?? undefined}
-            audioUrl={flipbook.audio ? `/api/flipbooks/${flipbook.id}/audio?v=${flipbook.audio.version}` : undefined}
-            strip={<FrameStrip flipbook={flipbook} frames={frames} selected={selectedIndex} onSelect={select} onMove={move} disabled={editingLocked} scene={scene || finite} />}
-          />
-          {scene || flipbook.importedFrom ? null : <ChatPanel
-            flipbook={flipbook}
-            settings={settings}
-            busy={editingLocked}
-            onPlayback={applyPlayback}
-            onApplyPoses={(changes, confirmExtra, proposalId) => run((extra) => flipbookApi.applyChat(flipbook.id, { ...(proposalId ? { proposalId } : { changes: changes.map((change) => ({ frame: change.frame as FrameId, description: change.description })) }), confirmExtra: extra }), confirmExtra)}
-          />}
-        </ScrollArea>
-
-        <ScrollArea className={styles.columnSide} viewportClassName={styles.columnViewport} contentClassName={styles.columnContent}>
-          {frame ? (
-            <FramePanel
-              key={frame.id}
-              flipbook={flipbook}
-              frame={frame}
-              index={selectedIndex}
-              count={frames.length}
-              busy={editingLocked}
-              onAction={onFrameAction}
-              onReplace={(file) => void run(() => flipbookApi.replaceFrame(flipbook.id, frame.id, file))}
-              onMove={(delta) => move(selectedIndex, selectedIndex + delta)}
-              canMove={!scene && !finite}
-            />
-          ) : null}
-          {scene || finite ? null : <InbetweenPanel
-            flipbook={flipbook}
-            drawingFps={flipbook.plan?.drawingFps ?? settings.drawingFps}
-            cycleSeconds={settings.cycleSeconds}
-            keysReady={notReady.length === 0}
-            disabled={editingLocked}
-            onDraw={() => void run((confirmExtra) => flipbookApi.action(flipbook.id, { action: "inbetweens", drawingFps: flipbook.plan?.drawingFps ?? settings.drawingFps, confirmExtra }))}
-          />}
-          {!scene && !flipbook.importedFrom ? <SequenceControls key={JSON.stringify(flipbook.sequence)} flipbook={flipbook} disabled={editingLocked} onPlan={(settings) => void run(() => flipbookApi.action(flipbook.id, { action: "sequence", settings }))} onRestore={(id) => void run(() => flipbookApi.action(flipbook.id, { action: "revision", id }))} /> : null}
-          <AudioPanel key={flipbook.audio?.version ?? "no-audio"} flipbook={flipbook} disabled={editingLocked} onUpload={(file) => void run(() => flipbookApi.uploadAudio(flipbook.id, file))} onSave={(settings) => void run(() => flipbookApi.audioSettings(flipbook.id, settings))} onRemove={() => void run(() => flipbookApi.removeAudio(flipbook.id))} />
-          {!scene && !flipbook.importedFrom ? <DuplicatePanel flipbook={flipbook} disabled={editingLocked} onCreated={(copy) => router.push(`/flipbook?f=${copy.id}`)} /> : null}
-          {!scene && !flipbook.importedFrom ? <MotionReferencePanel key={flipbook.motionDraft?.version ?? flipbook.motionReference?.version ?? "no-motion"} flipbook={flipbook} disabled={locked || (!prepared && !videoMotion)} onUpload={(file) => void run(() => flipbookApi.uploadMotion(flipbook.id, file))} onAttach={(input) => void run(() => flipbookApi.attachMotion(flipbook.id, input))} /> : null}
-          <ExportPanel
-            flipbook={flipbook}
-            settings={settings}
-            onSettingsChange={setSettings}
-            format={format}
-            onFormatChange={setFormat}
-            background={background}
-            exportable={exportable}
-            exporting={exporting}
-            onExport={() => void exportNow()}
-            sending={sending}
-            onSendToEditor={() => void sendToEditor()}
-          />
-        </ScrollArea>
-      </div>
+            {timeline}
+          </div>
+        )}
+      />
 
       <MediaLightbox
         items={Array.from({ length: finite ? Math.ceil(total / 16) : 1 }, (_, page) => ({ kind: "image" as const, src: `${flipbookUrls.contactSheet(flipbook.id, flipbook.updatedAt)}&page=${page}`, alt: finite ? `Drawings ${page * 16 + 1} to ${Math.min(total, page * 16 + 16)}` : "Contact sheet: every drawing in playback order", caption: finite ? `Contact sheet · ${page + 1} of ${Math.ceil(total / 16)}` : "Contact sheet · every drawing in playback order", transparent: true }))}

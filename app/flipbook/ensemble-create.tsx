@@ -1,8 +1,9 @@
 "use client";
 
+import { MediaThumb } from "../../components/ui/media-image";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
-import { AiPaintbrushIcon, AiSearch02Icon, UserGroupIcon } from "@hugeicons/core-free-icons";
+import { AiPaintbrushIcon, AiSearch02Icon, UserGroupIcon, UserIcon } from "@hugeicons/core-free-icons";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
@@ -15,6 +16,7 @@ import { VIEW_OPTIONS, type ViewPreference } from "../../shared/animation-view";
 import type { CharacterSource, CharacterSummary } from "../../shared/characters";
 import { ENSEMBLE_FPS, MAX_CAST, MAX_ENSEMBLE_SECONDS, MIN_CAST, MIN_ENSEMBLE_SECONDS, ensembleDrawings, type CreateEnsembleRequest } from "../../shared/flipbook";
 import { useSession } from "../_auth/session-client";
+import { CastStage } from "./cast-stage";
 import { characterApi } from "../characters/character-client";
 import view from "../_editor/editor-view.module.css";
 import composer from "../_editor/composer.module.css";
@@ -87,19 +89,22 @@ export function EnsembleCreate({
   return (
     <div className={view.editor} data-variant="page">
       <h1 id="flipbook-title" className="sr-only">Animate characters together</h1>
-      <section aria-label="The scene" className={view.preview}>
+      <section aria-label="The scene" className={cn(view.preview, styles.scene)} data-empty={picked.length ? undefined : ""}>
         {picked.length ? (
-          <div className={styles.castLineup}>
-            {picked.map((entry) => (
-              <figure key={entry.id}>
-                {/* eslint-disable-next-line @next/next/no-img-element -- the character's cover, from the media route */}
-                <img src={entry.coverUrl} alt={entry.name} />
-                <figcaption>{entry.name}</figcaption>
-              </figure>
-            ))}
-          </div>
+          <CastStage cast={picked} />
         ) : (
-          <p className={styles.castEmpty}>{signedIn ? `Pick ${MIN_CAST} to ${MAX_CAST} characters to animate together.` : "Sign in to animate your characters together."}</p>
+          <div className={styles.castEmpty}>
+            {/* The empty stage: one slot per character the scene can hold. */}
+            <div className={styles.castSlots} aria-hidden="true">
+              {Array.from({ length: MAX_CAST }, (_, index) => (
+                <span key={index} className={styles.castSlot} data-optional={index >= MIN_CAST || undefined}>
+                  <HugeiconsIcon icon={UserIcon} size={22} strokeWidth={1.5} />
+                </span>
+              ))}
+            </div>
+            <p className={styles.castEmptyTitle}>{signedIn ? "Build your scene" : "Animate your characters together"}</p>
+            <p className={styles.castEmptyText}>{signedIn ? `Pick ${MIN_CAST} to ${MAX_CAST} characters on the right, then say what happens between them.` : "Sign in to put your characters in one scene."}</p>
+          </div>
         )}
       </section>
 
@@ -118,8 +123,7 @@ export function EnsembleCreate({
                   return (
                     <li key={entry.id}>
                       <button type="button" className={cn(styles.pickerItem, styles.castItem)} aria-pressed={position >= 0} disabled={full && position < 0} onClick={() => toggle(entry.id)}>
-                        {/* eslint-disable-next-line @next/next/no-img-element -- the character's cover, from the media route */}
-                        <img src={entry.coverUrl} alt="" className={styles.pickerCover} />
+                        <MediaThumb src={entry.coverUrl} className={styles.pickerCover} />
                         <span className="min-w-0">
                           <span className="block truncate text-xs text-foreground">{entry.name}</span>
                           <span className="block text-[11px] text-muted-foreground">{position >= 0 ? "In the scene" : `${entry.versions} ${entry.versions === 1 ? "version" : "versions"}`}</span>

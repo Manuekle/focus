@@ -77,15 +77,6 @@ export function Workspace() {
     transition: { duration: reducedMotion ? 0 : 0.6, ease: EASE_OUT },
   };
 
-  // The sticky header only takes a surface once the page moves under it.
-  const [scrolled, setScrolled] = useState(false);
-  useEffect(() => {
-    const update = () => setScrolled(window.scrollY > 8);
-    update();
-    window.addEventListener("scroll", update, { passive: true });
-    return () => window.removeEventListener("scroll", update);
-  }, []);
-
   useEffect(() => {
     const element = contentRef.current;
     if (!element) return;
@@ -156,7 +147,7 @@ export function Workspace() {
   return (
     <div className={styles.workspace}>
       <a className={styles.skipLink} href="#home-content">Skip to content</a>
-      <motion.header data-home-enter="" data-scrolled={scrolled} {...entrance(0, 6)} className={styles.headerBar}>
+      <header className={styles.headerBar}>
         <div className={styles.header}>
           <Link href="/" className={styles.brand} aria-label="Focus — Home">
             <Image src="/brand/focus-cat.webp" alt="" width={38} height={38} />
@@ -170,7 +161,7 @@ export function Workspace() {
             <AccountButton session={session} next={hasFlipbook ? "/flipbook" : "/editor"} />
           </nav>
         </div>
-      </motion.header>
+      </header>
 
         <main id="home-content" tabIndex={-1} className={styles.home}>
           <section className={styles.hero} aria-labelledby="home-title">

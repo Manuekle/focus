@@ -1,0 +1,70 @@
+{
+  "modes": [
+    "performance",
+    "balanced"
+  ],
+  "device": "cpu",
+  "sets": {
+    "wave-sheet": {
+      "performance": {
+        "images": 1,
+        "found": 1.0,
+        "body": 1.0,
+        "flip": 0.012,
+        "sides": 1.0,
+        "ms": 446
+      },
+      "balanced": {
+        "images": 1,
+        "found": 1.0,
+        "body": 1.0,
+        "flip": 0.023,
+        "sides": 1.0,
+        "ms": 329
+      },
+      "agreement": 0.022
+    },
+    "wave-attempts": {
+      "performance": {
+        "images": 3,
+        "found": 1.0,
+        "body": 1.0,
+        "flip": 0.016,
+        "sides": 1.0,
+        "ms": 411
+      },
+      "balanced": {
+        "images": 3,
+        "found": 1.0,
+        "body": 1.0,
+        "flip": 0.025,
+        "sides": 1.0,
+        "ms": 328
+      },
+      "agreement": 0.037
+    }
+  },
+  "sequences": {
+    "wave-source": {
+      "performance": {
+        "images": 9,
+        "found": 1.0,
+        "body": 1.0,
+        "flip": 0.017,
+        "sides": 1.0,
+        "ms": 411,
+        "jitter": 0.0348
+      },
+      "balanced": {
+        "images": 9,
+        "found": 1.0,
+        "body": 1.0,
+        "flip": 0.144,
+        "sides": 0.778,
+        "ms": 349,
+        "jitter": 0.0418
+      },
+      "agreement": 0.029
+    }
+  }
+}

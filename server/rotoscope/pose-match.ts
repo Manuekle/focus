@@ -2,8 +2,10 @@ import type { Check } from "./run-state";
 
 // Check 1: does the drawing hold the source frame's pose? Compared as bone
 // directions, not pixel positions, so the character's own proportions don't
-// count against it. Bones the source doesn't show clearly (low confidence, or
-// foreshortened toward the camera) are skipped: DWPose can't measure them.
+// count against it. A bone too short on screen for its direction to rise above
+// the estimator's keypoint noise (foreshortened toward the camera) is skipped,
+// and a frame where too few of the clip's moving bones could be measured gets
+// no verdict.
 
 export type Pose = { readonly keypoints: readonly (readonly [number | null, number | null])[]; readonly scores: readonly number[] };
 
@@ -19,8 +21,21 @@ const BONES = [
   { name: "left shin", from: 13, to: 15 },
 ] as const;
 
-export type PoseThresholds = { readonly maxBoneDegrees: number; readonly meanDegrees: number; readonly minConfidence: number; readonly minBoneShare: number };
-export const DEFAULT_POSE_THRESHOLDS: PoseThresholds = { maxBoneDegrees: 25, meanDegrees: 12, minConfidence: 0.3, minBoneShare: 0.45 };
+export type PoseThresholds = {
+  readonly maxBoneDegrees: number;
+  readonly meanDegrees: number;
+  /** In the estimator's own score units (RTMW SimCC scores run 0–10, not probabilities): below it a point is not reported at all. */
+  readonly minConfidence: number;
+  /**
+   * The estimator's keypoint noise in torso lengths: RTMW-x moves a joint 0.014–0.019 torso lengths between an
+   * image and its mirror (docs/sam-character-mapping.md, pose benchmark). A bone's direction is only as sure as
+   * its length allows against it (boneUncertainty).
+   */
+  readonly keypointNoise: number;
+  /** The share of the clip's moving bones that must be measurable for a verdict; fewer: inconclusive. */
+  readonly minCoverage: number;
+};
+export const DEFAULT_POSE_THRESHOLDS: PoseThresholds = { maxBoneDegrees: 25, meanDegrees: 12, minConfidence: 0.3, keypointNoise: 0.02, minCoverage: 0.5 };
 
 type Point = readonly [number, number];
 
@@ -39,6 +54,14 @@ function torso(pose: Pose, minConfidence: number): number | null {
   return shoulders && hips ? Math.hypot(shoulders[0] - hips[0], shoulders[1] - hips[1]) || null : null;
 }
 
+/**
+ * How uncertain a bone's screen direction is, in degrees (two sigma), when each of its two joints is
+ * off by `noise` pixels: a short (foreshortened) bone's direction is noise, a long one's is sure.
+ */
+export function boneUncertainty(length: number, noise: number): number {
+  return length <= 0 ? 180 : (2 * Math.atan((Math.SQRT2 * noise) / length) * 180) / Math.PI;
+}
+
 /** Screen direction in words, for feedback the generator can act on. */
 export function direction(dx: number, dy: number): string {
   const names = ["right", "down-right", "down", "down-left", "left", "up-left", "up", "up-right"];
@@ -51,61 +74,117 @@ export function angleBetween(a: Point, b: Point): number {
   return diff > 180 ? 360 - diff : diff;
 }
 
-export type BoneResult = { readonly name: string; readonly degrees: number; readonly source: string; readonly drawn: string };
+export type BoneResult = {
+  readonly name: string;
+  readonly degrees: number;
+  /** Two-sigma direction uncertainty of the source and drawn bones together: errors within it are noise. */
+  readonly uncertainty: number;
+  readonly source: string;
+  readonly drawn: string;
+};
 
-const average = (bones: readonly BoneResult[]) => (bones.length ? bones.reduce((sum, bone) => sum + bone.degrees, 0) / bones.length : 0);
-const MIRROR_BONE_SHARE = 0.2;
+/** The angle beyond what the keypoints' noise can explain. */
+const excess = (bone: BoneResult) => Math.max(0, bone.degrees - bone.uncertainty);
+const average = (values: readonly number[]) => (values.length ? values.reduce((sum, value) => sum + value, 0) / values.length : 0);
 const MIRROR: Record<number, number> = { 5: 6, 6: 5, 7: 8, 8: 7, 9: 10, 10: 9, 11: 12, 12: 11, 13: 14, 14: 13, 15: 16, 16: 15 };
 
-function measure(source: Pose, drawn: Pose, sourceTorso: number, thresholds: PoseThresholds, mirror: boolean, minBoneShare = thresholds.minBoneShare): { bones: BoneResult[]; missing: string[] } {
-  const { minConfidence } = thresholds;
+/**
+ * Bones whose direction changes across the clip by more than `limit` degrees: the motion the clip is
+ * about. A verdict that measured none of them says nothing about the frame.
+ */
+export function movingBones(clip: readonly Pose[], thresholds: PoseThresholds = DEFAULT_POSE_THRESHOLDS): string[] {
+  const { minConfidence, keypointNoise, maxBoneDegrees } = thresholds;
+  return BONES.filter((bone) => {
+    const vectors = clip.flatMap((pose) => {
+      const [a, b, size] = [point(pose, bone.from, minConfidence), point(pose, bone.to, minConfidence), torso(pose, minConfidence)];
+      if (!a || !b || !size) return [];
+      const v: Point = [b[0] - a[0], b[1] - a[1]];
+      return boneUncertainty(Math.hypot(...v), keypointNoise * size) <= maxBoneDegrees ? [v] : [];
+    });
+    return vectors.some((v, i) => vectors.slice(i + 1).some((w) => angleBetween(v, w) > maxBoneDegrees));
+  }).map((bone) => bone.name);
+}
+
+/** `limit`: the most direction uncertainty a source bone may have to be measured. */
+function measure(source: Pose, drawn: Pose, thresholds: PoseThresholds, mirror: boolean, limit: number, hidden: ReadonlySet<number>): { bones: BoneResult[]; missing: string[]; unmeasured: string[] } {
+  const { minConfidence, keypointNoise } = thresholds;
+  const [sourceTorso, drawnTorso] = [torso(source, minConfidence) ?? 0, torso(drawn, minConfidence) ?? 0];
   const bones: BoneResult[] = [];
   const missing: string[] = [];
+  const unmeasured: string[] = [];
   for (const bone of BONES) {
     const a = point(source, bone.from, minConfidence);
     const b = point(source, bone.to, minConfidence);
     if (!a || !b) continue;
+    // A joint the source doesn't confirm (occluded, inferred) is never a measurement.
+    if (hidden.has(bone.from) || hidden.has(bone.to)) { unmeasured.push(bone.name); continue; }
     const vs: Point = [b[0] - a[0], b[1] - a[1]];
-    if (Math.hypot(...vs) < minBoneShare * sourceTorso) continue;
+    const sourceDoubt = boneUncertainty(Math.hypot(...vs), keypointNoise * sourceTorso);
+    if (sourceDoubt > limit) { unmeasured.push(bone.name); continue; }
     const c = point(drawn, mirror ? MIRROR[bone.from] : bone.from, minConfidence);
     const d = point(drawn, mirror ? MIRROR[bone.to] : bone.to, minConfidence);
     if (!c || !d) { missing.push(bone.name); continue; }
     const vd: Point = [(d[0] - c[0]) * (mirror ? -1 : 1), d[1] - c[1]];
-    bones.push({ name: bone.name, degrees: Math.round(angleBetween(vs, vd)), source: direction(...vs), drawn: direction(...vd) });
+    // A drawn bone seen end-on has no direction to speak of either: its doubt is capped so it can't excuse everything.
+    const drawnDoubt = Math.min(limit, boneUncertainty(Math.hypot(...vd), keypointNoise * drawnTorso));
+    bones.push({ name: bone.name, degrees: Math.round(angleBetween(vs, vd)), uncertainty: Math.round(Math.hypot(sourceDoubt, drawnDoubt)), source: direction(...vs), drawn: direction(...vd) });
   }
-  return { bones, missing };
+  return { bones, missing, unmeasured };
 }
 
-export function comparePoses(source: Pose, drawn: Pose, thresholds: PoseThresholds = DEFAULT_POSE_THRESHOLDS): Check & { readonly bones: readonly BoneResult[]; readonly missing: readonly string[] } {
+export type PoseCheck = Check & {
+  readonly bones: readonly BoneResult[];
+  readonly missing: readonly string[];
+  /** Bones the source shows too short to measure a direction on. */
+  readonly unmeasured: readonly string[];
+  /** Moving bones measured / moving bones in the frame: the share of the clip's motion this verdict saw. */
+  readonly coverage: { readonly measured: number; readonly of: number };
+};
+
+/**
+ * Check: does the drawing hold the source frame's pose? Bone directions, so the character's own
+ * proportions don't count against it. Each bone's tolerance widens by how uncertain its direction is
+ * (boneUncertainty); a bone too short to have a direction is not measured. When `clip` is given, the
+ * bones that move in it must be measured for a verdict: legs that never move (and may be hidden under
+ * a skirt, where the estimator still places them) can't pass a frame whose arms were never looked at.
+ * `hidden`: source keypoints not confirmed as seen (joints.ts unconfirmed), never measured.
+ */
+export function comparePoses(source: Pose, drawn: Pose, thresholds: PoseThresholds = DEFAULT_POSE_THRESHOLDS, clip?: readonly Pose[], hidden: ReadonlySet<number> = new Set()): PoseCheck {
   const { minConfidence } = thresholds;
-  const sourceTorso = torso(source, minConfidence);
-  if (!sourceTorso) return { name: "pose", passed: true, detail: "source torso not visible; pose not measurable", bones: [], missing: [] };
+  const none = { bones: [], missing: [], unmeasured: [], coverage: { measured: 0, of: 0 } };
+  if (!torso(source, minConfidence)) return { name: "pose", passed: false, status: "inconclusive", detail: "source torso not visible; pose not measurable", ...none };
   if (!torso(drawn, minConfidence)) {
-    return { name: "pose", passed: false, detail: "no full body found in the drawing", feedback: "Draw the whole character, head to feet, facing the camera as in the pose reference.", bones: [], missing: [] };
+    return { name: "pose", passed: false, status: "fail", detail: "no full body found in the drawing", feedback: "Draw the whole character, head to feet, facing the camera as in the pose reference.", ...none };
   }
   // Facing the camera, the subject's right side is on the viewer's left.
   const [sl, sr] = [point(source, 5, minConfidence), point(source, 6, minConfidence)];
   const facing = !sl || !sr || sr[0] < sl[0];
   const screenSide = (name: string) => (name.startsWith("right") === facing ? "on the LEFT of the image" : "on the RIGHT of the image");
-  const { bones, missing } = measure(source, drawn, sourceTorso, thresholds, false);
-  const mean = average(bones);
-  // A mirrored drawing (left and right swapped) matches the source once flipped back. Which side a
-  // limb is on survives foreshortening, so this compares nearly every bone, not only the clear ones.
-  const sideBones = measure(source, drawn, sourceTorso, thresholds, false, MIRROR_BONE_SHARE).bones;
-  const sides = average(sideBones);
-  const flipped = average(measure(source, drawn, sourceTorso, thresholds, true, MIRROR_BONE_SHARE).bones);
+  const { bones, missing, unmeasured } = measure(source, drawn, thresholds, false, thresholds.maxBoneDegrees, hidden);
+  const mean = average(bones.map(excess));
+  // A mirrored drawing (left and right swapped) matches the source once flipped back. Which side a limb is on
+  // survives foreshortening, so this looks at bones twice as uncertain as the measured ones.
+  const sideBones = measure(source, drawn, thresholds, false, thresholds.maxBoneDegrees * 2, hidden).bones;
+  const sides = average(sideBones.map(excess));
+  const flipped = average(measure(source, drawn, thresholds, true, thresholds.maxBoneDegrees * 2, hidden).bones.map(excess));
   const mirrored = sides > thresholds.meanDegrees && flipped <= thresholds.meanDegrees * 1.5 && flipped < sides / 2;
-  const off = bones.filter((bone) => bone.degrees > thresholds.maxBoneDegrees);
-  const passed = !mirrored && !missing.length && !off.length && mean <= thresholds.meanDegrees;
-  const worst = [...bones].sort((x, y) => y.degrees - x.degrees)[0];
-  const detail = `${mirrored ? "MIRRORED, " : ""}${bones.length} bones, mean ${mean.toFixed(1)}°, worst ${worst ? `${worst.name} ${worst.degrees}°` : "—"}${missing.length ? `, missing ${missing.join(", ")}` : ""}`;
+  const off = bones.filter((bone) => excess(bone) > thresholds.maxBoneDegrees);
+  const present = new Set([...bones.map((bone) => bone.name), ...missing, ...unmeasured]);
+  const critical = (clip ? movingBones(clip, thresholds) : BONES.map((bone) => bone.name)).filter((name) => present.has(name));
+  const coverage = { measured: critical.filter((name) => bones.some((bone) => bone.name === name) || missing.includes(name)).length, of: critical.length };
+  const failed = mirrored || missing.length > 0 || off.length > 0 || mean > thresholds.meanDegrees;
+  // A confident failure stands however little was measured; a pass needs the motion to have been seen.
+  const covered = coverage.of === 0 || coverage.measured / coverage.of >= thresholds.minCoverage;
+  const status = failed ? "fail" : covered ? "pass" : "inconclusive";
+  const worst = [...bones].sort((x, y) => excess(y) - excess(x))[0];
+  const detail = `${mirrored ? "MIRRORED, " : ""}${bones.length} bones, mean ${mean.toFixed(1)}° beyond noise, worst ${worst ? `${worst.name} ${worst.degrees}° (±${worst.uncertainty}°)` : "—"}${missing.length ? `, missing ${missing.join(", ")}` : ""}${clip ? `; moving bones measured ${coverage.measured}/${coverage.of}` : ""}${status === "inconclusive" ? " — too few of the moving bones measurable for a verdict" : ""}`;
   const fixes = mirrored
-    ? [`The drawing is a mirror image of the pose: left and right are swapped. Keep each limb on the same side of the image as in the pose photo: ${sideBones.filter((bone) => bone.degrees > thresholds.maxBoneDegrees).map((bone) => `the ${bone.name.replace(/^(right|left) /, "")} ${screenSide(bone.name)} points ${bone.source}`).join("; ")}.`]
+    ? [`The drawing is a mirror image of the pose: left and right are swapped. Keep each limb on the same side of the image as in the pose photo: ${sideBones.filter((bone) => excess(bone) > thresholds.maxBoneDegrees).map((bone) => `the ${bone.name.replace(/^(right|left) /, "")} ${screenSide(bone.name)} points ${bone.source}`).join("; ")}.`]
     : [
       ...off.map((bone) => `The ${bone.name.replace(/^(right|left) /, "")} ${screenSide(bone.name)} must point ${bone.source} on screen (it points ${bone.drawn}, ${bone.degrees}° off).`),
       ...missing.map((name) => `The ${name.replace(/^(right|left) /, "")} ${screenSide(name)} is missing or hidden; show it as in the pose photo.`),
     ];
-  return { name: "pose", passed, detail, score: Math.round(mean * 10) / 10, ...(fixes.length ? { feedback: fixes.join(" ") } : passed ? {} : { feedback: "Match every limb angle of the pose reference more closely." }), bones, missing };
+  return { name: "pose", passed: status === "pass", status, detail, score: Math.round(mean * 10) / 10, ...(fixes.length ? { feedback: fixes.join(" ") } : status === "fail" ? { feedback: "Match every limb angle of the pose reference more closely." } : {}), bones, missing, unmeasured, coverage };
 }
 
 /**
@@ -150,6 +229,58 @@ export function describePose(source: Pose, minConfidence = DEFAULT_POSE_THRESHOL
     return `The arm on the ${side.screen} of the image: upper arm points ${bone(shoulder, elbow)}, forearm points ${bone(elbow, wrist)}, hand ${hand ? height(hand[1]) : "hidden"}${crosses}.`;
   });
   return [...lines, describeLegs(source, minConfidence)].filter(Boolean).join(" ");
+}
+
+/** Each arm bone's longest length over a clip (keys "shoulder-elbow" keypoint indices): its full length, seen side-on. */
+export function armLengths(poses: readonly Pose[], minConfidence = DEFAULT_POSE_THRESHOLDS.minConfidence): Map<string, number> {
+  const out = new Map<string, number>();
+  for (const pose of poses) {
+    for (const [a, b] of [[6, 8], [8, 10], [5, 7], [7, 9]]) {
+      const [p, q] = [point(pose, a, minConfidence), point(pose, b, minConfidence)];
+      if (p && q) out.set(`${a}-${b}`, Math.max(out.get(`${a}-${b}`) ?? 0, Math.hypot(q[0] - p[0], q[1] - p[1])));
+    }
+  }
+  return out;
+}
+
+/**
+ * Each arm measured in degrees on the video's joints: every bone's screen angle against the
+ * horizontal and how far the elbow bends. Words like "up-left" let a reader call a 90° bend
+ * "nearly straight"; numbers don't, and the frame's reading and the drawing are held to them.
+ */
+export function measureArms(source: Pose, full?: ReadonlyMap<string, number>, minConfidence = DEFAULT_POSE_THRESHOLDS.minConfidence): string {
+  const p = (i: number) => point(source, i, minConfidence);
+  const [ls, rs] = [p(5), p(6)];
+  if (!ls || !rs) return "";
+  const facing = rs[0] < ls[0];
+  // Above or below the horizontal, toward one side of the image: 0° is level, 90° straight up or down.
+  const bone = (a: Point, b: Point) => {
+    const [dx, dy] = [b[0] - a[0], b[1] - a[1]];
+    const tilt = Math.round((Math.atan2(Math.abs(dy), Math.abs(dx)) * 180) / Math.PI);
+    if (tilt >= 80) return `${dy < 0 ? "straight up" : "straight down"} (${tilt}° from horizontal)`;
+    return `toward the ${dx < 0 ? "left" : "right"} of the image, ${tilt}° ${dy < 0 ? "above" : "below"} horizontal`;
+  };
+  return [
+    { screen: facing ? "LEFT" : "RIGHT", shoulder: 6, elbow: 8, wrist: 10 },
+    { screen: facing ? "RIGHT" : "LEFT", shoulder: 5, elbow: 7, wrist: 9 },
+  ].flatMap((side) => {
+    const [shoulder, elbow, wrist] = [p(side.shoulder), p(side.elbow), p(side.wrist)];
+    if (!shoulder || !elbow) return [];
+    // A bone seen much shorter than its longest in the clip points toward or away from the viewer.
+    const seen = (a: Point, b: Point, from: number, to: number) => {
+      const longest = full?.get(`${from}-${to}`);
+      const share = longest ? Math.hypot(b[0] - a[0], b[1] - a[1]) / longest : 1;
+      return share < 0.85 ? `, FORESHORTENED: seen at ${Math.round(share * 100)} % of its full length because it points toward the viewer — draw it exactly this short` : "";
+    };
+    const parts = [`upper arm from shoulder to elbow ${bone(shoulder, elbow)}${seen(shoulder, elbow, side.shoulder, side.elbow)}`];
+    if (wrist) {
+      parts.push(`forearm from elbow to wrist ${bone(elbow, wrist)}${seen(elbow, wrist, side.elbow, side.wrist)}`);
+      // 180° is a straight arm; the smaller, the tighter the bend.
+      const inner = Math.round(angleBetween([shoulder[0] - elbow[0], shoulder[1] - elbow[1]], [wrist[0] - elbow[0], wrist[1] - elbow[1]]));
+      parts.push(`elbow ${inner >= 160 ? "straight" : "BENT"}: ${inner}° between upper arm and forearm (180° = straight)`);
+    }
+    return [`Arm on the ${side.screen} of the image: ${parts.join("; ")}.`];
+  }).join(" ");
 }
 
 /**

@@ -19,10 +19,16 @@ type Mode = "compare" | "edited";
 export function CompareStage({
   render,
   updating,
+  onMedia,
+  bare = false,
 }: {
   readonly render: RenderResult;
   /** A new render is being computed; this one stays visible meanwhile. */
   readonly updating?: { readonly progress: number; readonly label: string } | null;
+  /** Hands the playing <video> (the comparison stream or the edited file) to a timeline outside the stage. */
+  readonly onMedia?: (element: HTMLVideoElement | null) => void;
+  /** The workspace timeline plays and scrubs: the caption keeps the view and the sound. */
+  readonly bare?: boolean;
 }) {
   const [mode, setMode] = useState<Mode>("compare");
   const [split, setSplit] = useState(50);
@@ -37,6 +43,10 @@ export function CompareStage({
   const duration = render.durationSeconds;
 
   const active = () => (mode === "compare" ? compareRef.current : editedRef.current);
+  useEffect(() => {
+    onMedia?.(mode === "compare" ? compareRef.current : editedRef.current);
+    return () => onMedia?.(null);
+  }, [mode, onMedia]);
 
   // The edited clip carries the sound; the hidden "before" stream does only when the edit is temporal and plays from it.
   useEffect(() => {
@@ -170,7 +180,7 @@ export function CompareStage({
               width={width}
               height={height}
               aria-label="Before and after comparison"
-              className="block h-auto max-h-[min(68dvh,720px)] w-auto max-w-full"
+              className="block h-auto max-h-[var(--stage-max,min(68dvh,720px))] w-auto max-w-full"
               style={{ aspectRatio: `${width} / ${height}` }}
             />
             <span className="pointer-events-none absolute top-2 left-2 rounded-md bg-[rgb(20_22_30/0.78)] px-2 py-1 text-xs text-white">Original</span>
@@ -199,7 +209,7 @@ export function CompareStage({
             loop
             preload="auto"
             onClick={toggle}
-            className="block h-auto max-h-[min(68dvh,720px)] w-auto max-w-full cursor-pointer"
+            className="block h-auto max-h-[var(--stage-max,min(68dvh,720px))] w-auto max-w-full cursor-pointer"
             aria-label="Edited video"
             {...mediaEvents}
           />
@@ -207,6 +217,7 @@ export function CompareStage({
       </div>
 
       <figcaption className="flex flex-wrap items-center gap-3 border-t border-border px-3 py-2.5 sm:px-4">
+        {bare ? <span className="min-w-0 flex-1" /> : <>
         <button type="button" onClick={toggle} aria-label={playing ? "Pause" : "Play"} className="grid size-8 shrink-0 place-items-center rounded-lg text-foreground transition-colors outline-none hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring">
           <HugeiconsIcon icon={playing ? PauseIcon : PlayIcon} size={18} strokeWidth={1.75} />
         </button>
@@ -232,6 +243,7 @@ export function CompareStage({
           style={{ "--scrub": `${(time / duration) * 100}%` } as CSSProperties}
         />
         </div>
+        </>}
         {render.hasAudio && (mode === "edited" || render.temporal) ? <VolumeControl sound={sound} onVolume={setVolume} onToggle={toggleMute} /> : null}
         <SlidingTabs
           tabs={[

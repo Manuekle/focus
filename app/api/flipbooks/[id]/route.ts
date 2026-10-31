@@ -8,6 +8,9 @@ import {
   changeReference,
   createScene,
   drawInbetweens,
+  planInbetweens,
+  checkFlipbookMotion,
+  fixMotion,
   generateBackground,
   generateMissing,
   enhanceFlagged,
@@ -53,7 +56,10 @@ export async function POST(request: Request, { params }: Context) {
       : action.action === "retry" ? await retryPreparation(id, action.confirmExtra === true, gate)
       : action.action === "revision" ? await restoreSequenceRevision(id, action.id)
       : action.action === "generate" ? await generateMissing(id, action.confirmExtra === true, gate)
-      : action.action === "inbetweens" ? await drawInbetweens(id, action.confirmExtra === true, gate, action.drawingFps)
+      : action.action === "inbetweens" ? await drawInbetweens(id, action.confirmExtra === true, gate, action.drawingFps, action.planned === true)
+      : action.action === "plan_inbetweens" ? (await guardChatRequest(request), await planInbetweens(id, request.signal))
+      : action.action === "check_motion" ? (await guardChatRequest(request), await checkFlipbookMotion(id, request.signal))
+      : action.action === "fix_motion" ? await fixMotion(id, action.confirmExtra === true, gate)
       : action.action === "reorder" ? await reorderFrames(id, action.order)
       : action.action === "reference" ? await changeReference(id, action.kind, { confirmExtra: action.confirmExtra }, gate)
       : action.action === "scene" ? await createScene(id, action.confirmExtra === true, gate)

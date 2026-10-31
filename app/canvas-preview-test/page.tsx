@@ -33,7 +33,7 @@ const run: RotoscopeRun = {
   dualAvailable: false,
   guidesVersion: "",
   hasAudio: false,
-  lessons: [],
+  lessons: [], renderer: "auto", measures: { heightCm: null, weightKg: null, personHeightCm: null }, fitsPerson: true, poseSheet: false, batch: null, batchFrames: null,
 };
 
 export default function CanvasPreview() {

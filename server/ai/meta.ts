@@ -23,7 +23,7 @@ export type MetaConfig = {
 
 export const META_DEFAULTS = {
   baseUrl: "https://api.meta.ai/v1",
-  plannerModel: "muse-spark-1.3",
+  plannerModel: "muse-spark-1.3-contributor",
   segmentationModel: "sam-3.1",
   imageModel: "muse-image-1.0",
 } as const;

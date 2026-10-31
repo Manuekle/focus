@@ -2,6 +2,7 @@
 
 import { useId, useMemo, useState } from "react";
 import { Button } from "../../components/ui/button";
+import { Disclosure } from "../../components/ui/disclosure";
 import { Select } from "../../components/ui/select";
 import { Slider } from "../../components/ui/slider";
 import { DEFAULT_SEQUENCE, type SequenceSettings } from "../../shared/sequence";
@@ -21,10 +22,9 @@ export function SequenceFields({ value, onChange, disabled = false, compact = fa
       <div className={styles.chips}>{([8, 12, 24] as const).map((drawingFps) => <Button type="button" key={drawingFps} size="sm" className="flex-1" variant={value.drawingFps === drawingFps ? "default" : "outline"} aria-pressed={value.drawingFps === drawingFps} disabled={disabled} onClick={() => onChange({ ...value, drawingFps })}>{drawingFps}</Button>)}</div>
     </fieldset>
     <p id={hint} className={styles.hint} role="status">{(videoDuration ?? value.durationSeconds) * value.drawingFps} drawings across {videoDuration ?? value.durationSeconds} s. {compact ? "MP4 plays at 60 fps." : "Increasing density adds drawings and keeps the movement’s timing. A drawing can stay unchanged for up to 125 ms; longer holds are flagged for correction. MP4 plays at 60 fps."}</p>
-    {compact ? <details className={styles.createDisclosure}>
-      <summary>About drawing density</summary>
+    {compact ? <Disclosure title="About drawing density" className={styles.createDisclosure}>
       <p className={styles.hint}>Increasing density adds drawings and keeps the movement’s timing. {videoDuration !== undefined ? "Pauses and changes of direction follow the selected video segment." : "A drawing can stay unchanged for up to 125 ms; longer holds are flagged for correction."}</p>
-    </details> : null}
+    </Disclosure> : null}
   </>;
 }
 

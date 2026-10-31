@@ -5,7 +5,7 @@ import { beforeAll, describe, expect, it } from "vitest";
 import { WALK_POSES, type FrameId } from "../../shared/flipbook";
 import { AppError } from "../errors";
 import { DRIFT, walkerPng, walkerPose } from "./__fixtures__/walker";
-import { BASELINE_Y, CELL_HEIGHT, TARGET_HEIGHT, computeAlignment, computeTimedAlignment, filledArea, despill, extractSubject, renderSprite, segmentation, segmentationConcepts, type AlignInput, type Extraction } from "./frame-alignment";
+import { BASELINE_Y, CELL_HEIGHT, TARGET_HEIGHT, computeAlignment, computeTimedAlignment, filledArea, despill, extractKeyed, extractSubject, renderSprite, segmentation, segmentationConcepts, type AlignInput, type Extraction } from "./frame-alignment";
 import { contactSheet } from "./quality-control";
 
 // Cut-out and registration on deterministic drawings. SAM is switched off:
@@ -329,5 +329,48 @@ describe("filledArea", () => {
     alpha[1 * width + 5] = 0;
     expect(filledArea(alpha, width, { left: 1, top: 1, right: 10, bottom: 10 })).toBe(35);
     expect(filledArea(alpha, width, { left: 15, top: 4, right: 15, bottom: 6 })).toBe(3);
+  });
+});
+
+
+describe("cutting out a drawing made on a flat key color", () => {
+  const sam = async () => [];
+  it("uses the key and never asks SAM, however many drawings there are", async () => {
+    const previous = process.env.META_API_KEY;
+    process.env.META_API_KEY = "test-key";
+    let calls = 0;
+    segmentation.segment = async () => { calls++; return sam(); };
+    try {
+      for (const drift of DRIFT.slice(0, 3)) {
+        const cut = await extractKeyed({ png: await walkerPng(drift.phase, drift), concept: "walker", flipbookId: "test", allowAlpha: false });
+        expect(cut.measure.method).toBe("key");
+      }
+      expect(calls).toBe(0);
+    } finally {
+      segmentation.segment = null;
+      if (previous === undefined) delete process.env.META_API_KEY; else process.env.META_API_KEY = previous;
+    }
+  });
+
+  it("asks SAM only for a drawing the key can't separate", async () => {
+    const previous = process.env.META_API_KEY;
+    process.env.META_API_KEY = "test-key";
+    let calls = 0;
+    // A busy picture: no flat border, so the key refuses it.
+    const noisy = await sharp({ create: { width: 128, height: 192, channels: 3, background: "#808080", noise: { type: "gaussian", mean: 128, sigma: 70 } } }).png().toBuffer();
+    segmentation.segment = async ({ width, height }) => {
+      calls++;
+      const alpha = new Uint8Array(width * height);
+      for (let y = 40; y < 150; y++) for (let x = 40; x < 90; x++) alpha[y * width + x] = 255;
+      return [{ objectId: "walker", alpha, area: 110 * 50, box: { left: 40, top: 40, right: 90, bottom: 150 }, confidence: 1 }];
+    };
+    try {
+      const cut = await extractKeyed({ png: noisy, concept: "walker", flipbookId: "test", allowAlpha: false });
+      expect(cut.measure.method).toBe("sam");
+      expect(calls).toBe(1);
+    } finally {
+      segmentation.segment = null;
+      if (previous === undefined) delete process.env.META_API_KEY; else process.env.META_API_KEY = previous;
+    }
   });
 });

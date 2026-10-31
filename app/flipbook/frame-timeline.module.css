@@ -1,0 +1,126 @@
+/* The editor timeline (frame-timeline.tsx): a video editor's tracks under the
+   preview. Clips are saturated fills that read the same in light and dark;
+   everything else uses the studio tokens. */
+.timeline {
+  --key: var(--primary);
+  --middle: #8b5cf6;
+  --audio: #f59e0b;
+  --label-w: 104px;
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  border-top: 1px solid var(--border);
+  background: var(--card);
+  user-select: none;
+}
+
+.head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; padding: 6px 10px; border-bottom: 1px solid var(--border); }
+.transport, .tools { display: flex; align-items: center; gap: 4px; }
+.tools { margin-left: auto; flex-wrap: wrap; justify-content: flex-end; }
+.clock { font-family: var(--font-mono, ui-monospace, monospace); font-size: 12px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.now { color: var(--foreground); }
+.total { color: var(--muted-foreground); }
+.divider { width: 1px; height: 18px; margin-inline: 4px; background: var(--border); }
+.zoom { width: 88px; }
+
+.body { display: flex; min-width: 0; }
+.labels { display: flex; width: var(--label-w); flex-shrink: 0; flex-direction: column; border-right: 1px solid var(--border); }
+.rulerLabel { height: 26px; flex-shrink: 0; border-bottom: 1px solid var(--border); }
+.trackLabel { display: flex; align-items: center; justify-content: space-between; gap: 4px; padding: 0 4px 0 10px; color: var(--muted-foreground); font-size: 11px; white-space: nowrap; }
+.trackToggle { width: 22px; height: 22px; }
+
+.scroller { position: relative; min-width: 0; flex: 1; overflow-x: auto; overflow-y: hidden; scrollbar-width: thin; cursor: text; touch-action: pan-x; }
+.content { position: relative; }
+
+/* Heights shared by the label column and the tracks, so names line up with their rows. */
+.trackLabel[data-track="keys"], .track[data-track="keys"] { height: 58px; }
+.trackLabel[data-track="middles"], .track[data-track="middles"] { height: 30px; }
+.trackLabel[data-track="audio"], .track[data-track="audio"] { height: 30px; }
+
+.ruler { position: relative; height: 26px; border-bottom: 1px solid var(--border); cursor: ew-resize; }
+.mark { position: absolute; bottom: 0; width: 1px; height: 5px; background: color-mix(in srgb, var(--foreground) 18%, transparent); }
+.mark[data-major] { height: 9px; background: color-mix(in srgb, var(--foreground) 34%, transparent); }
+.markLabel { position: absolute; bottom: 11px; left: 0; translate: -50% 0; color: var(--muted-foreground); font-size: 10px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.mark:first-child .markLabel { translate: -2px 0; }
+
+.track { position: relative; }
+.track + .track { border-top: 1px dashed color-mix(in srgb, var(--foreground) 6%, transparent); }
+
+/* A key drawing: its pose from this key to the next. */
+.clip {
+  position: absolute;
+  top: 5px;
+  bottom: 5px;
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 4px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 8px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--key) 88%, #fff), var(--key));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, #000 14%, transparent), inset 0 1px 0 color-mix(in srgb, #fff 22%, transparent);
+  color: #fff;
+  font: inherit;
+  cursor: pointer;
+  transition: filter 150ms var(--ease-smooth-out), box-shadow 150ms var(--ease-smooth-out), opacity 150ms var(--ease-smooth-out);
+}
+.clip:hover { filter: brightness(1.08); }
+.clip:focus-visible { outline: 2px solid var(--foreground); outline-offset: 1px; }
+.clip[aria-selected="true"] { box-shadow: inset 0 0 0 2px #fff, 0 0 0 1px var(--key), 0 6px 16px -8px var(--key); }
+.clip[data-repeat] { opacity: 0.5; }
+.clip[data-repeat][aria-selected="true"] { opacity: 0.8; }
+.clip[data-state="pending"] { background: color-mix(in srgb, var(--foreground) 6%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 16%, transparent); color: var(--muted-foreground); }
+.clip[data-state="pending"][aria-selected="true"] { box-shadow: inset 0 0 0 2px var(--key); }
+.clip[data-state="failed"] { background: linear-gradient(180deg, color-mix(in srgb, var(--destructive) 80%, #fff), var(--destructive)); }
+.clip[data-state="working"] { background-image: repeating-linear-gradient(-45deg, color-mix(in srgb, #fff 16%, transparent) 0 6px, transparent 6px 12px), linear-gradient(180deg, color-mix(in srgb, var(--key) 70%, #fff), color-mix(in srgb, var(--key) 80%, transparent)); background-size: 17px 17px, auto; animation: clip-working 900ms linear infinite; }
+@keyframes clip-working { to { background-position: 17px 0, 0 0; } }
+.clip[data-dragging] { z-index: 2; cursor: grabbing; opacity: 0.92; filter: brightness(1.1); box-shadow: inset 0 0 0 2px #fff, 0 10px 24px -8px #000a; transition: none; }
+
+.thumb { position: relative; display: block; width: 32px; height: 100%; flex-shrink: 0; overflow: hidden; border-radius: 5px; background: color-mix(in srgb, #fff 82%, transparent); }
+.thumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.clipNumber { flex-shrink: 0; font-size: 11px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.clipLabel { min-width: 0; overflow: hidden; font-size: 11px; text-overflow: ellipsis; white-space: nowrap; opacity: 0.9; }
+.clipApproved, .clipFlag { position: absolute; top: 3px; display: grid; width: 14px; height: 14px; place-items: center; border-radius: 999px; }
+.clipApproved { right: 3px; background: var(--status-success-bg); color: var(--status-success-fg); }
+.clipFlag { right: 3px; background: var(--status-pending-bg); color: var(--status-pending-fg); }
+.clipApproved ~ .clipFlag { right: 19px; }
+
+.drop { position: absolute; z-index: 3; top: 2px; bottom: 2px; width: 2px; border-radius: 2px; background: var(--foreground); pointer-events: none; }
+
+.middle { position: absolute; top: 6px; bottom: 6px; padding: 0; border: 0; border-radius: 5px; background: linear-gradient(180deg, color-mix(in srgb, var(--middle) 82%, #fff), var(--middle)); cursor: pointer; transition: filter 150ms, opacity 150ms; }
+.middle:hover { filter: brightness(1.12); }
+.middle[data-repeat] { opacity: 0.45; }
+.middle[data-selected] { box-shadow: inset 0 0 0 1px #fff; }
+.track[data-off] { display: flex; align-items: center; }
+.offNote { position: sticky; left: 12px; padding-left: 12px; color: var(--muted-foreground); font-size: 11px; }
+
+.audio { position: absolute; top: 6px; bottom: 6px; display: flex; min-width: 0; align-items: center; gap: 5px; padding: 0 8px; overflow: hidden; border-radius: 6px; background: linear-gradient(180deg, color-mix(in srgb, var(--audio) 82%, #fff), var(--audio)); color: #fff; }
+.audio[data-off] { opacity: 0.4; }
+
+.playhead { position: absolute; top: 0; bottom: 0; left: 0; z-index: 4; width: 0; pointer-events: none; will-change: translate; }
+.playhead::before { position: absolute; top: 0; bottom: 0; left: -1px; width: 2px; background: var(--primary); content: ""; }
+.playheadKnob { position: absolute; top: 2px; left: -6px; width: 12px; height: 16px; border-radius: 4px 4px 6px 6px; background: var(--primary); box-shadow: 0 1px 4px #0006; }
+
+@container flipbook-workspace (max-width: 760px) {
+  .timeline { --label-w: 76px; }
+  .zoom { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .clip, .middle { transition: none; }
+  .clip[data-state="working"] { animation: none; }
+}
+.transport output { max-width: 220px; margin-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* The video editor's tracks (app/_editor/media-timeline.tsx) share this look. */
+.trackLabel[data-track="video"], .track[data-track="video"] { height: 58px; }
+.trackLabel[data-track="lane"], .track[data-track="lane"] { height: 30px; }
+.filmstrip { position: absolute; top: 5px; bottom: 5px; display: flex; overflow: hidden; border-radius: 8px; background: color-mix(in srgb, var(--key) 30%, var(--card)); box-shadow: inset 0 0 0 2px var(--key); }
+.filmstrip img { display: block; height: 100%; flex: 1 0 0; min-width: 0; object-fit: cover; opacity: 0.92; }
+.filmstripName { position: absolute; left: 6px; bottom: 4px; padding: 1px 6px; border-radius: 5px; background: color-mix(in srgb, var(--key) 88%, #000); color: #fff; font-size: 11px; white-space: nowrap; }
+.span { position: absolute; top: 6px; bottom: 6px; display: flex; min-width: 0; align-items: center; gap: 5px; padding: 0 8px; overflow: hidden; border-radius: 6px; color: #fff; }
+.span[data-tone="masks"] { padding: 0; background: linear-gradient(180deg, color-mix(in srgb, #10b981 82%, #fff), #10b981); }
+.span[data-tone="effect"] { background: linear-gradient(180deg, color-mix(in srgb, var(--middle) 82%, #fff), var(--middle)); }
+.span[data-tone="freeze"] { z-index: 1; background: linear-gradient(180deg, color-mix(in srgb, #ec4899 82%, #fff), #ec4899); }
+.marker { position: absolute; z-index: 2; top: 3px; bottom: 3px; width: 3px; margin-left: -1.5px; border-radius: 2px; background: #ec4899; box-shadow: 0 0 0 2px var(--card); pointer-events: none; }

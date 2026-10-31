@@ -1,6 +1,7 @@
 "use client";
 
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import type { ImageGenerationHandle } from "img-fx";
 import { useRouter } from "next/navigation";
 import { AiPaintbrushIcon, ArrowRight01Icon, Cancel01Icon, Download02Icon, LayoutThreeColumnIcon, PanelRightCloseIcon, Refresh01Icon, PencilEdit02Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
@@ -9,22 +10,27 @@ import { Alert, useDismissedNotices, type AlertTone } from "../../components/ui/
 import { Badge } from "../../components/ui/badge";
 import { Button } from "../../components/ui/button";
 import { ScrollArea } from "../../components/ui/scroll-area";
+import { MediaImage } from "../../components/ui/media-image";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Spinner } from "../../components/ui/spinner";
 import { Switch } from "../../components/ui/switch";
 import { ToggleChip } from "../../components/ui/toggle-chip";
 import { useToast } from "../../components/toast-provider";
-import { EXTEND_STEPS, nextOpenFrame, rotoscopeUrls, videoLeft, type RotoscopeFrame, type RotoscopeLive, type RotoscopeRun } from "../../shared/rotoscope";
+import { EXTEND_STEPS, FRAME_SIZE, nextOpenFrame, rotoscopeUrls, videoLeft, type RotoscopeFrame, type RotoscopeLive, type RotoscopeRun } from "../../shared/rotoscope";
 import { MAX_SEQUENCE_FRAMES, SEQUENCE_CLOCK } from "../../shared/sequence";
-import composer from "../_editor/composer.module.css";
+import composer from "../_editor/composer.module.css";import { ImageGeneration } from "./image-generation";
 import fb from "../flipbook/flipbook.module.css";
 import { frameState, STATE_LABEL, time } from "./frame-state";
 import { rotoscopeApi } from "./rotoscope-client";
 import { CHECKS } from "./rotoscope-create";
 import { PencilNote } from "./pencil-note";
-import { MediaLightbox, ZoomButton, type LightboxMedia } from "../../components/ui/media-lightbox";
+import { ImageViewer, ImageViewerContent, ImageViewerThumbnail, type ImageViewerImage } from "../../components/motion/image-viewer";
 import { ActivityLog } from "./activity-log";
 import { CompareSheet } from "./compare-sheet";
+import { MappingInspector } from "./mapping-inspector";
+import { DockResizer, useDockWidth } from "./dock-resizer";
+import { RunMeasures } from "./run-measures";
+import { PromptLab } from "./prompt-lab";
 import { RotoscopeCanvas } from "./rotoscope-canvas";
 import { RotoscopePlayer, type LiveStage } from "./rotoscope-player";
 import styles from "./rotoscope.module.css";
@@ -84,6 +90,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
   const [viewing, setViewing] = useState<{ readonly frame: number; readonly attempt: number | null } | null>(null);
   const [attemptPick, setAttemptPick] = useState<{ readonly frame: number; readonly attempt: number } | null>(null);
   // On a narrow screen the inspector would cover the whole canvas, so it starts closed there.
+  const dock = useDockWidth();
   const [dockOpen, setDockOpen] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 861px)").matches);
   const [dockTab, setDockTab] = useState<"frame" | "preview" | "run">("frame");
   // Picking a frame leaves the Run tab for its inspector; the Preview tab follows the pick instead.
@@ -113,7 +120,10 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
   };
   // Two drawings per attempt (Muse Image + Higgsfield), the closer match kept; the server remembers it per run.
   const [dual, setDual] = useState(run.dual);
-  const draw = () => void act("Couldn’t start drawing", () => rotoscopeApi.generate(run.id, { dual }));
+  // The character rig deforms an approved drawing first; off, every attempt is generated (the server remembers it per run).
+  const [rigFirst, setRigFirst] = useState(run.renderer !== "muse");
+  const renderer = rigFirst ? "auto" as const : "muse" as const;
+  const draw = () => void act("Couldn’t start drawing", () => rotoscopeApi.generate(run.id, { dual, renderer }));
   // The next piece of the video: its frames are cut and measured, then drawn as soon as they are ready.
   const [step, setStep] = useState<number>(EXTEND_STEPS[0]);
   const [drawAfterExtend, setDrawAfterExtend] = useState(false);
@@ -133,7 +143,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
     const updated = await rotoscopeApi.correct(run.id, { frame, attempt, comment: note.comment, marks: note.marks });
     if (!note.redraw) return updated;
     onChange(updated);
-    return rotoscopeApi.generate(run.id, { dual });
+    return rotoscopeApi.generate(run.id, { dual, renderer });
   });
   const attempts = run.frames.reduce((sum, frame) => sum + frame.attempts.length, 0);
   const segment = `${run.start.toFixed(1)}–${run.seconds !== null ? (run.start + run.seconds).toFixed(1) : "end"} s`;
@@ -233,7 +243,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
           size="sm"
           variant="outline"
           disabled={acting}
-          onClick={() => void act("Couldn’t redraw", () => rotoscopeApi.generate(run.id, { frame: selected.index }))}
+          onClick={() => void act("Couldn’t redraw", () => rotoscopeApi.generate(run.id, { frame: selected.index, renderer }))}
           title={`Draws frame ${selected.index} again, up to ${run.maxAttempts} attempts. Its current drawing stays unless a new one passes every check.`}
         >
           <HugeiconsIcon icon={Refresh01Icon} size={14} strokeWidth={1.75} />Redraw frame {selected.index}
@@ -305,7 +315,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
 
       {notice}
 
-      <div className={styles.workspace} data-dock={dockOpen} data-wide={dockTab === "preview"}>
+      <div className={styles.workspace} data-dock={dockOpen} data-wide={dockTab === "preview"} style={dock.style}>
         <div className={styles.stage}>
           <RotoscopeCanvas
             key={run.id}
@@ -329,7 +339,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
               frame={selected}
               initialAttempt={viewing?.frame === selected.index ? viewing.attempt : null}
               onFrame={pick}
-              canApprove={run.phase === "ready" && (selected.status === "approved" || selected.index === next)}
+              canApprove={run.phase === "ready" && (selected.status === "approved" || selected.status === "failed" || selected.index === next)}
               busy={acting}
               onApprove={(attempt) => void act("Couldn’t approve", () => rotoscopeApi.approve(run.id, selected.index, attempt))}
               onClose={() => setComparing(false)}
@@ -337,6 +347,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
           ) : null}
         </div>
 
+        {dockOpen ? <DockResizer dock={dock} /> : null}
         <aside className={styles.dock} data-open={dockOpen} aria-label="Run inspector">
           <div className={styles.dockInner}>
             <div className={styles.dockHead}>
@@ -382,12 +393,14 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
                       run={run}
                       frame={selected}
                       following={picked === null && live?.frame === selected.index}
-                      canApprove={run.phase === "ready" && (selected.status === "approved" || selected.index === next)}
+                      canApprove={run.phase === "ready" && (selected.status === "approved" || selected.status === "failed" || selected.index === next)}
                       canCorrect={run.phase === "ready"}
                       busy={acting}
                       onApprove={(attempt) => void act("Couldn’t approve", () => rotoscopeApi.approve(run.id, selected.index, attempt))}
                       onCorrect={(attempt, note) => correct(selected.index, attempt, note)}
                       onFollow={() => setPicked(null)}
+                      onRedraw={() => void act("Couldn’t redraw", () => rotoscopeApi.generate(run.id, { frame: selected.index, renderer }))}
+                      onTestPrompt={(prompt) => void act("Couldn’t draw with your prompt", () => rotoscopeApi.generate(run.id, { frame: selected.index, prompt, attempts: 1, renderer: "muse" }))}
                     />
                   ) : run.phase === "preparing" ? <InspectorSkeleton /> : (
                     <p className={fb.hint}>Pick a frame on the canvas to review it.</p>
@@ -399,16 +412,14 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
                       <div className={fb.referencePair}>
                         <figure>
                           <span className={fb.referenceImage}>
-                            {/* eslint-disable-next-line @next/next/no-img-element -- the run's character */}
-                            <img src={rotoscopeUrls.media(run.id, "character")} alt="Your character" />
+                            <MediaImage src={rotoscopeUrls.media(run.id, "scaled")} alt="Your character at the video's scale" />
                           </span>
-                          <figcaption>Reference</figcaption>
+                          <figcaption>Reference · video scale</figcaption>
                         </figure>
                         <figure>
                           <span className={fb.referenceImage}>
                             {selected ? (
-                              // eslint-disable-next-line @next/next/no-img-element -- the selected video frame
-                              <img src={rotoscopeUrls.media(run.id, "source", selected.index)} alt={`Video frame ${selected.index}`} />
+                              <MediaImage src={rotoscopeUrls.media(run.id, "source", selected.index)} alt={`Video frame ${selected.index}`} />
                             ) : <Skeleton className={fb.working} />}
                           </span>
                           <figcaption>Video · frame {selected?.index ?? "—"}</figcaption>
@@ -429,6 +440,13 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
                       </div>
                       <div className={styles.optionRow}>
                         <span>
+                          <span className="block text-foreground">Character rig first</span>
+                          <span className="block text-muted-foreground">Each frame’s first try deforms an approved drawing onto the video’s pose: exact pose, same line art, no drawing cost. Only surface the drawing never showed is repainted. The generators take over when it can’t.</span>
+                        </span>
+                        <Switch checked={rigFirst} disabled={working} onCheckedChange={setRigFirst} label="Deform approved drawings before generating" />
+                      </div>
+                      <div className={styles.optionRow}>
+                        <span>
                           <span className="block text-foreground">Pose guides</span>
                           <span className="block text-muted-foreground">Redraw them with the latest guide code (limb lengths, head, shoulders). Approved frames stay; frames drawn afterwards use the new guides.</span>
                         </span>
@@ -445,11 +463,13 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
                       ) : null}
                     </section>
 
+                    <RunMeasures run={run} disabled={working || acting} onChange={onChange} />
+
                     <section className={fb.panel} aria-labelledby="ro-lessons">
                       <div className={fb.panelHead}><h2 id="ro-lessons" className={fb.panelTitle}>What the AI learned</h2></div>
                       {run.lessons.length ? (
                         <>
-                          <p className={fb.hint}>Every rejected drawing teaches a rule. The most frequent recent ones go into the instructions of every new drawing; mistakes it stops making fade out on their own.</p>
+                          <p className={fb.hint}>Every rejected drawing teaches a rule. They are kept here for you to read; they are not added to the drawing instructions, which stay short so the character sheet leads.</p>
                           <ul className={styles.lessons}>
                             {run.lessons.map((lesson) => (
                               <li key={lesson.rule} data-active={lesson.inPrompt}>
@@ -508,9 +528,37 @@ function Step({ state, label }: { readonly state: "done" | "active" | "todo"; re
 
 // ── Inspector ───────────────────────────────────────────────────────────────
 
-type InspectView = "drawing" | "video" | "guide" | "note";
+type InspectView = "drawing" | "video" | "guide" | "note" | "mapping";
 
-function Inspector({ run, frame, requested, onViewing, onCompare, following, canApprove, canCorrect, busy, onApprove, onCorrect, onFollow }: {
+// A reveal that never reports back (picture not fetchable, handle not reachable) must not leave the frame on the loader.
+const REVEAL_GIVE_UP_MS = 6000;
+
+/** The video frame under the pixel churn; once the drawing is cut out, the churn dissolves into it. */
+function DrawingFx({ ghost, image, onRevealed }: { readonly ghost: string; readonly image: string | null; readonly onRevealed: () => void }) {
+  const handle = useRef<ImageGenerationHandle>(null);
+  const images = useMemo(() => (image ? [image] : []), [image]);
+  useEffect(() => {
+    if (!image) return;
+    handle.current?.triggerReveal({ hold: "manual" });
+    const giveUp = window.setTimeout(onRevealed, REVEAL_GIVE_UP_MS);
+    return () => window.clearTimeout(giveUp);
+  }, [image]); // eslint-disable-line react-hooks/exhaustive-deps -- onRevealed is a fresh closure each render; only a new image starts a reveal
+  return (
+    <ImageGeneration
+      ref={handle}
+      className={styles.drawingFx}
+      preset="pixels-organic"
+      borderRadius={12}
+      images={images}
+      onCycle={(event) => { if (event.phase === "visible") onRevealed(); }}
+    >
+      {/* eslint-disable-next-line @next/next/no-img-element -- the video frame being drawn, dimmed under the work */}
+      <img className={styles.drawingGhost} data-revealing={image ? "" : undefined} src={ghost} alt="" draggable={false} />
+    </ImageGeneration>
+  );
+}
+
+function Inspector({ run, frame, requested, onViewing, onCompare, following, canApprove, canCorrect, busy, onApprove, onCorrect, onFollow, onRedraw, onTestPrompt }: {
   readonly run: RotoscopeRun;
   readonly frame: RotoscopeFrame;
   /** An attempt chosen elsewhere (the canvas tray) to show first. */
@@ -525,6 +573,9 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
   readonly onApprove: (attempt: number) => void;
   readonly onCorrect: (attempt: number, note: { comment: string; marks: Blob; redraw: boolean }) => void;
   readonly onFollow: () => void;
+  readonly onRedraw: () => void;
+  /** Draws this frame once with a prompt from the debug panel. */
+  readonly onTestPrompt: (prompt: string) => void;
 }) {
   const live = run.live?.frame === frame.index ? run.live : null;
   const state = frameState(run, frame);
@@ -544,7 +595,7 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
   const attempt = picked ?? liveAttempt ?? frame.approvedAttempt ?? recorded[0]?.attempt ?? null;
   const record = frame.attempts.find((entry) => entry.attempt === attempt) ?? null;
   useEffect(() => { onViewing(attempt); }, [attempt]); // eslint-disable-line react-hooks/exhaustive-deps -- onViewing is a fresh closure each render; only a change of attempt matters
-  const view: InspectView = inspect === "note" && !frame.correction ? "drawing" : inspect;
+  const view: InspectView = (inspect === "note" && !frame.correction) || (inspect === "mapping" && !record) ? "drawing" : inspect;
   // Still being drawn: there is no picture to fetch yet, so the frame shows the work instead.
   const pending = inProgress !== null && attempt === liveAttempt && !inProgress.image ? inProgress : null;
   const drawing = attempt !== null && !pending ? rotoscopeUrls.media(run.id, "attempt", frame.index, attempt) : null;
@@ -556,17 +607,31 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
         : drawing;
   const canMark = canCorrect && record !== null && drawing !== null;
 
+  // The churn that was waiting on this attempt dissolves into its drawing instead of cutting to it.
+  const [revealing, setRevealing] = useState<string | null>(null);
+  const [revealed, setRevealed] = useState<string | null>(null);
+  const waitingOn = useRef<string | null>(null);
+  useEffect(() => {
+    const key = `${frame.index}:${attempt}`;
+    if (pending) waitingOn.current = key;
+    else if (waitingOn.current === key && drawing) { waitingOn.current = null; setRevealing(drawing); }
+    else waitingOn.current = null;
+  }, [pending, frame.index, attempt, drawing]);
+  const dissolving = !pending && drawing !== null && revealing === drawing;
+  const finishReveal = () => { setRevealed(revealing); setRevealing(null); };
+
   // Any one of the frame's pictures can open large; the arrow keys walk the others, and the inspector follows.
   const [zoomed, setZoomed] = useState(false);
   const noteImage = `${rotoscopeUrls.media(run.id, "correction", frame.index)}&v=${encodeURIComponent(frame.correction?.at ?? "")}`;
-  const zoomViews: InspectView[] = [...(drawing ? ["drawing" as const] : []), "video", "guide", ...(frame.correction ? ["note" as const] : [])];
-  const zoomItems: LightboxMedia[] = zoomViews.map((id) => id === "video"
-    ? { kind: "image", src: rotoscopeUrls.media(run.id, "source", frame.index), alt: "Video frame", caption: `Frame ${frame.index} · Video` }
+  const zoomViews: InspectView[] = [...(drawing ? ["drawing" as const] : []), "video", "guide", ...(frame.correction ? ["note" as const] : [])].filter((id): id is InspectView => id !== "mapping");
+  const picture = { width: FRAME_SIZE.width, height: FRAME_SIZE.height } as const;
+  const zoomItems: ImageViewerImage[] = zoomViews.map((id) => id === "video"
+    ? { id, ...picture, src: rotoscopeUrls.media(run.id, "source", frame.index), alt: "Video frame", caption: `Frame ${frame.index} · Video` }
     : id === "guide"
-      ? { kind: "image", src: rotoscopeUrls.guide(run, frame.index), alt: "Pose guide", caption: `Frame ${frame.index} · Pose guide` }
+      ? { id, ...picture, src: rotoscopeUrls.guide(run, frame.index), alt: "Pose guide", caption: `Frame ${frame.index} · Pose guide` }
       : id === "note"
-        ? { kind: "image", src: noteImage, alt: "Your pencil marks", caption: `Frame ${frame.index} · Your note` }
-        : { kind: "image", src: drawing ?? "", alt: `Attempt ${attempt}`, caption: `Frame ${frame.index} · Drawing · attempt ${attempt}`, transparent: true });
+        ? { id, ...picture, src: noteImage, alt: "Your pencil marks", caption: `Frame ${frame.index} · Your note` }
+        : { id, ...picture, src: drawing ?? "", alt: `Attempt ${attempt}`, caption: `Frame ${frame.index} · Drawing · attempt ${attempt}`, transparent: true });
 
   return (
     <section className={fb.panel} aria-labelledby="ro-inspector">
@@ -581,44 +646,55 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
       </div>
       <SlidingTabs
         className={composer.tabs}
-        tabs={[{ id: "drawing", label: "Drawing" }, { id: "video", label: "Video" }, { id: "guide", label: frame.correction ? "Guide" : "Pose guide" }, ...(frame.correction ? [{ id: "note", label: "Note" }] : [])]}
+        tabs={[{ id: "drawing", label: "Drawing" }, { id: "video", label: "Video" }, { id: "guide", label: frame.correction ? "Guide" : "Pose guide" }, ...(frame.correction ? [{ id: "note", label: "Note" }] : []), ...(record ? [{ id: "mapping", label: "Mapping" }] : [])]}
         value={view}
         onValueChange={(id) => { setInspect(id as InspectView); setMarking(false); }}
       />
-      {marking && canMark && record && drawing ? (
+      {view === "mapping" && record ? (
+        <>
+          <MappingInspector run={run} frame={frame.index} attempt={record.attempt} canCorrect={canCorrect} busy={busy} onRedraw={onRedraw} />
+          <PromptLab run={run} frame={frame.index} attempt={record.attempt} canDraw={canCorrect} busy={busy} onDraw={onTestPrompt} />
+        </>
+      ) : marking && canMark && record && drawing ? (
         <PencilNote
           image={drawing}
           busy={busy}
           onCancel={() => setMarking(false)}
           onSend={(note) => { setMarking(false); onCorrect(record.attempt, note); }}
         />
-      ) : view === "drawing" && pending ? (
+      ) : view === "drawing" && (pending || dissolving) ? (
         <div className={`${fb.inspect} ${styles.inspectFrame} ${styles.drawingNow}`} role="status">
-          {/* eslint-disable-next-line @next/next/no-img-element -- the video frame being drawn, dimmed under the work */}
-          <img className={styles.drawingGhost} src={rotoscopeUrls.media(run.id, "source", frame.index)} alt="" draggable={false} />
-          <span className={styles.drawingSweep} aria-hidden />
-          <span className={styles.drawingStatus}>
-            <Spinner className="size-3.5" />
-            <span className="t-shimmer" data-text={LIVE_LABEL[pending.stage]}>{LIVE_LABEL[pending.stage]}</span>
-            <span className={styles.drawingTry}>{pending.tries}/{run.maxAttempts}</span>
-          </span>
+          <DrawingFx ghost={rotoscopeUrls.media(run.id, "source", frame.index)} image={dissolving ? drawing : null} onRevealed={finishReveal} />
+          {pending ? (
+            <span className={styles.drawingStatus}>
+              <Spinner className="size-3.5" />
+              <span className="t-shimmer" data-text={LIVE_LABEL[pending.stage]}>{LIVE_LABEL[pending.stage]}</span>
+              <span className={styles.drawingTry}>{pending.tries}/{run.maxAttempts}</span>
+            </span>
+          ) : null}
         </div>
       ) : image && failed !== image ? (
-        <ZoomButton className={`${fb.inspect} ${styles.inspectFrame}`} data-transparent={view === "drawing" ? "" : undefined} label="Open larger" onOpen={() => setZoomed(true)}>
-          {/* eslint-disable-next-line @next/next/no-img-element -- from the run's media route */}
-          <img key={image} className={styles.arrive} src={image} alt={view === "video" ? "Video frame" : view === "guide" ? "Pose guide on your character's proportions" : view === "note" ? "Your pencil marks on the earlier drawing" : `Attempt ${attempt}`} draggable={false} onError={() => setFailed(image)} />
-        </ZoomButton>
+        <ImageViewer
+          images={zoomItems}
+          label="Frame pictures"
+          value={zoomed ? view : null}
+          onValueChange={(id) => { if (id === null) setZoomed(false); else { setInspect(id as InspectView); setZoomed(true); } }}
+        >
+          <ImageViewerThumbnail
+            key={image}
+            imageId={view}
+            className={`${fb.inspect} ${styles.inspectFrame} rounded-xl bg-transparent`}
+            imageClassName={revealed === image ? undefined : styles.arrive}
+            data-transparent={view === "drawing" ? "" : undefined}
+            onErrorCapture={() => setFailed(image)}
+          />
+          <ImageViewerContent />
+        </ImageViewer>
       ) : (
         <div className={`${fb.inspect} ${styles.inspectFrame}`}>
           <span className={fb.stripEmpty}>{image ? "This picture couldn’t be loaded" : "Not drawn yet"}</span>
         </div>
       )}
-      <MediaLightbox
-        items={zoomItems}
-        index={zoomed ? Math.max(0, zoomViews.indexOf(view)) : null}
-        onIndexChange={(next) => setInspect(zoomViews[next])}
-        onClose={() => setZoomed(false)}
-      />
       {frame.correction ? <p className={fb.hint}>Your note on attempt {frame.correction.attempt}, for this frame’s next drawing: “{frame.correction.comment}”</p> : null}
       {canMark && !marking && view === "drawing" ? (
         <Button size="sm" variant="outline" className="w-fit" disabled={busy} onClick={() => setMarking(true)}>

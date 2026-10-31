@@ -2,6 +2,10 @@
 
   detect --images DIR --out poses.json        one subject per PNG (sorted by name)
   detect --image FILE --out pose.json         a single image
+         [--mode performance|balanced|lightweight] [--device cpu|cuda]
+         RTMW whole-body through rtmlib: performance = RTMW-x 384×288,
+         balanced = RTMW-x 256×192 (both with the HumanArt YOLOX detector).
+         Defaults: ROTOSCOPE_POSE_MODE, ROTOSCOPE_POSE_DEVICE, else performance on cpu.
   guides --source poses.json --character pose.json --out DIR [--head-top Y]
 
 Transparent PNGs are composited on mid gray first so DWPose sees the figure.
@@ -16,6 +20,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -50,12 +55,13 @@ def load(path: Path) -> np.ndarray:
     return image
 
 
-def detect(paths: list[Path]) -> dict:
-    estimator = dwpose_estimator(device="cpu", mode="performance")
+def detect(paths: list[Path], mode: str = "performance", device: str = "cpu") -> dict:
+    estimator = dwpose_estimator(device=device, mode=mode)
     frames = [load(p) for p in paths]
     track = extract(iter(frames), estimator, fps=1.0)
     data = track.to_json()
     data["files"] = [p.name for p in paths]
+    data["estimator"] = {"mode": mode, "device": device}
     return data
 
 
@@ -266,6 +272,8 @@ def main() -> None:
     d.add_argument("--images", type=Path)
     d.add_argument("--image", type=Path)
     d.add_argument("--out", type=Path, required=True)
+    d.add_argument("--mode", default=os.environ.get("ROTOSCOPE_POSE_MODE", "performance"), choices=["performance", "balanced", "lightweight"])
+    d.add_argument("--device", default=os.environ.get("ROTOSCOPE_POSE_DEVICE", "cpu"), choices=["cpu", "cuda", "mps"])
     g = sub.add_parser("guides")
     g.add_argument("--source", type=Path, required=True)
     g.add_argument("--character", type=Path, required=True)
@@ -274,7 +282,7 @@ def main() -> None:
     args = parser.parse_args()
     if args.command == "detect":
         paths = sorted(args.images.glob("*.png")) if args.images else [args.image]
-        args.out.write_text(json.dumps(detect(paths)))
+        args.out.write_text(json.dumps(detect(paths, args.mode, args.device)))
     else:
         report = guides(json.loads(args.source.read_text()), json.loads(args.character.read_text()), args.out, args.head_top)
         print(json.dumps({k: v for k, v in report.items() if k != "boneSource"}))

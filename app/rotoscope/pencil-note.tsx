@@ -11,8 +11,8 @@ import { ROTOSCOPE_LIMITS } from "../../shared/rotoscope";
 import fb from "../flipbook/flipbook.module.css";
 import styles from "./rotoscope.module.css";
 
-/** Every drawing is kept at the rotoscope canvas: the marks are drawn at the same pixels. */
-const SIZE = { width: 1024, height: 1536 } as const;
+/** Rotoscope keeps every drawing at this canvas: the marks are drawn at the same pixels. */
+const DEFAULT_SIZE = { width: 1024, height: 1536 } as const;
 const BRUSHES = [{ label: "Fine", width: 8 }, { label: "Medium", width: 16 }, { label: "Wide", width: 32 }] as const;
 const INK = "rgba(255, 32, 32, 0.9)";
 
@@ -23,9 +23,15 @@ type Stroke = { readonly width: number; readonly points: [number, number][] };
  * to the server as a transparent PNG at the drawing's own size; the next
  * drawing of the frame gets them over the old one, with the note.
  */
-export function PencilNote({ image, busy, onSend, onCancel }: {
+export function PencilNote({ image, busy, size = DEFAULT_SIZE, maxComment = ROTOSCOPE_LIMITS.maxCommentLength, single = false, hint, onSend, onCancel }: {
   readonly image: string;
   readonly busy: boolean;
+  /** The drawing's own pixels, when it is not the rotoscope canvas. */
+  readonly size?: { readonly width: number; readonly height: number };
+  readonly maxComment?: number;
+  /** One button that saves the note and redraws, for a drawing that is not part of a run. */
+  readonly single?: boolean;
+  readonly hint?: string;
   /** `redraw`: start drawing the frame right after the note is saved. */
   readonly onSend: (note: { comment: string; marks: Blob; redraw: boolean }) => void;
   readonly onCancel: () => void;
@@ -39,7 +45,7 @@ export function PencilNote({ image, busy, onSend, onCancel }: {
   const paint = (all: readonly Stroke[]) => {
     const context = canvas.current?.getContext("2d");
     if (!context) return;
-    context.clearRect(0, 0, SIZE.width, SIZE.height);
+    context.clearRect(0, 0, size.width, size.height);
     context.strokeStyle = INK;
     context.fillStyle = INK;
     context.lineCap = "round";
@@ -65,7 +71,7 @@ export function PencilNote({ image, busy, onSend, onCancel }: {
   /** Pointer position in drawing pixels: the canvas is shown scaled down. */
   const at = (event: PointerEvent<HTMLCanvasElement>): [number, number] => {
     const rect = event.currentTarget.getBoundingClientRect();
-    return [((event.clientX - rect.left) / rect.width) * SIZE.width, ((event.clientY - rect.top) / rect.height) * SIZE.height];
+    return [((event.clientX - rect.left) / rect.width) * size.width, ((event.clientY - rect.top) / rect.height) * size.height];
   };
   const down = (event: PointerEvent<HTMLCanvasElement>) => {
     if (busy) return;
@@ -94,13 +100,13 @@ export function PencilNote({ image, busy, onSend, onCancel }: {
   return (
     <div className={styles.pencil}>
       <div className={`${fb.inspect} ${styles.inspectFrame}`} data-transparent="">
-        <div className={styles.pencilBox}>
+        <div className={styles.pencilBox} style={{ aspectRatio: `${size.width} / ${size.height}` }}>
           {/* eslint-disable-next-line @next/next/no-img-element -- the drawing being marked, from the run's media route */}
           <img src={image} alt="Drawing to mark" draggable={false} />
           <canvas
             ref={canvas}
-            width={SIZE.width}
-            height={SIZE.height}
+            width={size.width}
+            height={size.height}
             className={styles.pencilCanvas}
             aria-label="Pencil: mark what is wrong on the drawing"
             onPointerDown={down}
@@ -118,18 +124,18 @@ export function PencilNote({ image, busy, onSend, onCancel }: {
       </div>
       <Textarea
         value={comment}
-        onChange={(event) => setComment(event.target.value.slice(0, ROTOSCOPE_LIMITS.maxCommentLength))}
+        onChange={(event) => setComment(event.target.value.slice(0, maxComment))}
         placeholder="What should change where you marked? E.g. “The arm on the left of the image is too long: the hand ends at mid-thigh.”"
         aria-label="What to change"
         disabled={busy}
         rows={3}
       />
       <div className={fb.buttonRow}>
-        <Button size="sm" variant="ai" disabled={!ready} onClick={() => send(true)}>{busy ? <Spinner className="size-3.5" /> : null}Save note &amp; redraw</Button>
-        <Button size="sm" variant="outline" disabled={!ready} onClick={() => send(false)}>Save note</Button>
+        <Button size="sm" variant="ai" disabled={!ready} onClick={() => send(true)}>{busy ? <Spinner className="size-3.5" /> : null}{single ? "Redraw with my marks" : "Save note & redraw"}</Button>
+        {single ? null : <Button size="sm" variant="outline" disabled={!ready} onClick={() => send(false)}>Save note</Button>}
         <Button size="sm" variant="ghost" disabled={busy} onClick={onCancel}><HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={1.75} />Cancel</Button>
       </div>
-      <p className={fb.hint}>The frame opens again and its next drawing gets your marks and note; the frames after it keep their approval.</p>
+      <p className={fb.hint}>{hint ?? "The frame opens again and its next drawing gets your marks and note; the frames after it keep their approval."}</p>
     </div>
   );
 }

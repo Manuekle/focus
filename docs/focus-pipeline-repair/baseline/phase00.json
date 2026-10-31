@@ -1,0 +1,259 @@
+{
+  "run": "60bd847f-d485-4c71-a27d-2b3336ed6d62",
+  "at": "2026-10-31T00:38:13.359Z",
+  "redetect": false,
+  "rows": [
+    {
+      "frame": 1,
+      "attempt": 1,
+      "recorded": [
+        {
+          "name": "pose",
+          "passed": false,
+          "detail": "MIRRORED, 4 bones, mean 3.0°, worst left thigh 4°",
+          "score": 3
+        },
+        {
+          "name": "scale",
+          "passed": true,
+          "detail": "hair 1.7/1.6, soles 12/11.4 (head +1 %, feet +6 %, centre -2 %)",
+          "score": 0.06
+        },
+        {
+          "name": "colour",
+          "passed": false,
+          "detail": "92.9 % similar to the palette (82.9 % as drawn); 7.4 % of the figure in colours the character doesn't have (#b9897c ΔE 34, #fbdcbf no palette colour of that hue); colours 92.9 % similar to the palette (needs 95 %)",
+          "score": 92.9
+        },
+        {
+          "name": "proportions",
+          "passed": false,
+          "detail": "8 limbs measured, worst right-of-image forearm +45 %, head -4 %",
+          "score": 0.451
+        },
+        {
+          "name": "alpha",
+          "passed": false,
+          "detail": "figure touches the canvas edge (13 px); Muse Image; moved 50, -2 px, scaled 0.95",
+          "score": 0.205
+        }
+      ],
+      "now": [
+        {
+          "name": "pose",
+          "passed": false,
+          "detail": "MIRRORED, 4 bones, mean 3.0°, worst left thigh 4°",
+          "score": 3
+        },
+        {
+          "name": "scale",
+          "passed": true,
+          "detail": "hair 1.7/1.6, soles 12/11.4 (head +1 %, feet +6 %, centre -2 %)",
+          "score": 0.06
+        },
+        {
+          "name": "colour",
+          "passed": false,
+          "detail": "92.9 % similar to the palette (82.9 % as drawn); 7.4 % of the figure in colours the character doesn't have (#b9897c ΔE 34, #fbdcbf no palette colour of that hue); colours 92.9 % similar to the palette (needs 95 %)",
+          "score": 92.9
+        },
+        {
+          "name": "proportions",
+          "passed": false,
+          "detail": "8 limbs measured, worst right-of-image forearm +45 %, head -4 %",
+          "score": 0.451
+        },
+        {
+          "name": "alpha",
+          "passed": false,
+          "detail": "figure touches the canvas edge (13 px)",
+          "score": 0.205
+        }
+      ],
+      "boneError": {
+        "torso": 10,
+        "head": 5,
+        "leftUpperArm": 171,
+        "leftForearm": 90,
+        "leftHand": 124,
+        "rightUpperArm": 164,
+        "rightForearm": 139,
+        "rightHand": 176,
+        "leftThigh": 4,
+        "leftShin": 4,
+        "leftFoot": 19,
+        "rightThigh": 1,
+        "rightShin": 3,
+        "rightFoot": 17
+      }
+    },
+    {
+      "frame": 1,
+      "attempt": 2,
+      "recorded": [
+        {
+          "name": "pose",
+          "passed": true,
+          "detail": "4 bones, mean 3.5°, worst left thigh 6°",
+          "score": 3.5
+        },
+        {
+          "name": "scale",
+          "passed": true,
+          "detail": "hair 1.6/1.6, soles 12/11.4 (head 0 %, feet +6 %, centre +1 %)",
+          "score": 0.06
+        },
+        {
+          "name": "colour",
+          "passed": false,
+          "detail": "92.6 % similar to the palette (80.0 % as drawn); 7.7 % of the figure in colours the character doesn't have (#e1e5e3 ΔE 52, #b58a7d ΔE 35, #fcdcbe no palette colour of that hue); colours 92.6 % similar to the palette (needs 95 %)",
+          "score": 92.6
+        },
+        {
+          "name": "proportions",
+          "passed": false,
+          "detail": "8 limbs measured, worst right-of-image forearm +19 %, head -13 %",
+          "score": 0.191
+        },
+        {
+          "name": "alpha",
+          "passed": true,
+          "detail": "clean cutout, figure 23.9 % of canvas; Muse Image; moved 12, 13 px, scaled 0.94",
+          "score": 0.239
+        }
+      ],
+      "now": [
+        {
+          "name": "pose",
+          "passed": true,
+          "detail": "4 bones, mean 3.5°, worst left thigh 6°",
+          "score": 3.5
+        },
+        {
+          "name": "scale",
+          "passed": true,
+          "detail": "hair 1.6/1.6, soles 12/11.4 (head 0 %, feet +6 %, centre +1 %)",
+          "score": 0.06
+        },
+        {
+          "name": "colour",
+          "passed": false,
+          "detail": "92.6 % similar to the palette (80.0 % as drawn); 7.7 % of the figure in colours the character doesn't have (#e1e5e3 ΔE 52, #b58a7d ΔE 35, #fcdcbe no palette colour of that hue); colours 92.6 % similar to the palette (needs 95 %)",
+          "score": 92.6
+        },
+        {
+          "name": "proportions",
+          "passed": false,
+          "detail": "8 limbs measured, worst right-of-image forearm +19 %, head -13 %",
+          "score": 0.191
+        },
+        {
+          "name": "alpha",
+          "passed": true,
+          "detail": "clean cutout, figure 23.9 % of canvas",
+          "score": 0.239
+        }
+      ],
+      "boneError": {
+        "torso": 2,
+        "head": 12,
+        "leftUpperArm": 2,
+        "leftForearm": 5,
+        "leftHand": 3,
+        "rightUpperArm": 14,
+        "rightForearm": 7,
+        "rightHand": 2,
+        "leftThigh": 6,
+        "leftShin": 0,
+        "leftFoot": 11,
+        "rightThigh": 5,
+        "rightShin": 3,
+        "rightFoot": 7
+      }
+    },
+    {
+      "frame": 1,
+      "attempt": 3,
+      "recorded": [
+        {
+          "name": "pose",
+          "passed": true,
+          "detail": "4 bones, mean 3.5°, worst left thigh 6°",
+          "score": 3.5
+        },
+        {
+          "name": "scale",
+          "passed": true,
+          "detail": "hair 1.6/1.6, soles 11.9/11.4 (head +0 %, feet +5 %, centre 0 %)",
+          "score": 0.046
+        },
+        {
+          "name": "colour",
+          "passed": false,
+          "detail": "93.8 % similar to the palette (81.8 % as drawn); 6.8 % of the figure in colours the character doesn't have (#fcdbbd no palette colour of that hue, #bfe3cb ΔE 29, #b7897b ΔE 35); colours 93.8 % similar to the palette (needs 95 %)",
+          "score": 93.8
+        },
+        {
+          "name": "proportions",
+          "passed": false,
+          "detail": "8 limbs measured, worst right-of-image forearm +60 %, head -4 %",
+          "score": 0.603
+        },
+        {
+          "name": "alpha",
+          "passed": true,
+          "detail": "clean cutout, figure 23.3 % of canvas; Muse Image; moved 22, 5 px, scaled 0.96",
+          "score": 0.233
+        }
+      ],
+      "now": [
+        {
+          "name": "pose",
+          "passed": true,
+          "detail": "4 bones, mean 3.5°, worst left thigh 6°",
+          "score": 3.5
+        },
+        {
+          "name": "scale",
+          "passed": true,
+          "detail": "hair 1.6/1.6, soles 11.9/11.4 (head +0 %, feet +5 %, centre 0 %)",
+          "score": 0.046
+        },
+        {
+          "name": "colour",
+          "passed": false,
+          "detail": "93.8 % similar to the palette (81.8 % as drawn); 6.8 % of the figure in colours the character doesn't have (#fcdbbd no palette colour of that hue, #bfe3cb ΔE 29, #b7897b ΔE 35); colours 93.8 % similar to the palette (needs 95 %)",
+          "score": 93.8
+        },
+        {
+          "name": "proportions",
+          "passed": false,
+          "detail": "8 limbs measured, worst right-of-image forearm +60 %, head -4 %",
+          "score": 0.603
+        },
+        {
+          "name": "alpha",
+          "passed": true,
+          "detail": "clean cutout, figure 23.3 % of canvas",
+          "score": 0.233
+        }
+      ],
+      "boneError": {
+        "torso": 1,
+        "head": 2,
+        "leftUpperArm": 5,
+        "leftForearm": 0,
+        "leftHand": 13,
+        "rightUpperArm": 85,
+        "rightForearm": 36,
+        "rightHand": 32,
+        "leftThigh": 6,
+        "leftShin": 1,
+        "leftFoot": 23,
+        "rightThigh": 5,
+        "rightShin": 2,
+        "rightFoot": 23
+      }
+    }
+  ]
+}

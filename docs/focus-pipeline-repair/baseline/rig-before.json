@@ -1,0 +1,168 @@
+{
+  "run": "60bd847f-d485-4c71-a27d-2b3336ed6d62",
+  "at": "2026-10-31T00:56:39.920Z",
+  "rows": [
+    {
+      "frame": 1,
+      "base": "character sheet",
+      "ms": 1529,
+      "triangles": 22862,
+      "flipped": 282,
+      "collapsed": null,
+      "distortedShare": 0.033,
+      "exposedArea": 5849,
+      "clamped": [
+        "rightUpperArm"
+      ],
+      "torsoFit": null,
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightUpperArm",
+        "solid-drawing/structure: 282 folded triangles, 3.3 % over-stretched, area ×0.87"
+      ]
+    },
+    {
+      "frame": 2,
+      "base": "character sheet",
+      "ms": 1248,
+      "triangles": 23332,
+      "flipped": 185,
+      "collapsed": null,
+      "distortedShare": 0.035,
+      "exposedArea": 19216,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": null,
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 185 folded triangles, 3.5 % over-stretched, area ×0.96"
+      ]
+    },
+    {
+      "frame": 3,
+      "base": "character sheet",
+      "ms": 1498,
+      "triangles": 23674,
+      "flipped": 200,
+      "collapsed": null,
+      "distortedShare": 0.035,
+      "exposedArea": 18314,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": null,
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 200 folded triangles, 3.5 % over-stretched, area ×1.01"
+      ]
+    },
+    {
+      "frame": 4,
+      "base": "character sheet",
+      "ms": 1247,
+      "triangles": 22958,
+      "flipped": 235,
+      "collapsed": null,
+      "distortedShare": 0.042,
+      "exposedArea": 17879,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": null,
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 235 folded triangles, 4.2 % over-stretched, area ×1.01"
+      ]
+    },
+    {
+      "frame": 5,
+      "base": "character sheet",
+      "ms": 1113,
+      "triangles": 22960,
+      "flipped": 234,
+      "collapsed": null,
+      "distortedShare": 0.043,
+      "exposedArea": 17552,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": null,
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 234 folded triangles, 4.3 % over-stretched, area ×1.01"
+      ]
+    },
+    {
+      "frame": 6,
+      "base": "character sheet",
+      "ms": 1119,
+      "triangles": 22796,
+      "flipped": 276,
+      "collapsed": null,
+      "distortedShare": 0.036,
+      "exposedArea": 16521,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": null,
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 276 folded triangles, 3.6 % over-stretched, area ×0.95"
+      ]
+    },
+    {
+      "frame": 7,
+      "base": "character sheet",
+      "ms": 1111,
+      "triangles": 22806,
+      "flipped": 269,
+      "collapsed": null,
+      "distortedShare": 0.036,
+      "exposedArea": 15704,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": null,
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 269 folded triangles, 3.6 % over-stretched, area ×0.94"
+      ]
+    },
+    {
+      "frame": 8,
+      "base": "character sheet",
+      "ms": 1130,
+      "triangles": 23584,
+      "flipped": 282,
+      "collapsed": null,
+      "distortedShare": 0.043,
+      "exposedArea": 16091,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": null,
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 282 folded triangles, 4.3 % over-stretched, area ×0.91"
+      ]
+    },
+    {
+      "frame": 9,
+      "base": "character sheet",
+      "ms": 1122,
+      "triangles": 23750,
+      "flipped": 263,
+      "collapsed": null,
+      "distortedShare": 0.043,
+      "exposedArea": 14970,
+      "clamped": [
+        "rightForearm"
+      ],
+      "torsoFit": null,
+      "failed": [
+        "solid-drawing/limb-volume: would need to stretch past the limits: rightForearm",
+        "solid-drawing/structure: 263 folded triangles, 4.3 % over-stretched, area ×0.89"
+      ]
+    }
+  ]
+}

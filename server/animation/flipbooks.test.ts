@@ -4,19 +4,22 @@ import { tmpdir } from "node:os";
 import { Readable } from "node:stream";
 import sharp from "sharp";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { ACTION_SPECS, denseInbetweenTargets, exposureSheet, inbetweenTargets, playbackCycle, type CharacterAnalysis, type Flipbook, type FlipbookStatus } from "../../shared/flipbook";
+import { ACTION_SPECS, currentMotionCheck, denseInbetweenTargets, motionSignature, exposureSheet, inbetweenTargets, plannedInbetweenTargets, playbackCycle, type CharacterAnalysis, type Flipbook, type FlipbookStatus } from "../../shared/flipbook";
 import { AppError } from "../errors";
 import { activeWorkCount } from "../jobs";
 import { DRIFT, walkerPng } from "./__fixtures__/walker";
 import {
   addExtraReference,
   applyFrameAction,
+  correctFrame,
   cancelFlipbook,
   changeReference,
   createFlipbook,
   drawInbetweens,
   emptiedScene,
   exportFlipbook,
+  checkFlipbookMotion,
+  fixMotion,
   generateBackground,
   generateMissing,
   listFlipbooks,
@@ -26,6 +29,8 @@ import {
   saveFlipbook,
   saveLook,
   sendToEditor,
+  planInbetweens,
+  poseToPoseRounds,
   reorderFrames,
   replaceFrame,
   services,
@@ -34,6 +39,8 @@ import {
   uploadBackgroundReference,
 } from "./flipbooks";
 import { segmentation } from "./frame-alignment";
+import { SkeletonRefused } from "./skeleton-inbetween";
+import { parseInbetweenPlan } from "./inbetween-planning";
 import { ingestCharacterImage } from "./image-input";
 import { actionFor, parsePlanOutput } from "./pose-planning";
 import { keepAroundSubject, removedWithSubject } from "./reference-manager";
@@ -57,7 +64,7 @@ const baseAnalysis: CharacterAnalysis = {
 };
 
 let analysis: CharacterAnalysis = baseAnalysis;
-const calls = { analyze: 0, plan: 0, draw: 0, clean: 0, scene: 0, describe: 0, drawIndices: [] as number[], neighbors: 0, activeDuringDraw: 0, extras: [] as number[], repairs: [] as (readonly string[] | null)[], posedDraws: 0 };
+const calls = { analyze: 0, plan: 0, draw: 0, clean: 0, scene: 0, describe: 0, drawIndices: [] as number[], neighbors: 0, activeDuringDraw: 0, extras: [] as number[], repairs: [] as (readonly string[] | null)[], posedDraws: 0, continuity: [] as string[] };
 let poseFailure: AppError | null = null;
 let automaticPose: string | undefined;
 let automaticGuides: Record<number, string> = {};
@@ -98,8 +105,9 @@ beforeAll(async () => {
     const phases = ACTION_SPECS[actionFor(seen)].poses.map((pose) => pose.phase);
     return parsePlanOutput(JSON.stringify({ direction: "right", motion: "in_place", drawingFps: null, durationSeconds: null, poseId: automaticPose, poses: phases.map((phase, index) => ({ phase, detail: "", referenceId: automaticGuides[index] })) }), seen, actionFor(seen), poseId);
   };
-  services.draw = async ({ index, neighbor, extras, repair, poseReference, signal }) => {
+  services.draw = async ({ index, neighbor, continuity, extras, repair, poseReference, signal }) => {
     calls.draw++;
+    calls.continuity.push(`${index}:${continuity?.before?.index ?? "-"}/${continuity?.after?.index ?? "-"}`);
     if (poseReference?.toString() === "mannequin reference") calls.posedDraws++;
     calls.drawIndices.push(index);
     calls.extras.push(extras?.length ?? 0);
@@ -121,6 +129,8 @@ beforeAll(async () => {
     return { analysis: { ...baseAnalysis, requestedAction: "none" }, summary: "A walker on a white page.", setting: null, ideas: [{ action: "run", direction: "left", detail: "in a hurry" }] };
   };
   services.review = async () => ({ summary: "fake", recognizableWalk: true, frames: new Map() });
+  // The motion check never asks Muse Spark here; a test that needs a correction supplies one.
+  services.motionFix = async () => null;
   // A left-to-right gradient: any seam or wrong scroll shows up in the pixels.
   services.backdrop = async () => {
     const width = 1536, height = 1024;
@@ -149,7 +159,7 @@ describe("the eight-pose pipeline", () => {
   let flipbook: Flipbook;
 
   it("goes from one illustration to eight registered, checked walk drawings", async () => {
-    const before = { ...calls };
+    const before = { ...calls, continuity: [...calls.continuity] };
     const created = await createFlipbook({ imageId, prompt: "walk in place" });
     expect(created.status).toBe("analyzing");
     flipbook = await waitFor(created.id, ["ready", "failed", "reference_ready"]);
@@ -157,6 +167,11 @@ describe("the eight-pose pipeline", () => {
     expect(calls.analyze - before.analyze).toBe(1);
     expect(calls.plan - before.plan).toBe(1);
     expect(calls.draw - before.draw).toBe(8);
+    // Pose to pose: the first key, the one halfway round, the quarters, then the eighths, each between finished drawings.
+    const drawnHere = calls.continuity.slice(before.continuity.length);
+    expect(drawnHere.slice(0, 2)).toEqual(["0:-/-", "4:0/-"]);
+    expect(drawnHere.slice(2, 4).sort()).toEqual(["2:0/4", "6:4/0"]);
+    expect(drawnHere.slice(4).sort()).toEqual(["1:0/2", "3:2/4", "5:4/6", "7:6/0"]);
     expect(calls.clean - before.clean).toBe(0);
     expect(calls.activeDuringDraw).toBeGreaterThanOrEqual(1);
     expect(flipbook.reference?.kind).toBe("original");
@@ -198,6 +213,7 @@ describe("the eight-pose pipeline", () => {
     const after = await waitFor(flipbook.id, ["ready"]);
     expect(calls.drawIndices.at(-1)).toBe(3);
     expect(calls.neighbors - neighbors).toBe(1);
+    expect(calls.continuity.at(-1)).toBe("3:2/4");
     const f3 = after.frames.find((frame) => frame.id === "f3")!;
     expect(f3.version).not.toBe(f3.originalVersion);
     expect(f3.versions.at(-1)?.note).toBe("lift the back heel");
@@ -217,6 +233,31 @@ describe("the eight-pose pipeline", () => {
     expect(f3.version).toBe(f3.originalVersion);
     expect(f3.status).toBe("ready");
     expect(calls.draw).toBe(draws);
+  });
+
+  it("shows an earlier drawing again without any AI call, and refuses one the frame never had", async () => {
+    const draws = calls.draw;
+    const current = (await getFlipbook(flipbook.id)).frames.find((frame) => frame.id === "f3")!;
+    const earlier = current.versions.find((entry) => entry.id !== current.version);
+    expect(earlier).toBeDefined();
+    const shown = await applyFrameAction(flipbook.id, "f3", { action: "use", version: earlier!.id });
+    expect(shown.frames.find((frame) => frame.id === "f3")!.version).toBe(earlier!.id);
+    expect(calls.draw).toBe(draws);
+    await expect(applyFrameAction(flipbook.id, "f3", { action: "use", version: earlier!.id })).rejects.toMatchObject({ code: "already_shown" });
+    await expect(applyFrameAction(flipbook.id, "f3", { action: "use", version: "v-missing" })).rejects.toMatchObject({ code: "version_not_found" });
+  });
+
+  it("repairs a drawing from pencil marks as one more drawing, keeping the old one in the history", async () => {
+    const before = await getFlipbook(flipbook.id);
+    const frame = before.frames.find((entry) => entry.id === "f4")!;
+    const marks = await sharp({ create: { width: 64, height: 96, channels: 4, background: { r: 255, g: 32, b: 32, alpha: 0.9 } } }).png().toBuffer();
+    await correctFrame(flipbook.id, "f4", { comment: "the front arm is too long", marks }, true);
+    const after = await waitFor(flipbook.id, ["ready"]);
+    const next = after.frames.find((entry) => entry.id === "f4")!;
+    expect(next.version).not.toBe(frame.version);
+    expect(next.versions.length).toBe(frame.versions.length + 1);
+    expect(next.versions.at(-1)).toMatchObject({ source: "enhanced", note: "the front arm is too long" });
+    expect(calls.repairs.at(-1)?.[0]).toContain("RED pencil marks");
   });
 
   it("never restores a first drawing that couldn't be cut out", async () => {
@@ -431,6 +472,195 @@ describe("in-betweens", () => {
       expect(exported.record.facts).toMatchObject({ frames: 1200, durationSeconds: 20, fps: 60 });
     } finally {
       services.plan = originalPlan;
+      services.inbetween = originalMiddle;
+    }
+  });
+
+  it("calculates the in-betweens from the measured movement, then draws the plan's eased poses", async () => {
+    const flipbook = await waitFor((await createFlipbook({ imageId, prompt: "walk in place, slowly" })).id, ["ready"]);
+    const originalPlanner = services.planInbetweens;
+    const originalMiddle = services.inbetween;
+    const asked: number[] = [];
+    let seen: Parameters<typeof services.planInbetweens>[0] | null = null;
+    services.planInbetweens = async (input) => {
+      seen = input;
+      return parseInbetweenPlan(JSON.stringify({ cycleSeconds: 2, summary: "A slow walk.", gaps: input.measures.map((_, index) => ({ count: index === 0 ? 3 : 0, ease: "in_out", note: "" })) }), input.measures)!;
+    };
+    services.inbetween = async ({ fromIndex, position }) => {
+      asked.push(position!);
+      return { png: await walkerPng(DRIFT[fromIndex].phase, DRIFT[fromIndex]), width: 1024, height: 1536 };
+    };
+    try {
+      const planned = await planInbetweens(flipbook.id);
+      expect(seen!.measures).toHaveLength(8);
+      expect(seen!.measures[0]).toMatchObject({ from: "f0", to: "f1", share: 0.125, turn: null });
+      expect(seen!.measures.every((gap) => gap.silhouette > 0 && gap.silhouette < 1)).toBe(true);
+      expect(seen!.plan.pace).toBe("gentle");
+      expect(planned.inbetweenPlan?.cycleSeconds).toBe(2);
+      expect(plannedInbetweenTargets(planned).map((target) => target.id)).toEqual(["i0-1of4", "i0", "i0-3of4"]);
+      expect(planned.budget.used).toBe(flipbook.budget.used);
+      await drawInbetweens(flipbook.id, true, undefined, undefined, true);
+      const after = await waitFor(flipbook.id, ["ready"]);
+      expect(asked.sort()).toEqual([0.15625, 0.5, 0.84375]);
+      expect(after.inbetweens.find((entry) => entry.id === "i0-1of4")).toMatchObject({ position: 0.25, progress: 0.15625, status: "ready" });
+      expect(playbackCycle(after, true).filter((drawing) => drawing.inbetween).map((drawing) => drawing.id)).toEqual(["i0-1of4", "i0", "i0-3of4"]);
+      expect(plannedInbetweenTargets(after)).toEqual([]);
+    } finally {
+      services.planInbetweens = originalPlanner;
+      services.inbetween = originalMiddle;
+    }
+  });
+
+  it("keeps the plan and the in-betweens of gaps whose keys didn't change when a redrawn key is calculated again", async () => {
+    const flipbook = await waitFor((await createFlipbook({ imageId, prompt: "walk in place, slowly" })).id, ["ready"]);
+    const originalPlanner = services.planInbetweens;
+    const originalMiddle = services.inbetween;
+    let round = 0;
+    // Each answer spaces every gap differently: only the gaps around the redrawn key may take the new one.
+    services.planInbetweens = async (input) => {
+      round++;
+      return parseInbetweenPlan(JSON.stringify({ cycleSeconds: 2, summary: `Round ${round}.`, gaps: input.measures.map(() => ({ count: round === 1 ? 1 : 2, ease: round === 1 ? "none" : "in", note: "" })) }), input.measures)!;
+    };
+    services.inbetween = async ({ fromIndex }) => ({ png: await walkerPng(DRIFT[fromIndex].phase, DRIFT[fromIndex]), width: 1024, height: 1536 });
+    try {
+      await planInbetweens(flipbook.id);
+      await drawInbetweens(flipbook.id, true, undefined, undefined, true);
+      const drawn = await waitFor(flipbook.id, ["ready"]);
+      const before = new Map(drawn.inbetweens.map((entry) => [entry.id, entry.version]));
+      await applyFrameAction(flipbook.id, "f3", { action: "regenerate", confirmExtra: true });
+      await waitFor(flipbook.id, ["ready"]);
+      const replanned = await planInbetweens(flipbook.id);
+      expect(replanned.inbetweenPlan!.gaps.map((gap) => gap.count)).toEqual([1, 1, 2, 2, 1, 1, 1, 1]);
+      expect(plannedInbetweenTargets(replanned).every((target) => target.from === "f2" || target.from === "f3")).toBe(true);
+      expect(playbackCycle(replanned, true).filter((drawing) => drawing.inbetween && !["f2", "f3"].includes(replanned.inbetweens.find((entry) => entry.id === drawing.id)!.from)).every((drawing) => before.get(drawing.id as never) === replanned.inbetweens.find((entry) => entry.id === drawing.id)!.version)).toBe(true);
+      // Nothing redrawn since: "Calculate again" decides every gap anew.
+      expect((await planInbetweens(flipbook.id)).inbetweenPlan!.gaps.every((gap) => gap.count === 2)).toBe(true);
+    } finally {
+      services.planInbetweens = originalPlanner;
+      services.inbetween = originalMiddle;
+    }
+  });
+
+  it("checks the played loop after the in-betweens, and keeps a fixed key only when it fits its neighbors", async () => {
+    // Drawing 3 is a blob, not a walker: every step into and out of it jumps.
+    const blob = await sharp({ create: { width: 1024, height: 1536, channels: 3, background: "#ffffff" } })
+      .composite([{ input: Buffer.from('<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1536"><ellipse cx="512" cy="900" rx="420" ry="520" fill="#2e86de"/></svg>') }])
+      .png().toBuffer();
+    drawPictures.set(2, blob);
+    const flipbook = await waitFor((await createFlipbook({ imageId, prompt: "walk in place, slowly" })).id, ["ready"]);
+    const originalPlanner = services.planInbetweens;
+    const originalMiddle = services.inbetween;
+    const originalFix = services.motionFix;
+    const requests: string[] = [];
+    services.planInbetweens = async (input) => parseInbetweenPlan(JSON.stringify({ cycleSeconds: 2, summary: "Even.", gaps: input.measures.map(() => ({ count: 1, ease: "none", note: "" })) }), input.measures)!;
+    services.inbetween = async ({ fromIndex, toIndex }) => ({ png: fromIndex === 2 || toIndex === 2 ? (drawPictures.get(2) ?? await walkerPng(DRIFT[2].phase, DRIFT[2])) : await walkerPng(DRIFT[fromIndex].phase, DRIFT[fromIndex]), width: 1024, height: 1536 });
+    services.motionFix = async ({ request }) => {
+      requests.push(request);
+      return { reply: "Drawing 3 doesn't sit between its neighbors.", frames: [{ frame: "f2", label: "Left passing", summary: "A walker again.", description: "The left leg carries the weight under the body; the right foot passes beside the left ankle." }] };
+    };
+    try {
+      await planInbetweens(flipbook.id);
+      await drawInbetweens(flipbook.id, true, undefined, undefined, true);
+      const checked = await waitFor(flipbook.id, ["ready"]);
+      const check = checked.motionCheck!;
+      expect(check.signature).toBe(motionSignature(checked));
+      expect(check.snaps.length).toBeGreaterThan(0);
+      expect(check.snaps.some((snap) => snap.from === "f2" || snap.to === "f2" || snap.gap === "f2")).toBe(true);
+      expect(check.fix?.frames.map((entry) => entry.frame)).toEqual(["f2"]);
+      expect(requests[0]).toContain("skipping");
+      const oldVersion = checked.frames.find((frame) => frame.id === "f2")!.version;
+      const oldDescription = checked.plan!.poses[2].description;
+
+      // Still a blob: the redraw doesn't fit, so the earlier drawing and its description come back.
+      await fixMotion(flipbook.id, true);
+      const undone = await waitFor(flipbook.id, ["ready"]);
+      expect(undone.frames.find((frame) => frame.id === "f2")!.version).toBe(oldVersion);
+      expect(undone.plan!.poses[2].description).toBe(oldDescription);
+      expect(undone.budget.used).toBe(checked.budget.used + 1);
+      expect(undone.motionCheck?.outcome).toContain("earlier drawing is back");
+      expect(currentMotionCheck(undone)?.fix).not.toBeNull();
+
+      // A walker this time: kept, the in-betweens are made again and the loop is checked again.
+      drawPictures.delete(2);
+      await fixMotion(flipbook.id, true);
+      const fixed = await waitFor(flipbook.id, ["ready"]);
+      const f2 = fixed.frames.find((frame) => frame.id === "f2")!;
+      expect(f2.version).not.toBe(oldVersion);
+      expect(fixed.plan!.poses[2].description).toContain("passes beside the left ankle");
+      expect(currentMotionCheck(fixed)?.outcome).toMatch(/^Redrew “Left passing”\./);
+      expect(currentMotionCheck(fixed)!.worst).toBeLessThan(check.worst);
+      expect(fixed.inbetweens.filter((entry) => entry.from === "f2" || entry.to === "f2").every((entry) => entry.status === "ready" && (entry.fromVersion === f2.version || entry.toVersion === f2.version))).toBe(true);
+      await expect(checkFlipbookMotion(flipbook.id)).resolves.toMatchObject({ motionCheck: { signature: motionSignature(fixed) } });
+    } finally {
+      services.planInbetweens = originalPlanner;
+      services.inbetween = originalMiddle;
+      services.motionFix = originalFix;
+    }
+  });
+
+  it("moves the skeleton for the in-betweens it can carry, and draws the rest without charging the first", async () => {
+    const flipbook = await waitFor((await createFlipbook({ imageId, prompt: "walk in place" })).id, ["ready"]);
+    const originalSkeleton = services.skeleton;
+    const originalMiddle = services.inbetween;
+    const before = flipbook.budget.used;
+    let drawn = 0;
+    let moved = 0;
+    services.skeleton = async ({ from, to, position }) => {
+      if (position !== 0.5 || from.measure.rawWidth !== to.measure.rawWidth) throw new SkeletonRefused("test: never");
+      // Every other pair is carried; the stub refuses the rest the way the engine does.
+      if (moved++ % 2) throw new SkeletonRefused("the keys are 140° apart");
+      return { raw: from.raw, cutout: from.cutout, measure: from.measure, turn: 10, quality: { exposed: 0, distorted: 0, size: 1, torn: 0 } };
+    };
+    services.inbetween = async ({ fromIndex }) => {
+      drawn++;
+      return { png: await walkerPng(DRIFT[fromIndex].phase, DRIFT[fromIndex]), width: 1024, height: 1536 };
+    };
+    try {
+      await drawInbetweens(flipbook.id, false);
+      const after = await waitFor(flipbook.id, ["ready"]);
+      const made = after.inbetweens.filter((entry) => entry.status === "ready");
+      expect(made).toHaveLength(8);
+      expect(made.filter((entry) => entry.method === "skeleton")).toHaveLength(4);
+      expect(made.filter((entry) => entry.method === "image")).toHaveLength(4);
+      expect(drawn).toBe(4);
+      // Only the drawn ones count against the budget.
+      expect(after.budget.used - before).toBe(4);
+    } finally {
+      services.skeleton = originalSkeleton;
+      services.inbetween = originalMiddle;
+    }
+  });
+
+  it("moves the in-betweens the skeleton can carry as soon as the keys are drawn, leaving the rest undrawn and free", async () => {
+    const originalSkeleton = services.skeleton;
+    const originalMiddle = services.inbetween;
+    let drawn = 0;
+    let asked = 0;
+    services.skeleton = async ({ from }) => {
+      asked++;
+      if (asked % 3 === 0) throw new SkeletonRefused("the keys are 140° apart");
+      return { raw: from.raw, cutout: from.cutout, measure: from.measure, turn: 10, quality: { exposed: 0, distorted: 0, size: 1, torn: 0 } };
+    };
+    services.inbetween = async ({ fromIndex }) => {
+      drawn++;
+      return { png: await walkerPng(DRIFT[fromIndex].phase, DRIFT[fromIndex]), width: 1024, height: 1536 };
+    };
+    try {
+      const created = await createFlipbook({ imageId, prompt: "walk in place" });
+      const started = Date.now();
+      let after = await waitFor(created.id, ["ready"]);
+      // The keys are ready first; the in-betweens follow in the same run.
+      while ((after.inbetweens.length === 0 || after.status !== "ready") && Date.now() - started < 30_000) {
+        await new Promise((resolve) => setTimeout(resolve, 60));
+        after = await getFlipbook(created.id);
+      }
+      expect(after.status).toBe("ready");
+      expect(after.inbetweens.length).toBeGreaterThan(0);
+      expect(after.inbetweens.every((entry) => entry.status === "ready" && entry.method === "skeleton")).toBe(true);
+      expect(drawn).toBe(0);
+      expect(after.budget.used).toBe(8);
+    } finally {
+      services.skeleton = originalSkeleton;
       services.inbetween = originalMiddle;
     }
   });
@@ -810,5 +1040,14 @@ describe("extra references and repairs", () => {
     const f4 = done.frames.find((frame) => frame.poseIndex === 4)!;
     expect(f4.version).toBeNull();
     await expect(applyFrameAction(done.id, f4.id, { action: "enhance" })).rejects.toMatchObject({ code: "nothing_to_enhance" });
+  });
+});
+
+describe("pose-to-pose rounds", () => {
+  it("orders a cycle's drawings first, halfway, quarters, then eighths", () => {
+    const order = ["f0", "f1", "f2", "f3", "f4", "f5", "f6", "f7"];
+    expect(poseToPoseRounds(order, order)).toEqual([["f0"], ["f4"], ["f2", "f6"], ["f1", "f3", "f5", "f7"]]);
+    expect(poseToPoseRounds(order, ["f3", "f4"])).toEqual([["f4"], ["f3"]]);
+    expect(poseToPoseRounds(["a", "b", "c"], ["a", "b", "c"])).toEqual([["a"], ["b", "c"]]);
   });
 });

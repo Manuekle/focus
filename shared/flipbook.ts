@@ -627,6 +627,10 @@ export const CharacterAnalysisSchema = z.object({
 });
 export type CharacterAnalysis = z.infer<typeof CharacterAnalysisSchema>;
 
+export const PACES = ["gentle", "normal", "brisk"] as const;
+export const PaceSchema = z.enum(PACES);
+export type Pace = z.infer<typeof PaceSchema>;
+
 export const AnimationPoseSchema = z.object({
   index: z.number().int().min(0).max(MAX_SEQUENCE_FRAMES - 1),
   phase: PhaseSchema,
@@ -655,6 +659,8 @@ export const FlipbookPlanSchema = z
     drawingFps: DrawingFpsSchema,
     durationSeconds: PlaybackSecondsSchema,
     loop: z.boolean(),
+    /** How big and soft the movement is ("slow walk", "lively dance"); older plans have none and read it from their instruction. */
+    pace: PaceSchema.optional(),
     /** Pose to pose: the keys and timing chart the drawings follow. Absent in straight-ahead sequences and cycles. */
     timing: TimingChartSchema.optional(),
     poses: z.array(AnimationPoseSchema).min(2).max(MAX_SEQUENCE_FRAMES),
@@ -741,6 +747,7 @@ export function inbetweenAt(frameId: FrameId, step: number, divisions: number): 
 }
 export const MAX_INBETWEENS = 88;
 export const VersionIdSchema = z.string().regex(/^v-[0-9a-f]{12}$/);
+export type VersionId = z.infer<typeof VersionIdSchema>;
 
 export const FrameWarningCodeSchema = z.enum([
   "subject_cropped",
@@ -775,8 +782,8 @@ export type FrameReview = z.infer<typeof FrameReviewSchema>;
 
 export const FrameVersionSchema = z.object({
   id: VersionIdSchema,
-  /** "imported": a frame of a Reference Motion render, never drawn by Muse Image. */
-  source: z.enum(["generated", "uploaded", "enhanced", "imported"]),
+  /** "imported": a frame of a Reference Motion render, never drawn by Muse Image. "skeleton": a key drawing moved along a movement video's pose, never drawn by Muse Image. */
+  source: z.enum(["generated", "uploaded", "enhanced", "imported", "skeleton"]),
   createdAt: z.iso.datetime(),
   /** The user's correction note for a redraw. */
   note: z.string().max(240).optional(),
@@ -870,8 +877,14 @@ export const InbetweenSchema = z.object({
   to: FrameIdSchema,
   fromVersion: VersionIdSchema,
   toVersion: VersionIdSchema,
-  /** Progress along the arc between the keys. Older drawings are halfway. */
+  /** When it plays: its share of the key's exposure. Older drawings are halfway. */
   position: z.number().gt(0).lt(1).optional(),
+  /** How far along the movement it is drawn, after the gap's easing (`easeProgress`); absent, the same as `position`. */
+  progress: z.number().gt(0).lt(1).optional(),
+  /** Where the finished drawing actually reads between its keys, from its outline (`measureInbetweenOrder`): a drawing put too far along plays in its true order. */
+  seen: z.number().min(0).max(1).optional(),
+  /** How it was made: moved from the keys' skeleton (no drawing used), or drawn by Muse Image. Older ones have none. */
+  method: z.enum(["skeleton", "image"]).optional(),
   status: z.enum(["generating", "processing", "ready", "failed"]),
   version: VersionIdSchema.nullable(),
   error: z.object({ code: z.string(), message: z.string() }).nullable(),
@@ -1059,6 +1072,10 @@ export const FlipbookSchema = z.object({
   alignment: AlignmentSchema.nullable(),
   /** Saved animations from before in-betweens existed have none. */
   inbetweens: z.array(InbetweenSchema).max(MAX_INBETWEENS).default([]),
+  /** How many in-betweens each gap gets and how they are spaced, measured and decided by "Calculate in-betweens". */
+  inbetweenPlan: z.lazy(() => InbetweenPlanSchema).nullable().optional(),
+  /** The played loop measured step by step after the in-betweens: where it jumps, and Muse Spark's correction. */
+  motionCheck: z.lazy(() => MotionCheckSchema).nullable().optional(),
   budget: z.object({ limit: z.number().int().nonnegative(), used: z.number().int().nonnegative() }),
   backgrounds: z.object({
     scene: z.boolean(),
@@ -1137,18 +1154,23 @@ export const FrameActionSchema = z.discriminatedUnion("action", [
   /** Muse Image repairs the current drawing: same pose, with the generation's mistakes fixed. */
   z.object({ action: z.literal("enhance"), note: z.string().trim().max(240).optional(), confirmExtra: z.boolean().optional() }),
   z.object({ action: z.literal("restore") }),
+  /** Shows an earlier drawing of this frame again. */
+  z.object({ action: z.literal("use"), version: VersionIdSchema }),
   z.object({ action: z.literal("approve"), approved: z.boolean() }),
 ]);
 export type FrameAction = z.infer<typeof FrameActionSchema>;
 
 /** The same attention state drives the timeline badge and the repair action. */
+/** Notes a frame's panel still shows that nobody needs to act on: how it was cut out says nothing about the drawing, and redrawing wouldn't change it. */
+const INFORMATIONAL_WARNINGS: ReadonlySet<string> = new Set(["key_extraction"]);
+
 export function frameNeedsAttention(frame: FlipbookFrame): boolean {
-  return frame.warnings.length > 0 || Boolean(frame.review && (!frame.review.ok || frame.review.issues.length)) || Boolean(frame.error);
+  return frame.warnings.some((warning) => !INFORMATIONAL_WARNINGS.has(warning.code)) || Boolean(frame.review && (!frame.review.ok || frame.review.issues.length)) || Boolean(frame.error);
 }
 
 export function repairableFrames(flipbook: Pick<Flipbook, "frames">): FlipbookFrame[] {
   return flipbook.frames.filter((frame) => frame.status === "ready" && frame.version && !frame.approved && (
-    frame.warnings.some((warning) => warning.code !== "exposure_too_long" && warning.code !== "reference_hold_review") || Boolean(frame.review && (!frame.review.ok || frame.review.issues.length)) || Boolean(frame.error)
+    frame.warnings.some((warning) => warning.code !== "exposure_too_long" && warning.code !== "reference_hold_review" && !INFORMATIONAL_WARNINGS.has(warning.code)) || Boolean(frame.review && (!frame.review.ok || frame.review.issues.length)) || Boolean(frame.error)
   ));
 }
 
@@ -1160,7 +1182,13 @@ export const FlipbookActionSchema = z.discriminatedUnion("action", [
   /** Draw every frame that has no drawing yet (first run after a reference check, or after failures). */
   z.object({ action: z.literal("generate"), confirmExtra: z.boolean().optional() }),
   /** Fill the exposure slots for a pace; older requests draw one midpoint per key. */
-  z.object({ action: z.literal("inbetweens"), drawingFps: DrawingFpsSchema.optional(), confirmExtra: z.boolean().optional() }),
+  z.object({ action: z.literal("inbetweens"), drawingFps: DrawingFpsSchema.optional(), confirmExtra: z.boolean().optional(), /** Draw the calculated plan's in-betweens. */ planned: z.boolean().optional() }),
+  /** Measure the movement between the keys and let Muse Spark decide the in-betweens: nothing is drawn. */
+  z.object({ action: z.literal("plan_inbetweens") }),
+  /** Measure the played loop step by step; on a jump Muse Spark proposes which keys to rewrite. Nothing is drawn. */
+  z.object({ action: z.literal("check_motion") }),
+  /** Apply the motion check's correction: redraw its keys, keep each only if it fits its neighbors, then the in-betweens. */
+  z.object({ action: z.literal("fix_motion"), confirmExtra: z.boolean().optional() }),
   z.object({ action: z.literal("reorder"), order: z.array(FrameIdSchema).min(WALK_FRAME_COUNT).max(MAX_FRAMES) }),
   z.object({ action: z.literal("reference"), kind: z.enum(["original", "clean"]), confirmExtra: z.boolean().optional() }),
   z.object({ action: z.literal("scene"), confirmExtra: z.boolean().optional() }),
@@ -1199,6 +1227,9 @@ export function flipbookTitle(flipbook: Pick<Flipbook, "title" | "prompt">): str
 // ── URLs ───────────────────────────────────────────────────────────────────
 
 export type BackgroundMedia = "scene" | "scene-loop" | "scene-far" | "scene-near" | "custom" | "bg-reference" | "generated" | "generated-loop" | "generated-far" | "generated-near";
+
+/** A pencil note on one drawing: red marks as a transparent PNG, and what to change. */
+export const FRAME_NOTE_LIMITS = { maxCommentLength: 240, maxMarkBytes: 8 * 1024 * 1024 } as const;
 
 export const flipbookUrls = {
   source: (id: string) => `/api/flipbooks/${id}/media?kind=source`,
@@ -1239,7 +1270,17 @@ export function inbetweenTargets(flipbook: Pick<Flipbook, "frames" | "order" | "
   }).map((frame) => frame.id);
 }
 
-export type InbetweenTarget = { readonly id: InbetweenId; readonly from: FrameId; readonly position: number };
+/** `progress` is how far along the movement it is drawn; absent, evenly spaced (`position`). */
+export type InbetweenTarget = { readonly id: InbetweenId; readonly from: FrameId; readonly position: number; readonly progress?: number };
+
+/** Where along the movement a saved in-between was drawn. */
+export const inbetweenProgress = (inbetween: Pick<Inbetween, "position" | "progress">): number => inbetween.progress ?? inbetween.position ?? 0.5;
+
+/** A saved in-between still serves a target only when it was drawn at the same point of the movement. */
+const servesTarget = (flipbook: Pick<Flipbook, "frames" | "order" | "alignment" | "inbetweens">, target: InbetweenTarget): boolean => {
+  const current = flipbook.inbetweens.find((entry) => entry.id === target.id);
+  return Boolean(current && inbetweenCurrent(flipbook, current) && Math.abs(inbetweenProgress(current) - (target.progress ?? target.position)) < 1e-3);
+};
 
 /** Fill every exposure slot: 24 distinct drawings/s without shortening the cycle. */
 export function denseInbetweenTargets(flipbook: Pick<Flipbook, "frames" | "order" | "alignment" | "inbetweens">, drawingFps: DrawingFps): InbetweenTarget[] {
@@ -1248,24 +1289,154 @@ export function denseInbetweenTargets(flipbook: Pick<Flipbook, "frames" | "order
   return frames.flatMap((frame, index) => Array.from({ length: holds[index] - 1 }, (_, offset) => {
     const step = offset + 1;
     return { id: inbetweenAt(frame.id, step, holds[index]), from: frame.id, position: step / holds[index] };
-  })).filter((target) => {
-    const current = flipbook.inbetweens.find((entry) => entry.id === target.id);
-    return !current || !inbetweenCurrent(flipbook, current);
-  });
+  })).filter((target) => !servesTarget(flipbook, target));
+}
+
+// ── Calculated in-betweens ────────────────────────────────────────────────
+// "Calculate in-betweens" measures how far the body moves across each gap
+// between two keys, and Muse Spark decides the cycle's length (its speed), how
+// many in-betweens each gap needs and how they are spaced. The drawings sit
+// at even steps in time; their poses follow the gap's easing.
+
+export const INBETWEEN_EASES = ["none", "in", "out", "in_out"] as const;
+export const InbetweenEaseSchema = z.enum(INBETWEEN_EASES);
+export type InbetweenEase = z.infer<typeof InbetweenEaseSchema>;
+/** In-betweens a gap can take: its key's exposure split into 2, 3, 4, 6 or 8 even steps, the shares in-between ids hold. */
+export const PLANNED_INBETWEEN_COUNTS = [0, 1, 2, 3, 5, 7] as const;
+/** Distinct drawings per second a calculated cycle may reach: one per 24 fps exposure frame. */
+export const MAX_PLANNED_DRAWING_FPS = EXPOSURE_FPS;
+
+export const InbetweenGapSchema = z.object({
+  from: FrameIdSchema,
+  to: FrameIdSchema,
+  /** The key drawings measured: when either is redrawn, the plan no longer describes them. */
+  fromVersion: VersionIdSchema,
+  toVersion: VersionIdSchema,
+  count: z.number().int().refine((count) => (PLANNED_INBETWEEN_COUNTS as readonly number[]).includes(count), "Unsupported in-between count."),
+  ease: InbetweenEaseSchema,
+  /** The movement measured across the gap: the widest bone turn (degrees) and joint travel (torso lengths) when the skeleton was read, and how much the silhouette changes (0 same, 1 no overlap). */
+  turn: z.number().min(0).max(360).nullable(),
+  travel: z.number().min(0).max(50).nullable(),
+  silhouette: z.number().min(0).max(1),
+  note: z.string().max(200),
+});
+export type InbetweenGap = z.infer<typeof InbetweenGapSchema>;
+
+export const InbetweenPlanSchema = z.object({
+  /** The whole cycle's length: how fast the action plays. Playback takes it. */
+  cycleSeconds: z.number().min(0.5).max(8),
+  summary: z.string().max(600),
+  gaps: z.array(InbetweenGapSchema).min(2).max(MAX_FRAMES),
+  createdAt: z.iso.datetime(),
+});
+export type InbetweenPlan = z.infer<typeof InbetweenPlanSchema>;
+
+/** The pose `t` of the way through a gap's time: in slows into the next key, out leaves this one slowly, in_out both. */
+export function easeProgress(t: number, ease: InbetweenEase): number {
+  if (ease === "in") return 1 - (1 - t) * (1 - t);
+  if (ease === "out") return t * t;
+  if (ease === "in_out") return t * t * (3 - 2 * t);
+  return t;
+}
+
+/** The most in-betweens a gap of `seconds` holds at one drawing per exposure frame, as one of the supported counts. */
+export function maxPlannedInbetweens(seconds: number): number {
+  const slots = Math.floor(seconds * MAX_PLANNED_DRAWING_FPS + 1e-6) - 1;
+  return [...PLANNED_INBETWEEN_COUNTS].reverse().find((count) => count <= slots) ?? 0;
+}
+
+/** Each gap's share of the cycle: its key's exposure over the whole sheet. */
+export function gapShares(flipbook: Pick<Flipbook, "frames" | "order">, drawingFps: DrawingFps): number[] {
+  const holds = exposures(orderedFrames(flipbook).map((frame) => frame.phase), drawingFps);
+  const total = holds.reduce((sum, hold) => sum + hold, 0);
+  return holds.map((hold) => hold / total);
+}
+
+/** The plan when it still describes the keys as they are drawn and ordered now. */
+export function currentInbetweenPlan(flipbook: Pick<Flipbook, "frames" | "order"> & { readonly inbetweenPlan?: InbetweenPlan | null }): InbetweenPlan | null {
+  const plan = flipbook.inbetweenPlan;
+  if (!plan || plan.gaps.length !== flipbook.order.length) return null;
+  const version = (frameId: FrameId) => flipbook.frames.find((frame) => frame.id === frameId)?.version;
+  const fits = plan.gaps.every((gap, index) => gap.from === flipbook.order[index] && gap.to === flipbook.order[(index + 1) % flipbook.order.length] && version(gap.from) === gap.fromVersion && version(gap.to) === gap.toVersion);
+  return fits ? plan : null;
+}
+
+/** A step of the played loop whose outline changes this much (0 same, 1 no overlap) reads as a jump, not movement. */
+export const MOTION_SNAP = 0.33;
+
+/** One jump of the played loop: the two drawings shown one after the other, and the key gap it falls in. */
+export const MotionSnapSchema = z.object({ from: DrawingIdSchema, to: DrawingIdSchema, gap: FrameIdSchema, change: z.number().min(0).max(1) });
+export type MotionSnap = z.infer<typeof MotionSnapSchema>;
+
+/** Muse Spark's correction of the jumps: the key poses to rewrite, each redrawn from its new description. */
+export const MotionFixSchema = z.object({
+  reply: z.string().max(400),
+  frames: z.array(z.object({ frame: FrameIdSchema, label: z.string().max(40), summary: z.string().max(160), description: z.string().min(1).max(900) })).min(1).max(MAX_FRAMES),
+});
+export type MotionFix = z.infer<typeof MotionFixSchema>;
+
+export const MotionCheckSchema = z.object({
+  /** The played drawings and versions it measured: when any changes, the check no longer describes the loop. */
+  signature: z.string().max(4000),
+  /** The average and largest outline change from one played drawing to the next. */
+  mean: z.number().min(0).max(1),
+  worst: z.number().min(0).max(1),
+  snaps: z.array(MotionSnapSchema).max(MAX_INBETWEENS),
+  fix: MotionFixSchema.nullable(),
+  /** What the last correction did, said plainly (a redraw that didn't fit is undone, never kept). */
+  outcome: z.string().max(400).nullable().default(null),
+  at: z.iso.datetime(),
+});
+export type MotionCheck = z.infer<typeof MotionCheckSchema>;
+
+/** The played loop's drawings and versions, as a motion check records them. */
+export function motionSignature(flipbook: Pick<Flipbook, "frames" | "order" | "alignment" | "inbetweens"> & { readonly inbetweenPlan?: InbetweenPlan | null }): string {
+  return playbackCycle(flipbook, true).map((drawing) => {
+    const version = drawing.inbetween ? flipbook.inbetweens.find((entry) => entry.id === drawing.id)?.version : flipbook.frames.find((frame) => frame.id === drawing.id)?.version;
+    return `${drawing.id}@${version ?? "-"}`;
+  }).join(" ");
+}
+
+/** The motion check when it still describes the loop as it plays now. */
+export function currentMotionCheck(flipbook: Pick<Flipbook, "frames" | "order" | "alignment" | "inbetweens"> & { readonly inbetweenPlan?: InbetweenPlan | null; readonly motionCheck?: MotionCheck | null }): MotionCheck | null {
+  const check = flipbook.motionCheck;
+  return check && check.signature === motionSignature(flipbook) ? check : null;
+}
+
+/** Every in-between a plan asks for, evenly timed within its gap and eased along the movement. */
+export function plannedTargets(plan: InbetweenPlan): InbetweenTarget[] {
+  return plan.gaps.flatMap((gap) => Array.from({ length: gap.count }, (_, offset) => {
+    const position = (offset + 1) / (gap.count + 1);
+    return { id: inbetweenAt(gap.from, offset + 1, gap.count + 1), from: gap.from, position, progress: easeProgress(position, gap.ease) };
+  }));
+}
+
+/** What "Make in-betweens" draws for a calculated plan: its targets not yet drawn at their point of the movement. */
+export function plannedInbetweenTargets(flipbook: Pick<Flipbook, "frames" | "order" | "alignment" | "inbetweens"> & { readonly inbetweenPlan?: InbetweenPlan | null }): InbetweenTarget[] {
+  const plan = currentInbetweenPlan(flipbook);
+  return plan ? plannedTargets(plan).filter((target) => !servesTarget(flipbook, target)) : [];
 }
 
 /** A drawing of the played cycle: a key pose, or the in-between after one. */
 export type CycleDrawing = { readonly id: DrawingId; readonly phase: string; readonly label: string; readonly inbetween: boolean; readonly position?: number };
 
 /** The played cycle: key drawings in order, each followed by its current in-between when in-betweens are on. */
-export function playbackCycle(flipbook: Pick<Flipbook, "frames" | "order" | "alignment" | "inbetweens">, useInbetweens: boolean): CycleDrawing[] {
+export function playbackCycle(flipbook: Pick<Flipbook, "frames" | "order" | "alignment" | "inbetweens"> & { readonly inbetweenPlan?: InbetweenPlan | null }, useInbetweens: boolean): CycleDrawing[] {
   const cycle: CycleDrawing[] = [];
+  // A calculated plan plays exactly its own in-betweens: drawings saved for another density or spacing wait.
+  const plan = currentInbetweenPlan(flipbook);
+  const planned = plan ? new Map(plannedTargets(plan).map((target) => [target.id, target.progress] as const)) : null;
+  const playable = (entry: Inbetween) => inbetweenCurrent(flipbook, entry) && (!planned || (planned.has(entry.id) && Math.abs(inbetweenProgress(entry) - planned.get(entry.id)!) < 1e-3));
   for (const frame of orderedFrames(flipbook)) {
     cycle.push({ id: frame.id, phase: frame.phase, label: frame.label, inbetween: false });
-    const middles = useInbetweens ? flipbook.inbetweens.filter((entry) => entry.from === frame.id && inbetweenCurrent(flipbook, entry)).sort((a, b) => (a.position ?? 0.5) - (b.position ?? 0.5)) : [];
-    for (const inbetween of middles) {
+    const middles = useInbetweens ? flipbook.inbetweens.filter((entry) => entry.from === frame.id && playable(entry)) : [];
+    // The time slots stay where they were planned; the drawings fill them in the order they read along the movement,
+    // so one the model drew too far along doesn't step forward and back.
+    const slots = middles.map((entry) => entry.position ?? 0.5).sort((a, b) => a - b);
+    const byPose = [...middles].sort((a, b) => (a.seen ?? inbetweenProgress(a)) - (b.seen ?? inbetweenProgress(b)) || (a.position ?? 0.5) - (b.position ?? 0.5));
+    for (const [index, inbetween] of byPose.entries()) {
       const to = flipbook.frames.find((entry) => entry.id === inbetween.to);
-      cycle.push({ id: inbetween.id, phase: frame.phase, label: `${frame.label} → ${to?.label ?? ""}`, inbetween: true, position: inbetween.position ?? 0.5 });
+      cycle.push({ id: inbetween.id, phase: frame.phase, label: `${frame.label} → ${to?.label ?? ""}`, inbetween: true, position: slots[index] });
     }
   }
   return cycle;

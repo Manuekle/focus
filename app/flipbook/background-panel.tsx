@@ -5,9 +5,11 @@ import { AiPaintbrushIcon, Image01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { ColorPicker } from "../../components/ui/color-picker";
-import { MediaLightbox, ZoomButton, type LightboxMedia } from "../../components/ui/media-lightbox";
+import { ImageViewer, ImageViewerContent, ImageViewerThumbnail, type ImageViewerImage } from "../../components/motion/image-viewer";
+import { useImageSizes } from "../../lib/hooks/use-image-sizes";
 import { Spinner } from "../../components/ui/spinner";
 import { ToggleChip } from "../../components/ui/toggle-chip";
+import { BACKGROUND_PRESETS, backgroundPresetUrl, type BackgroundPreset } from "../../shared/backgrounds";
 import { BACKGROUND_PROMPT_MAX, IMAGE_ACCEPT_ATTRIBUTE, flipbookUrls, type BackgroundMotion, type Flipbook, type FlipbookBackground } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
 
@@ -68,6 +70,7 @@ export function BackgroundPanel({
   const fileRef = useRef<HTMLInputElement>(null);
   const referenceRef = useRef<HTMLInputElement>(null);
   const [zoom, setZoom] = useState<number | null>(null);
+  const [presetId, setPresetId] = useState<BackgroundPreset["id"] | null>(null);
   const generated = flipbook.backgrounds.generated;
   const [prompt, setPrompt] = useState(generated?.prompt ?? "");
   const [motion, setMotion] = useState<BackgroundMotion>(background.kind === "generated" || background.kind === "scene" ? background.motion ?? "static" : "scroll");
@@ -79,11 +82,24 @@ export function BackgroundPanel({
   // Parallax needs the sky split from the rest, which only exists when SAM found one.
   const depth = background.kind === "scene" ? flipbook.backgrounds.depth.scene : background.kind === "generated" ? flipbook.backgrounds.depth.generated : false;
   // Every picture available as a background, to look at before choosing it.
-  const plates: readonly (LightboxMedia & { readonly kind: "image"; readonly id: "generated" | "scene" | "custom"; readonly label: string })[] = [
-    ...(generated ? [{ id: "generated" as const, label: "Generated", kind: "image" as const, src: flipbookUrls.background(flipbook.id, "generated", generated.createdAt), alt: "The background Muse Image drew", caption: generated.prompt ? `Generated · “${generated.prompt}”` : "Generated background" }] : []),
-    ...(flipbook.backgrounds.scene ? [{ id: "scene" as const, label: "Your scene", kind: "image" as const, src: flipbookUrls.background(flipbook.id, "scene", stamp), alt: "Your scene without the character", caption: "Your scene, redrawn without the character" }] : []),
-    ...(flipbook.backgrounds.custom ? [{ id: "custom" as const, label: "Your image", kind: "image" as const, src: flipbookUrls.background(flipbook.id, "custom", stamp), alt: "The image you uploaded as a background", caption: "The image you uploaded" }] : []),
+  const pictures: readonly { readonly id: "generated" | "scene" | "custom"; readonly label: string; readonly src: string; readonly alt: string; readonly caption: string }[] = [
+    ...(generated ? [{ id: "generated" as const, label: "Generated", src: flipbookUrls.background(flipbook.id, "generated", generated.createdAt), alt: "The background Muse Image drew", caption: generated.prompt ? `Generated · “${generated.prompt}”` : "Generated background" }] : []),
+    ...(flipbook.backgrounds.scene ? [{ id: "scene" as const, label: "Your scene", src: flipbookUrls.background(flipbook.id, "scene", stamp), alt: "Your scene without the character", caption: "Your scene, redrawn without the character" }] : []),
+    ...(flipbook.backgrounds.custom ? [{ id: "custom" as const, label: "Your image", src: flipbookUrls.background(flipbook.id, "custom", stamp), alt: "The image you uploaded as a background", caption: "The image you uploaded" }] : []),
   ];
+  const sizeOf = useImageSizes(pictures.map((plate) => plate.src));
+  const plates: (ImageViewerImage & { readonly label: string })[] = pictures.map((plate) => ({ ...plate, ...sizeOf(plate.src) }));
+  const choosePreset = async (preset: BackgroundPreset) => {
+    try {
+      const response = await fetch(backgroundPresetUrl(preset));
+      if (!response.ok) return;
+      const blob = await response.blob();
+      setPresetId(preset.id);
+      onUploadBackground(new File([blob], preset.fileName, { type: blob.type || "image/webp" }));
+    } catch {
+      // The picture is a static file; if it can't be fetched the background simply stays as it was.
+    }
+  };
   const pickMotion = (next: BackgroundMotion) => {
     setMotion(next);
     if (background.kind === "generated" || background.kind === "scene") onBackgroundChange({ ...background, motion: next });
@@ -125,20 +141,40 @@ export function BackgroundPanel({
         />
       </div>
 
-      {plates.length ? (
-        <div className={styles.plates} role="list" aria-label="Available backgrounds">
-          {plates.map((plate, position) => (
-            <figure key={plate.id} role="listitem" data-active={background.kind === plate.id || undefined}>
-              <ZoomButton className={styles.plate} label={`Open ${plate.label.toLowerCase()} background larger`} onOpen={() => setZoom(position)}>
-                {/* eslint-disable-next-line @next/next/no-img-element -- media route */}
-                <img src={plate.src} alt={plate.alt} />
-              </ZoomButton>
-              <figcaption>{plate.label}</figcaption>
+      <div className={styles.generate}>
+        <p className={styles.sectionLabel}>School settings</p>
+        <div className={styles.presets} role="list" aria-label="Ready-made backgrounds">
+          {BACKGROUND_PRESETS.map((preset) => (
+            <figure key={preset.id} role="listitem" data-active={(background.kind === "custom" && presetId === preset.id) || undefined}>
+              <button type="button" className={styles.preset} disabled={busy || generating} aria-label={`Use ${preset.name} as the background`} title={preset.alt} onClick={() => void choosePreset(preset)}>
+                {/* eslint-disable-next-line @next/next/no-img-element -- small static picture from public/ */}
+                <img src={backgroundPresetUrl(preset)} alt="" loading="lazy" decoding="async" />
+              </button>
+              <figcaption>{preset.name}</figcaption>
             </figure>
           ))}
         </div>
-      ) : null}
-      <MediaLightbox items={plates} index={zoom} onIndexChange={setZoom} onClose={() => setZoom(null)} />
+        <p className={styles.hint}>Ready-made settings. Picking one replaces your own image.</p>
+      </div>
+
+      <ImageViewer
+        images={plates}
+        label="Backgrounds"
+        value={zoom !== null ? plates[zoom]?.id ?? null : null}
+        onValueChange={(id) => setZoom(id === null ? null : plates.findIndex((plate) => plate.id === id))}
+      >
+        {plates.length ? (
+          <div className={styles.plates} role="list" aria-label="Available backgrounds">
+            {plates.map((plate) => (
+              <figure key={plate.id} role="listitem" data-active={background.kind === plate.id || undefined}>
+                <ImageViewerThumbnail imageId={plate.id} className={`${styles.plate} rounded-xl bg-transparent`} />
+                <figcaption>{plate.label}</figcaption>
+              </figure>
+            ))}
+          </div>
+        ) : null}
+        <ImageViewerContent />
+      </ImageViewer>
       {(background.kind === "scene" || background.kind === "generated" || background.kind === "custom") && (currentMotion === "static" || currentMotion === "zoom" || background.kind === "custom") ? (
         <div className={styles.controlRow}>
           <span className={styles.controlLabel}>Image fit</span>

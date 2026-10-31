@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { checkAlpha, keyOut, type Rgba } from "./alpha";
 import { angleBetween, comparePoses, describeLegs, describePose, direction, type Pose } from "./pose-match";
 import { checkStyle, outlineDensity } from "./style";
-import { framePrompt, reviewCheck, type FrameInput, type Review } from "./draw";
+import { framePrompt, identityLine, isIdentityLine, reviewCheck, type FrameInput, type Review } from "./draw";
 
 /** A magenta canvas with filled rectangles of the given colours. */
 function canvas(width: number, height: number, rects: { x: number; y: number; w: number; h: number; rgb: [number, number, number] }[]): Rgba {
@@ -138,6 +138,13 @@ describe("reviewCheck", () => {
     sameCharacter: true, identityNotes: "", sameStyle: true, anatomyOk: true, anatomyNotes: "", correctionDone: true, correctionNotes: "", fix: "",
   });
 
+  it("fails when the drawing's build departs from the character's measured profile", () => {
+    const check = reviewCheck({ ...review(() => true), buildOk: false, buildNotes: "legs far shorter than the sheet's" });
+    expect(check.passed).toBe(false);
+    expect(check.detail).toContain("build: legs far shorter");
+    expect(reviewCheck({ ...review(() => true), buildOk: true, buildNotes: "" }).passed).toBe(true);
+  });
+
   it("passes only when every body part matches", () => {
     expect(reviewCheck(review(() => true)).passed).toBe(true);
     const check = reviewCheck(review((part) => part !== "right hand"));
@@ -190,6 +197,33 @@ describe("framePrompt", () => {
 
   it("falls back to the measured face without a reading", () => {
     expect(framePrompt(input).prompt).toContain("eyes open");
+  });
+
+  it("opens with the identity line, as /characters does, and never forbids the sheet's own colours or details", () => {
+    const identity = "Keep the character exactly as drawn: short navy bob, red cheongsam with gold trim and embroidery, full thighs, red stilettos.";
+    const { prompt, references } = framePrompt({ ...input, description: identity, previous: Buffer.from("p"), anchor: Buffer.from("a"), palette: { image: Buffer.from("w"), text: "skin #f7d5cf; blouse #a61c23" } });
+    expect(prompt.split("\n")[0]).toBe(identity);
+    expect(prompt.split(identity)).toHaveLength(2);
+    expect(prompt).not.toContain("Character design (must not change)");
+    expect(prompt).toMatch(/Accents that are not swatches .* stay exactly as in Image 1/);
+    expect(references.map((reference) => reference.role).join("\n")).not.toMatch(/only colours allowed/);
+    expect(references.find((reference) => reference.role.startsWith("THE STYLE ANCHOR"))!.role).toMatch(/draw that detail as Image 1 has it/);
+    expect(prompt).not.toMatch(/no extra detail[,.]/);
+  });
+
+  it("keeps the never-mirrored pose line next to the specification, and stays short", () => {
+    const reading = "Head: tilted. Arm on the left of the image: up.";
+    const withSpec = framePrompt({ ...input, poseText: "The arm on the LEFT of the image: up.", reading }).prompt;
+    expect(withSpec).toContain("Measured pose, sides as seen in the image, never mirrored: The arm on the LEFT of the image: up.");
+    expect(withSpec).toContain("FRAME SPECIFICATION");
+    expect(withSpec.length).toBeLessThan(3400);
+  });
+
+  it("puts an older plain design paragraph into the identity form", () => {
+    expect(identityLine("a girl")).toBe("Keep the character exactly as drawn: a girl");
+    expect(identityLine("Keep Ichika exactly as drawn: long hair.")).toBe("Keep Ichika exactly as drawn: long hair.");
+    expect(isIdentityLine("a girl")).toBe(false);
+    expect(framePrompt(input).prompt.split("\n")[0]).toBe("Keep the character exactly as drawn: a girl");
   });
 
   it("holds the style to the first approved frame when there is one", () => {

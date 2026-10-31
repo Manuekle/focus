@@ -1,0 +1,47 @@
+{
+  "source": "https://github.com/dylantarre/animation-principles",
+  "commit": "83597134ba8ff59838270f94d7ac7282ffa3b54d",
+  "license": {
+    "file": "LICENSE",
+    "spdx": "MIT",
+    "sha256": "7e09249863674813d53abced62e437aa37a2209fd4f15072f75ec89df56c86d4"
+  },
+  "skills": [
+    {
+      "name": "straight-ahead-pose-mastery",
+      "upstream": "skills/11-by-principle-focus/straight-ahead-pose-mastery/SKILL.md",
+      "file": "straight-ahead-pose-mastery/SKILL.md",
+      "sha256": "5c7b279f9209b6ff1a56995e058d58c75ec215c19bc5afa286115a4ac5e12bf2"
+    },
+    {
+      "name": "solid-drawing-mastery",
+      "upstream": "skills/11-by-principle-focus/solid-drawing-mastery/SKILL.md",
+      "file": "solid-drawing-mastery/SKILL.md",
+      "sha256": "3c85669f0f4560ea744ea7e2ad5e82b643482732b26ac9791557c2e2d1a717fa"
+    },
+    {
+      "name": "arc-mastery",
+      "upstream": "skills/11-by-principle-focus/arc-mastery/SKILL.md",
+      "file": "arc-mastery/SKILL.md",
+      "sha256": "6d3b1d4b6086a0a9344313f6e3b7a8036ac58be4d6cca2fa736aed9d099f54f5"
+    },
+    {
+      "name": "timing-principle-mastery",
+      "upstream": "skills/11-by-principle-focus/timing-principle-mastery/SKILL.md",
+      "file": "timing-principle-mastery/SKILL.md",
+      "sha256": "7cbfcc81a559c59bd185bee42ccc3708bad099b41ce0f2e3861e90c792b5dd2a"
+    },
+    {
+      "name": "slow-in-out-mastery",
+      "upstream": "skills/11-by-principle-focus/slow-in-out-mastery/SKILL.md",
+      "file": "slow-in-out-mastery/SKILL.md",
+      "sha256": "b5056e08ec77cfc30ea8359acb9c4dbd0fc9eafc6b0e6df5df2bff463c572de6"
+    },
+    {
+      "name": "follow-through-overlapping",
+      "upstream": "skills/11-by-principle-focus/follow-through-overlapping/SKILL.md",
+      "file": "follow-through-overlapping/SKILL.md",
+      "sha256": "ea575504797c32d58e5d6e6fef2fdfc5f8b60dbf785133f3af1edfc52f2fc42a"
+    }
+  ]
+}

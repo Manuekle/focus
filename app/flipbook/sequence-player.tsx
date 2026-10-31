@@ -1,9 +1,10 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { NextIcon, PauseIcon, PlayIcon, PreviousIcon, Exchange01Icon, RotateLeft01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { Select } from "../../components/ui/select";
 import { Switch } from "../../components/ui/switch";
 import { Slider } from "../../components/ui/slider";
 import { ToggleChip } from "../../components/ui/toggle-chip";
@@ -34,9 +35,23 @@ import {
 import styles from "./flipbook.module.css";
 import type { FlipbookAudio } from "../../shared/sequence";
 import { useTimelineAudio } from "./use-timeline-audio";
+import { FrameTimeline } from "./frame-timeline";
 
-/** A drawing of the cycle: a key pose, or an in-between after the key before it. */
-export type PlayerFrame = { readonly id: string; readonly label: string; readonly phase: string; readonly src: string | null; readonly inbetween?: boolean; readonly position?: number };
+/** A drawing of the cycle: a key pose, or an in-between after the key before it. Keys carry their state for the timeline. */
+export type PlayerFrame = {
+  readonly id: string;
+  readonly label: string;
+  readonly phase: string;
+  readonly src: string | null;
+  readonly inbetween?: boolean;
+  readonly position?: number;
+  readonly status?: "ready" | "pending" | "working" | "failed";
+  readonly stateLabel?: string;
+  readonly approved?: boolean;
+  readonly flagged?: boolean;
+};
+/** The player's three pieces, placed by the editor: the preview, the timeline under it, and the playback settings. */
+export type PlayerParts = { readonly stage: ReactNode; readonly timeline: ReactNode; readonly controls: ReactNode };
 export type PlayerBackground =
   | { readonly kind: "transparent" }
   | { readonly kind: "color"; readonly color: string }
@@ -50,7 +65,6 @@ export type PlayerBackground =
 
 /** Preview speed presets; the slider covers 0.1× to 4× in 0.05× steps between them. */
 const RATES = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4] as const;
-const RATE_RANGE = { min: 0.1, max: 4, step: 0.05 } as const;
 const mod = (value: number, size: number) => ((value % size) + size) % size;
 
 /**
@@ -62,7 +76,8 @@ const mod = (value: number, size: number) => ((value % size) + size) % size;
  * the previous pose for at most 33 ms. Time runs on
  * requestAnimationFrame against a fixed start, so a slow frame never makes
  * the cycle drift; the canvas redraws once per output frame and React only
- * re-renders when the shown drawing changes.
+ * re-renders when the shown drawing changes. The timeline under the preview
+ * (frame-timeline.tsx) reads the same clock through a subscription.
  */
 export function SequencePlayer({
   frames,
@@ -75,8 +90,11 @@ export function SequencePlayer({
   strideMeasured,
   travel,
   facing,
-  strip,
   onSelect,
+  onPick,
+  onMove,
+  clipThumb,
+  layout,
   inbetweenCount = 0,
   fixedPace = false,
   finite = false,
@@ -97,9 +115,14 @@ export function SequencePlayer({
   readonly travel: { readonly verb: string } | null;
   /** Which way the character faces: a scrolling background slides against it. */
   readonly facing: FlipbookDirection;
-  /** The frame strip, placed right under the transport so it stays in view. */
-  readonly strip?: ReactNode;
+  /** Follows the drawing on screen while paused. */
   readonly onSelect: (index: number) => void;
+  /** A key drawing picked on the timeline. */
+  readonly onPick: (index: number) => void;
+  /** Present when key drawings can be reordered on the timeline. */
+  readonly onMove?: (from: number, to: number) => void;
+  readonly clipThumb?: (drawing: PlayerFrame) => ReactNode;
+  readonly layout: (parts: PlayerParts) => ReactNode;
   /** Current in-betweens: when there are any, a switch plays them or leaves them out. */
   readonly inbetweenCount?: number;
   /** A scene is drawn at one pace: there is no drawings-per-second choice. */
@@ -273,11 +296,19 @@ export function SequencePlayer({
   // Bumped by a restart: the running playback re-bases its clock on it, or
   // its next frame would put the old timeline back.
   const clockRef = useRef(0);
+  // The timeline's playhead and clock, told about every frame without a re-render.
+  const listeners = useRef(new Set<(frame: number) => void>());
+  const subscribe = useCallback((listener: (frame: number) => void) => {
+    listeners.current.add(listener);
+    return () => { listeners.current.delete(listener); };
+  }, []);
+  const currentFrame = useCallback(() => frameRef.current, []);
 
   const seek = useCallback((frame: number) => {
     frameRef.current = frame;
     syncAudio(frame / OUTPUT_FPS);
     drawRef.current(frame);
+    for (const listener of listeners.current) listener(frame);
     const next = drawingAtOutputFrame(frame, holdsRef.current).tick;
     if (next !== tickRef.current) {
       tickRef.current = next;
@@ -346,6 +377,11 @@ export function SequencePlayer({
     clockRef.current++;
     seek(0);
   };
+  // Scrubbing the timeline pauses on the frame under the pointer.
+  const scrubTo = useCallback((frame: number) => {
+    setPlaying(false);
+    seek(Math.max(0, Math.min(total - 1, frame)));
+  }, [seek, total]);
   const onKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
     if (event.key === " " || event.key === "k") { event.preventDefault(); setPlaying((value) => !value); }
     else if (event.key === "ArrowLeft") { event.preventDefault(); stepBy(-1); }
@@ -356,84 +392,116 @@ export function SequencePlayer({
   const index = count ? mod(tick, count) : 0;
   const current = drawings[index];
 
-  return (
-    <div className={styles.player}>
-      <div className={styles.lightTable}>
+  const stageView = (
+    <div className={styles.previewFit}>
       <div
-        className={styles.stage}
+        className={styles.previewStage}
         data-transparent={background.kind === "transparent" || undefined}
         tabIndex={0}
         role="group"
         aria-roledescription="animation player"
         aria-label="Animation preview. Space plays or pauses, arrow keys step one drawing, Home restarts."
         onKeyDown={onKeyDown}
-        // Never wider than its aspect allows at the capped height: no dark bands beside the drawing.
-        style={{ aspectRatio: `${stage.width} / ${stage.height}`, maxWidth: `calc(min(56vh, 600px) * ${stage.width} / ${stage.height})` }}
+        // As large as the room allows at its own proportions: no dark bands beside the drawing.
+        style={{ aspectRatio: `${stage.width} / ${stage.height}`, "--stage-ratio": stage.width / stage.height } as CSSProperties}
       >
         <canvas ref={canvasRef} width={stage.width} height={stage.height} className={styles.canvas} />
         {!current?.src ? <p className={styles.stageEmpty}>{count ? "This drawing isn’t ready yet." : "No frames yet."}</p> : null}
       </div>
-      </div>
+    </div>
+  );
 
-      <div className={styles.transport}>
-        <div className={styles.transportGroup}>
-          <Button size="icon-sm" variant="ghost" aria-label="Restart" onClick={restart}><HugeiconsIcon icon={RotateLeft01Icon} size={16} strokeWidth={1.75} /></Button>
-          <Button size="icon-sm" variant="ghost" aria-label="Previous drawing" onClick={() => stepBy(-1)}><HugeiconsIcon icon={PreviousIcon} size={16} strokeWidth={1.75} /></Button>
-          <Button size="icon-sm" variant="secondary" aria-label={playing ? "Pause" : "Play"} aria-pressed={playing} onClick={() => setPlaying((value) => !value)} disabled={!count}>
-            <HugeiconsIcon icon={playing ? PauseIcon : PlayIcon} size={16} strokeWidth={1.75} />
-          </Button>
-          <Button size="icon-sm" variant="ghost" aria-label="Next drawing" onClick={() => stepBy(1)}><HugeiconsIcon icon={NextIcon} size={16} strokeWidth={1.75} /></Button>
-          <ToggleChip selected={loop} size="xs" onClick={() => setLoop((value) => !value)} aria-label="Loop">
-            <HugeiconsIcon icon={Exchange01Icon} size={13} strokeWidth={1.75} />Loop
-          </ToggleChip>
-        </div>
-        <output className={styles.readout} aria-live={playing ? "off" : "polite"}>
-          {count ? `${(keyIndex[index] ?? 0) + 1}/${keyCount} · ${current?.label ?? ""}` : "—"}
-        </output>
-      </div>
+  const transport = (
+    <>
+      <Button size="icon-xs" variant="ghost" aria-label="Restart" onClick={restart}><HugeiconsIcon icon={RotateLeft01Icon} size={15} strokeWidth={1.75} /></Button>
+      <Button size="icon-xs" variant="ghost" aria-label="Previous drawing" onClick={() => stepBy(-1)}><HugeiconsIcon icon={PreviousIcon} size={15} strokeWidth={1.75} /></Button>
+      <Button size="icon-sm" variant="secondary" aria-label={playing ? "Pause" : "Play"} aria-pressed={playing} onClick={() => setPlaying((value) => !value)} disabled={!count}>
+        <HugeiconsIcon icon={playing ? PauseIcon : PlayIcon} size={16} strokeWidth={1.75} />
+      </Button>
+      <Button size="icon-xs" variant="ghost" aria-label="Next drawing" onClick={() => stepBy(1)}><HugeiconsIcon icon={NextIcon} size={15} strokeWidth={1.75} /></Button>
+      <output className={styles.readout} aria-live={playing ? "off" : "polite"}>
+        {count ? `${(keyIndex[index] ?? 0) + 1}/${keyCount} · ${current?.label ?? ""}` : "—"}
+      </output>
+    </>
+  );
 
-      {strip}
-      {audio ? <label className={styles.controlRow}><span className={styles.controlLabel}>Preview audio</span><Switch checked={audioEnabled} onCheckedChange={setAudioEnabled} label="Preview audio with the animation" /></label> : null}
+  const tools = (
+    <>
+      <ToggleChip selected={loop} size="xs" onClick={() => setLoop((value) => !value)} aria-label="Loop">
+        <HugeiconsIcon icon={Exchange01Icon} size={13} strokeWidth={1.75} />Loop
+      </ToggleChip>
+      <ToggleChip selected={onion} size="xs" onClick={() => setOnion((value) => !value)} aria-label="Onion skin">Onion</ToggleChip>
+      {onion ? (
+        <>
+          <Slider
+            min={0.1} max={0.7} step={0.05} value={[onionOpacity]}
+            onValueChange={([opacity]) => setOnionOpacity(opacity)}
+            className="w-16"
+            aria-label="Onion skin opacity"
+            aria-valuetext={`${Math.round(onionOpacity * 100)}%`}
+          />
+          <ToggleChip size="xs" selected={onionNext} onClick={() => setOnionNext((value) => !value)}>Next</ToggleChip>
+        </>
+      ) : null}
+      {fixedPace ? null : (
+        <span title={`${count} drawings ÷ ${Number(cycleSeconds.toFixed(2))} s = ${Number(drawingRate.toFixed(1))} drawings/s`}>
+          <Select
+            className="h-7 w-[112px] text-xs"
+            aria-label="Cycle length"
+            value={[1, 2, 4].find((seconds) => Math.abs(cycleSeconds - seconds) < 1e-6)?.toString() ?? "custom"}
+            onValueChange={(value) => { if (value === "custom") return; restart(); onSettingsChange({ ...settings, cycleSeconds: Number(value) }); }}
+            options={[
+              ...[1, 2, 4].map((seconds) => ({ value: String(seconds), label: `Cycle ${seconds} s` })),
+              ...([1, 2, 4].some((seconds) => Math.abs(cycleSeconds - seconds) < 1e-6) ? [] : [{ value: "custom", label: `Cycle ${Number(cycleSeconds.toFixed(2))} s` }]),
+            ]}
+          />
+        </span>
+      )}
+      <Select
+        className="h-7 w-[70px] text-xs"
+        aria-label="Preview speed"
+        value={String(rate)}
+        onValueChange={(value) => setRate(Number(value))}
+        options={RATES.map((value) => ({ value: String(value), label: `${value}×` }))}
+      />
+    </>
+  );
 
+  const timeline = (
+    <FrameTimeline
+      drawings={drawings}
+      holds={holds}
+      keyIndex={keyIndex}
+      durationSeconds={settings.durationSeconds}
+      finite={finite}
+      selectedKey={selectedIndex}
+      playing={playing}
+      subscribe={subscribe}
+      currentFrame={currentFrame}
+      onSeek={scrubTo}
+      onPick={onPick}
+      onMove={onMove}
+      clipThumb={clipThumb}
+      transport={transport}
+      tools={tools}
+      inbetweenCount={inbetweenCount}
+      inbetweensOn={settings.inbetweens !== false}
+      onInbetweensChange={(checked) => onSettingsChange({ ...settings, inbetweens: checked })}
+      audio={audio}
+      audioOn={audioEnabled}
+      onAudioChange={setAudioEnabled}
+    />
+  );
+
+  const showControls = !finite || Boolean(travel);
+  const controls = showControls ? (
+    <section className={styles.panel} aria-labelledby="fb-playback">
+      <div className={styles.panelHead}><h2 id="fb-playback" className={styles.panelTitle}>Playback</h2></div>
       <div className={styles.controlsGrid}>
-        {fixedPace ? null : <div className={styles.controlRow}>
-          <span className={styles.controlLabel}>Cycle length</span>
-          <div className={styles.chips}>
-            {[1, 2, 4].map((seconds) => (
-              <ToggleChip key={seconds} size="xs" selected={Math.abs(cycleSeconds - seconds) < 1e-6} onClick={() => { restart(); onSettingsChange({ ...settings, cycleSeconds: seconds }); }} aria-label={`Cycle length ${seconds} s`}>{seconds} s</ToggleChip>
-            ))}
-            <span className={styles.hint}>{count} drawings ÷ {Number(cycleSeconds.toFixed(2))} s = {Number(drawingRate.toFixed(1))} drawings/s</span>
-          </div>
-        </div>}
         {!finite ? <div className={styles.controlRow}>
           <span className={styles.controlLabel}>Light smoothing</span>
           <Switch checked={(settings.smoothing ?? 0) > 0} onCheckedChange={(checked) => onSettingsChange({ ...settings, smoothing: checked ? 0.12 : 0 })} label="Light smoothing" />
         </div> : null}
-        {inbetweenCount > 0 ? (
-          <div className={styles.controlRow}>
-            <span className={styles.controlLabel}>In-betweens</span>
-            <div className={styles.chips}>
-              <Switch checked={settings.inbetweens !== false} onCheckedChange={(checked) => onSettingsChange({ ...settings, inbetweens: checked })} label="Play in-betweens" />
-            </div>
-          </div>
-        ) : null}
-        <div className={styles.controlRow}>
-          <span className={styles.controlLabel}>Preview speed <span className="tabular-nums">{rate.toFixed(2)}× · {Number((OUTPUT_FPS * rate).toFixed(2))} fps</span></span>
-          <Slider
-            min={RATE_RANGE.min}
-            max={RATE_RANGE.max}
-            step={RATE_RANGE.step}
-            value={[rate]}
-            onValueChange={([value]) => setRate(Math.round(value * 100) / 100)}
-            aria-label="Preview speed"
-            aria-valuetext={`${rate.toFixed(2)} times normal speed`}
-          />
-          <div className={styles.chips}>
-            {RATES.map((value) => (
-              <ToggleChip key={value} size="xs" selected={rate === value} onClick={() => setRate(value)}>{value}×</ToggleChip>
-            ))}
-          </div>
-        </div>
         {travel ? (
           <div className={styles.controlRow}>
             <span className={styles.controlLabel}>Movement</span>
@@ -461,26 +529,10 @@ export function SequencePlayer({
             />
           </div>
         ) : null}
-        <div className={styles.controlRow}>
-          <span className={styles.controlLabel}>Onion skin</span>
-          <div className={styles.chips}>
-            <Switch checked={onion} onCheckedChange={setOnion} label="Onion skin" />
-            {onion ? (
-              <>
-                <Slider
-                  min={0.1} max={0.7} step={0.05} value={[onionOpacity]}
-                  onValueChange={([opacity]) => setOnionOpacity(opacity)}
-                  className="w-24"
-                  aria-label="Onion skin opacity"
-                  aria-valuetext={`${Math.round(onionOpacity * 100)}%`}
-                />
-                <ToggleChip size="xs" selected={onionNext} onClick={() => setOnionNext((value) => !value)}>Show next</ToggleChip>
-              </>
-            ) : null}
-          </div>
-        </div>
       </div>
       {travel && settings.motion !== "in_place" && !strideMeasured ? <p className={styles.hint}>The stride couldn’t be measured from the drawings; travel uses an estimate.</p> : null}
-    </div>
-  );
+    </section>
+  ) : null;
+
+  return layout({ stage: stageView, timeline, controls });
 }

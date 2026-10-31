@@ -4,6 +4,8 @@ import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
 import { AiPaintbrushIcon, AiSearch02Icon, ArrowLeftRightIcon, ArrowRight01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
+import { GuidedSetup } from "./guided-setup";
+import { guidedPrompt, guidedSequence } from "../../shared/flipbook-onboarding";
 import { Skeleton } from "../../components/ui/skeleton";
 import { SuggestionChip } from "../../components/ui/suggestion-chip";
 import { Switch } from "../../components/ui/switch";
@@ -12,6 +14,7 @@ import { HugeiconsIcon } from "../../components/icons/icon";
 import { FileUpload } from "../../components/motion/file-upload";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
+import { Disclosure } from "../../components/ui/disclosure";
 import { Spinner } from "../../components/ui/spinner";
 import { formatBytes } from "../../shared/media";
 import type { CharacterSource } from "../../shared/characters";
@@ -167,6 +170,8 @@ export function FlipbookCreate({
   const [keepScene, setKeepScene] = useState(true);
   const [layer, setLayer] = useState<"original" | "character" | "scene">("original");
   const [mode, setMode] = useState<Mode>("sequence");
+  /** Muse Spark sets the animation up from a conversation; Advanced keeps every control by hand. */
+  const [guided, setGuided] = useState(true);
   const [sequence, setSequence] = useState<SequenceSettings>(DEFAULT_SEQUENCE);
   const [motionSource, setMotionSource] = useState<"description" | "video">("description");
   const [motionVideo, setMotionVideo] = useState<MotionVideoSelection>();
@@ -346,7 +351,22 @@ export function FlipbookCreate({
       </section>
 
       <aside className={cn(view.controls, styles.createControls)}>
-        <form className={styles.createForm} onSubmit={(event) => { event.preventDefault(); submit(); }}>
+        <SlidingTabs className={composer.tabs} tabs={[{ id: "guided", label: "Guided" }, { id: "advanced", label: "Advanced" }]} value={guided ? "guided" : "advanced"} onValueChange={(id) => setGuided(id === "guided")} />
+        {guided ? (
+          <GuidedSetup
+            picture={fromCharacter ? { characterSource: initialCharacter!.source } : { imageId: image.id }}
+            look={look}
+            creating={creating}
+            blockedReason={blockedReason ?? null}
+            onCreate={(setup) => onCreate(image, guidedPrompt(setup), {
+              action: setup.action,
+              view: setup.view,
+              ...(guidedSequence(setup) ? { sequence: guidedSequence(setup) } : {}),
+              keepScene: Boolean(look?.layers.scene && setup.keepScene),
+              ...(fromCharacter ? { characterSource: initialCharacter!.source } : {}),
+            })}
+          />
+        ) : <form className={styles.createForm} onSubmit={(event) => { event.preventDefault(); submit(); }}>
           <section className={styles.createCard} aria-labelledby="animation-setup-title">
             <h2 id="animation-setup-title" className={styles.panelTitle}>Animation setup</h2>
             <fieldset className={composer.effects}>
@@ -485,10 +505,9 @@ export function FlipbookCreate({
 
           <div className={styles.createFooter}>
             <p className={styles.hint}>{fromVideo ? "The selected video segment will guide this animation." : `Focus will animate “${motionInstruction}”`}</p>
-            <details className={styles.createDisclosure}>
-              <summary>Review animation instructions</summary>
+            <Disclosure title="Review animation instructions" className={styles.createDisclosure}>
               <p className={styles.promptPreview}>{prompt}</p>
-            </details>
+            </Disclosure>
             <div className={styles.createSubmit}>
               <Button className={composer.generate} type="submit" variant="ai" size="lg" disabled={!canSubmit} aria-busy={creating || undefined}>
                 {creating ? <Spinner /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={16} strokeWidth={1.75} />}
@@ -498,7 +517,7 @@ export function FlipbookCreate({
             </div>
           </div>
           </>}
-        </form>
+        </form>}
       </aside>
     </div>
   );

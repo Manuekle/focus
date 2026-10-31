@@ -78,7 +78,7 @@ flowchart LR
   end
 
   subgraph Providers["AI providers (HTTPS)"]
-    Spark["Muse Spark 1.3"]
+    Spark["Muse Spark 1.3 Contributor"]
     Image["Muse Image 1.0"]
     SAM["SAM 3.1"]
     HF["Higgsfield (optional)"]
@@ -426,7 +426,7 @@ flowchart LR
 
 **Meta models and why each is essential.**
 
-- **Muse Spark 1.3** turns free-form, multilingual instructions into a constrained plan. It looks at the actual frame to choose a noun phrase SAM can see, picks the effect variant, refuses edits Focus cannot do, and reviews animation drawings.
+- **Muse Spark 1.3 Contributor** turns free-form, multilingual instructions into a constrained plan. It looks at the actual frame to choose a noun phrase SAM can see, picks the effect variant, refuses edits Focus cannot do, and reviews animation drawings.
 - **SAM 3.1** does the part that used to be manual: it finds every instance of a concept and tracks each with a stable identity, returning pixel masks for every frame. It also cuts out Flipbook sprites.
 - **Muse Image 1.0** draws every Flipbook pose and every rotoscoped frame from the character reference.
 
@@ -448,5 +448,5 @@ No open-source license is granted at this time: **all rights reserved** unless s
 - **Inter** (`public/fonts/inter/`) is © The Inter Project Authors, under the included SIL Open Font License 1.1.
 - Meta models are used through the Meta Model API under Meta's terms; `@meta-sam/parser` is distributed under the SAM License.
 - Dependencies keep their licenses: Next.js, React, Zod, Motion and Hugeicons free icons (MIT); OpenAI SDK and Sharp (Apache-2.0). FFmpeg (LGPL/GPL, including libx264) is invoked as an external program.
-- Character templates **Ichika** and **Seita** were supplied by the user, who states they generated them with Muse. See `public/demo/flipbook/README.md`.
+- Character templates **Shion** and **Tomohito** were created and supplied by the user. See `public/demo/flipbook/README.md`.
 - The video-effect demos in `public/demo/` use the user-supplied `270507.mp4`, processed with actual SAM 3.1 masks and the Focus compositor. See `public/demo/README.md`.

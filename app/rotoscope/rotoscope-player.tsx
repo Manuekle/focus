@@ -3,11 +3,14 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import { NextIcon, PauseIcon, PlayIcon, PreviousIcon, Refresh01Icon, RepeatIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
+import { AspectRatio, AspectRatioImage } from "../../components/motion/aspect-ratio";
 import { Button } from "../../components/ui/button";
+import { MediaImage } from "../../components/ui/media-image";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Slider } from "../../components/ui/slider";
 import { Switch } from "../../components/ui/switch";
 import { ToggleChip } from "../../components/ui/toggle-chip";
+import { FRAME_RATIO, FRAME_SIZE } from "../../shared/rotoscope";
 import fb from "../flipbook/flipbook.module.css";
 import styles from "./rotoscope.module.css";
 
@@ -21,6 +24,8 @@ export type PlayerFrame = { readonly index: number; readonly drawing: string; re
 
 /** Smoother: how much of the outgoing drawing is mixed in at a cut, and over what share of the drawing's time it fades. */
 const SMOOTHER = { strength: 0.5, share: 0.75 } as const;
+/** Centres the empty-state and live-label text in the frame's content layer. */
+const STAGE_CONTENT = "grid place-items-center";
 const SMOOTHER_KEY = "focus.rotoscope.smoother";
 
 /** What the stage shows while a frame is being drawn: the video frame, and the attempt once it exists. */
@@ -140,28 +145,26 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
         <div className={styles.stagePair} style={{ "--panes": panes, ...(compact ? { "--stage-height": "min(44vh, 420px)" } : {}) } as CSSProperties}>
           {view === "compare" ? (
             <div className={fb.stage} data-transparent="">
-              <div className={styles.stagePane}>
+              <AspectRatio ratio={FRAME_RATIO} animated={false} className={styles.stagePane} contentClassName={STAGE_CONTENT}>
                 {shown ? (
-                  // eslint-disable-next-line @next/next/no-img-element -- video frame from the run's media route
-                  <img src={shown.source} alt="Video frame" />
+                  <MediaImage src={shown.source} alt="Video frame" />
                 ) : <span className={fb.stageEmpty}>No frames yet</span>}
-              </div>
+              </AspectRatio>
             </div>
           ) : null}
           <div className={fb.stage} data-transparent={background === "checker" ? "" : undefined} data-background={background}>
-            <div className={styles.stagePane} data-background={background}>
+            <AspectRatio ratio={FRAME_RATIO} animated={false} className={styles.stagePane} contentClassName={STAGE_CONTENT} data-background={background}>
               {shown?.drawing && smoother && playing && !showLive && !still ? (
                 <SmoothDrawing src={shown.drawing} duration={1000 / rate} />
               ) : shown?.drawing ? (
-                // eslint-disable-next-line @next/next/no-img-element -- transparent drawing from the run's media route
-                <img src={shown.drawing} alt="Drawing" draggable={false} />
+                <AspectRatioImage src={shown.drawing} alt="Drawing" width={FRAME_SIZE.width} height={FRAME_SIZE.height} />
               ) : showLive ? (
                 <>
                   <Skeleton className={fb.working} />
                   <span className={fb.workingLabel}>{live.label}</span>
                 </>
               ) : <span className={fb.stageEmpty}>{still ? "Not drawn yet" : "No approved drawing yet"}</span>}
-            </div>
+            </AspectRatio>
           </div>
         </div>
       </div>

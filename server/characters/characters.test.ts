@@ -2,6 +2,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { access, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
+import sharp from "sharp";
 import {
   beforeAll,
   beforeEach,
@@ -40,7 +41,7 @@ import {
 import { POST as generate } from "../../app/api/characters/[id]/generate/route";
 import { POST as create } from "../../app/api/characters/route";
 
-// Tests have no provider calls and always use the supplied Ichika reference.
+// Tests have no provider calls and always use the supplied Shion reference.
 vi.mock("../auth/users", () => ({
   currentUser: async (request: Request) => {
     const id = request.headers.get("x-test-user");
@@ -51,11 +52,13 @@ vi.mock("../auth/users", () => ({
 }));
 
 let root: string;
-let ichika: Buffer;
+let shion: Buffer;
 let owner: string;
 let character: Character;
 let calls: Parameters<typeof characterServices.generate>[0][];
 const originalGenerate = characterServices.generate;
+const originalPrepareKit = characterServices.prepareKit;
+let kits: string[];
 const oldData = process.env.FOCUS_DATA_DIR;
 const oldFlag = process.env.NEXT_PUBLIC_ENABLE_FLIPBOOK;
 async function settled(id: string) {
@@ -84,26 +87,31 @@ beforeAll(async () => {
   root = await mkdtemp(path.join(tmpdir(), "focus-characters-"));
   process.env.FOCUS_DATA_DIR = root;
   process.env.NEXT_PUBLIC_ENABLE_FLIPBOOK = "true";
-  ichika = await readFile(
-    path.join(process.cwd(), "public/characters/ichika.png"),
+  shion = await readFile(
+    path.join(process.cwd(), "public/characters/shion.png"),
   );
 });
 beforeEach(async () => {
   owner = randomUUID();
   calls = [];
+  kits = [];
   characterServices.generate = async (input) => {
     calls.push(input);
-    return { png: ichika, width: 768, height: 1536 };
+    return { png: shion, width: 768, height: 1536 };
+  };
+  characterServices.prepareKit = async (_id, _owner, versionId) => {
+    kits.push(versionId);
   };
   character = await createCharacter(owner, {
-    name: "Ichika",
-    png: ichika,
-    fileName: "ichika.png",
-    preset: "ichika",
+    name: "Shion",
+    png: shion,
+    fileName: "shion.png",
+    preset: "shion",
   });
 });
 afterAll(async () => {
   characterServices.generate = originalGenerate;
+  characterServices.prepareKit = originalPrepareKit;
   if (oldData === undefined) delete process.env.FOCUS_DATA_DIR;
   else process.env.FOCUS_DATA_DIR = oldData;
   if (oldFlag === undefined) delete process.env.NEXT_PUBLIC_ENABLE_FLIPBOOK;
@@ -112,7 +120,55 @@ afterAll(async () => {
 });
 
 describe("character versions", () => {
-  it("stores Ichika’s immutable original and scopes the library to its owner", async () => {
+  /** A dark figure on flat magenta, as the model is asked to draw. */
+  const onMagenta = async () => {
+    const figure = await sharp({ create: { width: 120, height: 360, channels: 3, background: { r: 30, g: 40, b: 90 } } }).png().toBuffer();
+    return sharp({ create: { width: 400, height: 600, channels: 3, background: { r: 255, g: 0, b: 255 } } })
+      .composite([{ input: figure, left: 140, top: 100 }])
+      .png()
+      .toBuffer();
+  };
+  const alphaAt = async (png: Buffer, x: number, y: number) => {
+    const { data, info } = await sharp(png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    return data[(y * info.width + x) * 4 + 3];
+  };
+
+  it("asks for a flat magenta background and keeps every version without it", async () => {
+    characterServices.generate = async (input) => {
+      calls.push(input);
+      return { png: await onMagenta(), width: 400, height: 600 };
+    };
+    await generateCharacterVersion(character.id, owner, request());
+    const done = await settled(character.id);
+    expect(calls[0].prompt).toContain("#FF00FF");
+    const saved = await readFile(characterAsset(done.id, done.selectedVersionId!));
+    expect(await alphaAt(saved, 2, 2)).toBe(0);
+    expect(await alphaAt(saved, 397, 597)).toBe(0);
+    expect(await alphaAt(saved, 200, 300)).toBe(255);
+  });
+
+  it("shows a saved transparent version to the model on magenta", async () => {
+    characterServices.generate = async (input) => {
+      calls.push(input);
+      return { png: await onMagenta(), width: 400, height: 600 };
+    };
+    await generateCharacterVersion(character.id, owner, request());
+    const base = await settled(character.id);
+    await generateCharacterVersion(base.id, owner, request("Change the coat", base.selectedVersionId));
+    await settled(base.id);
+    const sent = await sharp(calls[1].references[0].png).ensureAlpha().raw().toBuffer({ resolveWithObject: true });
+    expect([...sent.data.subarray(0, 4)]).toEqual([255, 0, 255, 255]);
+    expect(calls[1].prompt).toContain("#FF00FF");
+  });
+
+  it("keeps a drawing that came back on another background as drawn", async () => {
+    await generateCharacterVersion(character.id, owner, request());
+    const done = await settled(character.id);
+    const saved = await readFile(characterAsset(done.id, done.selectedVersionId!));
+    expect(await alphaAt(saved, 2, 2)).toBe(255);
+  });
+
+  it("stores Shion’s immutable original and scopes the library to its owner", async () => {
     expect(character.versions).toHaveLength(0);
     expect(
       (await readFile(characterAsset(character.id, character.references[0].id)))
@@ -151,6 +207,17 @@ describe("character versions", () => {
     expect(calls[1].references[1].role).toContain("clothing does NOT override");
     expect(edited.references).toEqual(base.references);
     expect(edited.versions[0]).toEqual(base.versions[0]);
+    // Each new design's animation data is prepared as soon as it is saved.
+    expect(kits).toEqual(edited.versions.map((entry) => entry.id));
+  });
+
+  it("always asks for the base design front-on in a neutral pose, whatever the reference shows", async () => {
+    await generateCharacterVersion(character.id, owner, request("Wearing a red scarf"));
+    await settled(character.id);
+    expect(calls[0].prompt).toContain("FRONT-ON");
+    expect(calls[0].prompt).toContain("NEUTRAL pose");
+    expect(calls[0].prompt).not.toContain("Preserve the camera angle");
+    expect(calls[0].references[0].role).toContain("NOT its pose or camera angle");
   });
 
   it("selects and names versions without paying for another image", async () => {
@@ -189,7 +256,7 @@ describe("character versions", () => {
     characterServices.generate = async (input) => {
       calls.push(input);
       await wait;
-      return { png: ichika, width: 768, height: 1536 };
+      return { png: shion, width: 768, height: 1536 };
     };
     const change = request();
     const gate = vi.fn(async () => undefined);
@@ -269,27 +336,47 @@ describe("character versions", () => {
     expect(restored.job?.prompt).toBe("Make the coat green");
   });
 
-  it("limits supporting references and never replaces the primary reference", async () => {
+  it("keeps one reference per role and never replaces the primary reference", async () => {
     const primary = character.references[0];
     await addCharacterReference(character.id, owner, {
-      bytes: ichika,
+      bytes: shion,
       name: "outfit.png",
       role: "outfit",
     });
     const full = await addCharacterReference(character.id, owner, {
-      bytes: ichika,
+      bytes: shion,
       name: "style.png",
       role: "style",
     });
     expect(full.references[0]).toEqual(primary);
     expect(full.references).toHaveLength(3);
-    await expect(
-      addCharacterReference(character.id, owner, {
-        bytes: ichika,
-        name: "extra.png",
-        role: "style",
-      }),
-    ).rejects.toMatchObject({ code: "references_full" });
+    const replaced = await addCharacterReference(character.id, owner, {
+      bytes: shion,
+      name: "another-style.png",
+      role: "style",
+    });
+    expect(replaced.references.map((entry) => entry.role)).toEqual(["identity", "outfit", "style"]);
+    expect(replaced.references[2].name).toBe("another-style.png");
+    await expect(access(characterAsset(character.id, full.references[2].id))).rejects.toThrow();
+  });
+
+  it("dresses the character in the outfit photo and draws it in the style reference", async () => {
+    await addCharacterReference(character.id, owner, { bytes: shion, name: "outfit.jpg", role: "outfit" });
+    await addCharacterReference(character.id, owner, { bytes: shion, name: "style.png", role: "style" });
+    await generateCharacterVersion(character.id, owner, request());
+    let current = await settled(character.id);
+    expect(calls[0].prompt).toContain("outfit from Image 2");
+    expect(calls[0].prompt).toContain("art style of Image 3");
+    expect(calls[0].prompt).not.toContain("EVERY garment exactly as drawn");
+    expect(calls[0].references[0].role).toContain("NOT its clothing");
+    expect(calls[0].references[1].role).toContain("Take ONLY its clothing");
+    expect(calls[0].references[2].role).toContain("Take ONLY how it is drawn");
+    await generateCharacterVersion(current.id, owner, request("Make it winter", current.selectedVersionId));
+    current = await settled(current.id);
+    expect(calls[1].prompt).toContain("outfit from Image 3");
+    expect(calls[1].prompt).toContain("art style of Image 4");
+    expect(calls[1].references[0].role).toContain("REPLACED by the outfit reference");
+    expect(calls[1].references[1].role).not.toContain("illustration style");
   });
 
   it("asks for the reference outfit exactly on a first design", async () => {
@@ -318,7 +405,7 @@ describe("character versions", () => {
   });
 
   it("removes a supporting reference but never the original", async () => {
-    const withOutfit = await addCharacterReference(character.id, owner, { bytes: ichika, name: "outfit.png", role: "outfit" });
+    const withOutfit = await addCharacterReference(character.id, owner, { bytes: shion, name: "outfit.png", role: "outfit" });
     const outfit = withOutfit.references[1];
     const removed = await updateCharacter(character.id, owner, { action: "remove_reference", referenceId: outfit.id });
     expect(removed.references).toEqual([character.references[0]]);
@@ -335,7 +422,7 @@ describe("character versions", () => {
     expect(await listCharacters(owner)).toEqual([]);
   });
 
-  it("loads exactly the chosen version for Flipbook and retains the immutable Ichika reference", async () => {
+  it("loads exactly the chosen version for Flipbook and retains the immutable Shion reference", async () => {
     await generateCharacterVersion(character.id, owner, request());
     const base = await settled(character.id);
     const source = { characterId: base.id, versionId: base.selectedVersionId! };
@@ -354,9 +441,9 @@ describe("character versions", () => {
     const copy = Buffer.from(snapshot.png);
     await updateCharacter(base.id, owner, {
       action: "rename",
-      name: "Ichika winter",
+      name: "Shion winter",
     });
-    expect(snapshot.origin.name).toBe("Ichika");
+    expect(snapshot.origin.name).toBe("Shion");
     expect(snapshot.png.equals(copy)).toBe(true);
   });
 });
@@ -381,7 +468,7 @@ describe("private character HTTP routes", () => {
     expect((await readFile(characterAsset(saved.id, saved.references[0].id))).equals(original.png)).toBe(true);
     expect(calls).toHaveLength(0);
   });
-  it.each(["elf-chan", "denji", "reze"])("rejects the retired %s starter while keeping saved characters readable", async (preset) => {
+  it.each(["elf-chan", "denji", "reze", "ichika", "seita"])("rejects the retired %s starter while keeping saved characters readable", async (preset) => {
     const response = await create(http(owner, "POST", { preset }));
     expect(response.status).toBe(400);
     expect((await response.json()).error.code).toBe("invalid_character");
@@ -428,7 +515,7 @@ describe("private character HTTP routes", () => {
   });
   it("blocks cross-origin writes and permits the browser’s host behind an internal URL", async () => {
     const context = { params: Promise.resolve({ id: character.id }) };
-    const body = JSON.stringify({ action: "rename", name: "Ichika" });
+    const body = JSON.stringify({ action: "rename", name: "Shion" });
     const headers = {
       "Content-Type": "application/json",
       "x-test-user": owner,

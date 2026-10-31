@@ -113,6 +113,8 @@
   object-fit: contain;
 }
 .ghost { opacity: 0.26; filter: grayscale(1); }
+.workingFx.workingFx { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; }
+.workingFx > :global(.image-gen-child) { width: 100%; height: 100%; }
 .working { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; box-shadow: none; }
 .checking {
   opacity: 1;

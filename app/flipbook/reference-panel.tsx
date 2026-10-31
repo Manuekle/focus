@@ -5,7 +5,8 @@ import { useRef, useState } from "react";
 import { AiExpandIcon, Cancel01Icon, OrientationImageLandscapeToPotraitIcon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
-import { MediaLightbox, ZoomButton, type LightboxMedia } from "../../components/ui/media-lightbox";
+import { ImageViewer, ImageViewerContent, ImageViewerThumbnail, type ImageViewerImage } from "../../components/motion/image-viewer";
+import { useImageSizes } from "../../lib/hooks/use-image-sizes";
 import { Skeleton } from "../../components/ui/skeleton";
 import { Spinner } from "../../components/ui/spinner";
 import { cn } from "../../lib/utils";
@@ -35,17 +36,14 @@ export function ReferencePanel({
   const [zoom, setZoom] = useState<number | null>(null);
   const { analysis, reference, extraReferences } = flipbook;
   const room = MAX_EXTRA_REFERENCES - extraReferences.length;
-  if (flipbook.cast.length) return <ScenePanel flipbook={flipbook} />;
-
-  const sourceItem: LightboxMedia = { kind: "image", src: flipbookUrls.source(flipbook.id), alt: "Your illustration", caption: "Original illustration" };
-  const items: LightboxMedia[] = [
-    ...(reference?.kind !== "original" ? [sourceItem] : []),
-    ...(reference ? [{ kind: "image" as const, src: flipbookUrls.reference(flipbook.id, reference.version), alt: "Character reference used for every drawing", caption: `Reference · ${KIND_LABEL[reference.kind]}` }] : []),
-    ...extraReferences.map((extra, position) => ({ kind: "image" as const, src: flipbookUrls.extraReference(flipbook.id, extra.version), alt: `Extra reference ${position + 1}`, caption: `Extra reference · ${extra.name}` })),
+  const references = [
+    ...(reference?.kind !== "original" ? [{ id: "original", src: flipbookUrls.source(flipbook.id), alt: "Your illustration", caption: "Original illustration" }] : []),
+    ...(reference ? [{ id: "reference", src: flipbookUrls.reference(flipbook.id, reference.version), alt: "Character reference used for every drawing", caption: `Reference · ${KIND_LABEL[reference.kind]}` }] : []),
+    ...extraReferences.map((extra, position) => ({ id: `extra:${extra.version}`, src: flipbookUrls.extraReference(flipbook.id, extra.version), alt: `Extra reference ${position + 1}`, caption: `Extra reference · ${extra.name}` })),
   ];
-  const originalAt = reference?.kind !== "original" ? 0 : -1;
-  const referenceAt = reference ? (reference.kind !== "original" ? 1 : 0) : -1;
-  const extraAt = (position: number) => referenceAt + 1 + position;
+  const sizeOf = useImageSizes(references.map((entry) => entry.src));
+  const items: ImageViewerImage[] = references.map((entry) => ({ ...entry, ...sizeOf(entry.src) }));
+  if (flipbook.cast.length) return <ScenePanel flipbook={flipbook} />;
 
   const pick = (asAnchor: boolean) => (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = [...(event.currentTarget.files ?? [])];
@@ -54,24 +52,24 @@ export function ReferencePanel({
   };
 
   return (
+    <ImageViewer
+      images={items}
+      label="Character references"
+      value={zoom !== null ? items[zoom]?.id ?? null : null}
+      onValueChange={(id) => setZoom(id === null ? null : items.findIndex((entry) => entry.id === id))}
+    >
     <section className={styles.panel} aria-labelledby="reference-title">
       <h2 id="reference-title" className={styles.panelTitle}>Character</h2>
       <div className={styles.referencePair} data-single={reference?.kind === "original" || undefined}>
         {reference?.kind !== "original" ? (
           <figure>
-            <ZoomButton className={styles.referenceImage} label="Open your illustration larger" onOpen={() => setZoom(originalAt)}>
-              {/* eslint-disable-next-line @next/next/no-img-element -- media route */}
-              <img src={flipbookUrls.source(flipbook.id)} alt="Your illustration" />
-            </ZoomButton>
+            <ImageViewerThumbnail imageId="original" className={`${styles.referenceImage} rounded-xl bg-transparent`} />
             <figcaption>Original</figcaption>
           </figure>
         ) : null}
         <figure>
           {reference ? (
-            <ZoomButton className={styles.referenceImage} label="Open the character reference larger" onOpen={() => setZoom(referenceAt)}>
-              {/* eslint-disable-next-line @next/next/no-img-element -- media route */}
-              <img src={flipbookUrls.reference(flipbook.id, reference.version)} alt="Character reference used for every drawing" />
-            </ZoomButton>
+            <ImageViewerThumbnail imageId="reference" className={`${styles.referenceImage} rounded-xl bg-transparent`} />
           ) : (
             <div className={styles.referenceImage}>
               {flipbook.status === "referencing" ? <Skeleton className={styles.working} /> : <span className="text-xs text-muted-foreground">—</span>}
@@ -84,12 +82,9 @@ export function ReferencePanel({
 
       {extraReferences.length ? (
         <div className={styles.extras} role="list" aria-label="Extra references">
-          {extraReferences.map((extra, position) => (
+          {extraReferences.map((extra) => (
             <div key={extra.version} className={styles.extra} role="listitem">
-              <ZoomButton className={styles.extraImage} label={`Open ${extra.name} larger`} onOpen={() => setZoom(extraAt(position))}>
-                {/* eslint-disable-next-line @next/next/no-img-element -- media route */}
-                <img src={flipbookUrls.extraReference(flipbook.id, extra.version)} alt={extra.name} />
-              </ZoomButton>
+              <ImageViewerThumbnail imageId={`extra:${extra.version}`} className={`${styles.extraImage} rounded-xl bg-transparent`} />
               <button type="button" className={styles.extraRemove} aria-label={`Remove ${extra.name}`} disabled={busy} onClick={() => onRemoveReference(extra.version)}>
                 <HugeiconsIcon icon={Cancel01Icon} size={10} strokeWidth={2.2} />
               </button>
@@ -119,7 +114,7 @@ export function ReferencePanel({
       {extraReferences.length ? <p className={styles.hint}>Extra views travel with every drawing, so hidden details (the back of the outfit, an accessory) stay right.</p> : null}
       {flipbook.frames.some((frame) => frame.version) && reference ? <p className={styles.hint}>A new reference applies to frames you redraw afterwards.</p> : null}
 
-      <MediaLightbox items={items} index={zoom !== null && zoom >= 0 ? zoom : null} onIndexChange={setZoom} onClose={() => setZoom(null)} />
+      <ImageViewerContent />
 
       {analysis ? (
         <dl className={styles.metrics}>
@@ -139,6 +134,7 @@ export function ReferencePanel({
         </ul>
       ) : null}
     </section>
+    </ImageViewer>
   );
 }
 
@@ -146,14 +142,19 @@ export function ReferencePanel({
 function ScenePanel({ flipbook }: { readonly flipbook: Flipbook }) {
   const [zoomed, setZoomed] = useState(false);
   const lineup = flipbook.reference ? flipbookUrls.reference(flipbook.id, flipbook.reference.version) : flipbookUrls.source(flipbook.id);
+  const sizeOf = useImageSizes([lineup]);
+  const alt = `The characters of the scene: ${flipbook.cast.map((member) => member.name).join(", ")}`;
   return (
+    <ImageViewer
+      images={[{ id: "lineup", src: lineup, alt, caption: "The characters, as saved", ...sizeOf(lineup) }]}
+      label="The characters"
+      value={zoomed ? "lineup" : null}
+      onValueChange={(id) => setZoomed(id !== null)}
+    >
     <section className={styles.panel} aria-labelledby="reference-title">
       <h2 id="reference-title" className={styles.panelTitle}>Characters</h2>
       <figure className={styles.referencePair} data-single="">
-        <ZoomButton className={styles.referenceImage} label="Open the characters larger" onOpen={() => setZoomed(true)}>
-          {/* eslint-disable-next-line @next/next/no-img-element -- media route */}
-          <img src={lineup} alt={`The characters of the scene: ${flipbook.cast.map((member) => member.name).join(", ")}`} />
-        </ZoomButton>
+        <ImageViewerThumbnail imageId="lineup" className={`${styles.referenceImage} rounded-xl bg-transparent`} />
       </figure>
       <ol className={styles.checkList} aria-label="Characters in this scene">
         {flipbook.cast.map((member) => (
@@ -164,13 +165,14 @@ function ScenePanel({ flipbook }: { readonly flipbook: Flipbook }) {
         ))}
       </ol>
       <p className={styles.hint}>Every drawing is made from each character’s own saved version, together in one frame. New designs won’t change this scene.</p>
-      <MediaLightbox items={[{ kind: "image", src: lineup, alt: "The characters of the scene", caption: "The characters, as saved" }]} index={zoomed ? 0 : null} onClose={() => setZoomed(false)} />
+      <ImageViewerContent />
       {flipbook.warnings.length ? (
         <ul className={cn(styles.checkList, styles.caveats)} aria-label="Things that may affect the result">
           {flipbook.warnings.map((warning) => <li key={warning}>{warning}</li>)}
         </ul>
       ) : null}
     </section>
+    </ImageViewer>
   );
 }
 

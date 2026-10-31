@@ -23,3 +23,6 @@ PHASES
 
 # The GPU worker is its own image (services/animation-worker/Dockerfile).
 services/
+
+# Local debug and repair runs (single_frame_debug, rebuilt runs): never in an image.
+debug_runs

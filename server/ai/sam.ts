@@ -283,3 +283,71 @@ export async function segmentImage(input: {
     throw metaError(error, "image segmentation");
   }
 }
+
+/**
+ * SAM 3.1 on a still image with object prompts (a box and positive/negative
+ * points per object, built by buildObjectPrompt) instead of a noun phrase.
+ * Returns each prompted object's mask under the id it was given. The mapping
+ * engine uses it to isolate body regions on a character sheet; it never
+ * places a joint from a mask.
+ */
+export async function segmentImageObjects(input: {
+  readonly png: Buffer;
+  readonly width: number;
+  readonly height: number;
+  readonly objects: Parameters<typeof buildObjectPrompt>[0]["objects"];
+  readonly signal?: AbortSignal;
+}): Promise<ImageMask[]> {
+  const config = requireMetaConfig();
+  const client = metaClient(config);
+  const started = Date.now();
+  const text = buildObjectPrompt({ size: { width: input.width, height: input.height }, objects: input.objects });
+  try {
+    const result = await segmentationLimiter.run(() =>
+      withRetry(
+        async () => {
+          const stream = await client.responses.create(
+            {
+              model: config.segmentationModel,
+              input: [{
+                type: "message",
+                role: "user",
+                content: [
+                  { type: "input_text", text },
+                  { type: "input_image", image_url: `data:image/png;base64,${input.png.toString("base64")}` } as unknown as { type: "input_text"; text: string },
+                ],
+              }],
+              stream: true,
+              metadata: { mask_encoding: "one_bit", include_confidence: "true" },
+            },
+            { signal: input.signal },
+          );
+          return parseImageStream(stream as AsyncIterable<{ readonly type: string }>).finalResult;
+        },
+        { signal: input.signal, attempts: 2 },
+      ),
+    );
+    await recordUsage({ model: config.segmentationModel, kind: "segment_image", cached: false, ok: true, durationMs: Date.now() - started });
+    const latest = new Map<string, SegmentationMaskRecord>();
+    for (const record of recordsOfKind(result.records, "mask")) latest.set(record.objectId, record);
+    return [...latest.values()].flatMap((record) => {
+      const raster = decodeMaskToRaster(record.mask);
+      const { left, top, right, bottom } = record.bounds;
+      if (right <= left || bottom <= top) return [];
+      const alpha = new Uint8Array(input.width * input.height);
+      let area = 0;
+      for (let y = Math.max(0, top); y < Math.min(input.height, bottom); y++) {
+        const row = Math.min(record.mask.height - 1, Math.floor(((y - top) * record.mask.height) / (bottom - top))) * record.mask.width;
+        for (let x = Math.max(0, left); x < Math.min(input.width, right); x++) {
+          if (raster[row + Math.min(record.mask.width - 1, Math.floor(((x - left) * record.mask.width) / (right - left)))] === 1) { alpha[y * input.width + x] = 255; area++; }
+        }
+      }
+      return area ? [{ objectId: record.objectId, alpha, box: { left, top, right, bottom }, area, confidence: record.confidence ?? null }] : [];
+    });
+  } catch (error) {
+    if (!(error instanceof AppError)) {
+      await recordUsage({ model: config.segmentationModel, kind: "segment_image", cached: false, ok: false, error: String(error), durationMs: Date.now() - started });
+    }
+    throw metaError(error, "region segmentation");
+  }
+}

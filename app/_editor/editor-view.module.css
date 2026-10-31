@@ -18,13 +18,46 @@
   .controls { gap: 16px; }
 }
 
-/* The full editor page: a larger stage, controls in their own column. */
-.editor[data-variant="page"] { grid-template-columns: minmax(0, 1.55fr) minmax(320px, 1fr); gap: 28px; }
-.editor[data-variant="page"] .preview { top: var(--studio-preview-top, 76px); }
-.editor[data-variant="page"] .preview figure video,
-.editor[data-variant="page"] .preview figure canvas { max-height: min(62vh, 620px); }
-.editor[data-variant="page"] .controls { padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--card) 70%, transparent); }
-@media (max-width: 1100px) {
-  .editor[data-variant="page"] { grid-template-columns: 1fr; max-width: 760px; margin-inline: auto; }
-  .editor[data-variant="page"] .preview { position: static; }
+/* The full editor page: Flipbook's workspace (app/flipbook/flipbook.module.css). The clip fills the
+   canvas, the controls dock on the right like Rotoscope's inspector (resizable, hideable) and the
+   timeline runs under both. The container name lets Rotoscope's dock float over a narrow canvas. */
+.workspace {
+  container: flipbook-workspace / inline-size;
+  display: flex;
+  min-width: 0;
+  height: clamp(640px, calc(100dvh - 120px), 1000px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+  outline: none;
+  scroll-margin-top: 24px;
+}
+.canvasRow { --dock-w: var(--dock-user, 400px); position: relative; display: flex; min-width: 0; min-height: 0; flex: 1; }
+.canvasRow:has(> [role="separator"][data-dragging]) { cursor: col-resize; user-select: none; }
+.canvasRow:has(> [role="separator"][data-dragging]) :is(aside, aside > div, [role="separator"]) { transition: none; }
+/* The stage takes the room left over by the file row; the video's own cap reads it (--stage-max). */
+.canvasCol {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  padding: clamp(14px, 2.4vw, 28px) clamp(14px, 2.4vw, 28px) 14px;
+  background: radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--foreground) 3.1%, transparent), color-mix(in srgb, var(--foreground) 0.8%, transparent) 60%, transparent);
+}
+.canvasCol > figure { --stage-max: calc(100cqh - 56px); min-height: 0; flex: 1; justify-content: center; container-type: size; border: 0; background: transparent; box-shadow: none; }
+.canvasCol > figure > div:first-child { flex: 1; min-height: 0; overflow: hidden; border-radius: 14px; box-shadow: 0 18px 40px -18px #000000a0, 0 2px 8px #0000002e; }
+.canvasCol > figure > figcaption { border-top: 0; padding-inline: 0; }
+.dockShow { position: absolute; top: 12px; right: 12px; z-index: 5; background: color-mix(in srgb, var(--card) 88%, transparent); box-shadow: var(--shadow-float); backdrop-filter: blur(12px); }
+.dockTitle { min-width: 0; flex: 1; padding-left: 4px; font-family: var(--font-sn-pro); font-size: 14px; font-weight: 600; }
+@container flipbook-workspace (max-width: 1080px) {
+  .canvasRow[data-dock="true"] .dockShow { display: none; }
+}
+@media (max-width: 860px) {
+  .workspace { height: clamp(620px, 88dvh, 900px); }
 }

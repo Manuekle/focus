@@ -115,7 +115,7 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .stepDot { display: inline-grid; width: 16px; height: 16px; place-items: center; border-radius: 999px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 12.2%, transparent); }
 .steps li[data-state="done"] .stepDot { background: color-mix(in srgb, var(--primary) 70%, transparent); box-shadow: none; color: var(--primary-foreground, #fff); }
 
-.grid { display: grid; grid-template-columns: minmax(240px, 300px) minmax(0, 1fr) minmax(280px, 340px); align-items: start; gap: 28px; }
+.grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(300px, 380px); align-items: start; gap: 28px; }
 .columnSide, .columnMain { min-width: 0; min-height: 0; }
 .columnContent { display: flex; min-width: 0; flex-direction: column; gap: 24px; }
 .columnViewport { overflow: visible; scrollbar-gutter: auto; scrollbar-width: none; }
@@ -127,8 +127,9 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 @container flipbook-workspace (min-width: 1081px) {
   .mainContent:has(> .editor) { height: 100%; min-height: 0; }
   .editor { flex: 1; min-height: 0; }
-  .editor > :not(.grid) { flex-shrink: 0; }
+  .editor > :not(.grid, .workspace) { flex-shrink: 0; }
   .grid { flex: 1; min-height: 0; align-items: stretch; }
+  .workspace { height: auto; flex: 1 1 0; min-height: 520px; margin-bottom: 16px; }
   .main:has(.mainContent > .editor) .mainViewport { overflow: hidden; }
   .columnViewport { overflow-y: auto; scrollbar-gutter: stable; }
   .columnContent { padding: 2px 4px 16px; }
@@ -168,6 +169,14 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .plate { position: relative; display: block; width: 100%; aspect-ratio: 16 / 9; overflow: hidden; border-radius: 10px; background: color-mix(in srgb, var(--foreground) 1.6%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.9%, transparent); transition: box-shadow 150ms var(--ease-smooth-out); }
 .plates figure[data-active] .plate { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.9%, transparent), 0 0 0 2px var(--primary); }
 .plate img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.presets { display: grid; grid-template-columns: repeat(auto-fill, minmax(72px, 1fr)); gap: 8px; }
+.presets figure { display: flex; min-width: 0; flex-direction: column; gap: 4px; }
+.presets figcaption { color: var(--muted-foreground); font-size: 11px; transition: color 150ms; }
+.presets figure[data-active] figcaption { color: var(--foreground); }
+.preset { position: relative; display: block; width: 100%; aspect-ratio: 9 / 16; padding: 0; overflow: hidden; border: 0; border-radius: 10px; background: color-mix(in srgb, var(--foreground) 1.6%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.9%, transparent); cursor: pointer; transition: box-shadow 150ms var(--ease-smooth-out), opacity 150ms; }
+.preset:disabled { cursor: default; opacity: 0.5; }
+.preset img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+.presets figure[data-active] .preset { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.9%, transparent), 0 0 0 2px var(--primary); }
 .palette { display: flex; gap: 4px; }
 .palette span { width: 16px; height: 16px; border-radius: 5px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 12.2%, transparent); }
 /* One column that can shrink: a long value wraps inside the panel instead of widening the track under the stage. */
@@ -220,6 +229,9 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .strip[data-dense] .stripFrame { padding: 2px; gap: 2px; border-radius: 8px; }
 .strip[data-dense] .stripLabel, .strip[data-dense] .stripState { display: none; }
 .strip[data-dense] .stripMeta { font-size: 10px; }
+/* Small cards have no room for words: a spinner while a drawing is made, nothing while it waits. */
+.strip[data-dense] .liveFlag { gap: 0; padding: 3px; font-size: 0; }
+.strip[data-dense] .liveFlag[data-stage="queued"], .strip[data-dense] .liveFlag[data-stage="drawn"] { display: none; }
 
 /* Frame inspector */
 .inspect { position: relative; display: grid; height: 360px; place-items: center; overflow: hidden; border-radius: 12px; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 3.9%, transparent); }
@@ -236,16 +248,13 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 
 @container flipbook-workspace (max-width: 1080px) {
   .grid { grid-template-columns: minmax(0, 1fr) minmax(280px, 340px); }
-  .grid > .columnSide:first-child { grid-column: 2; grid-row: 1; }
-  .grid > .columnSide:last-child { grid-column: 2; grid-row: 2; }
-  .columnMain { grid-column: 1; grid-row: 1 / span 2; position: sticky; top: 16px; max-height: calc(100dvh - 132px); }
+  .columnMain { position: sticky; top: 16px; max-height: calc(100dvh - 132px); }
   .columnMain .columnViewport { overflow-y: auto; scrollbar-gutter: stable; }
   .referencePair, .extras { max-width: 440px; }
 }
 @container flipbook-workspace (max-width: 760px) {
   .grid { grid-template-columns: 1fr; }
-  .grid > .columnSide:first-child, .grid > .columnSide:last-child { grid-column: auto; grid-row: auto; }
-  .columnMain { grid-column: auto; grid-row: auto; position: static; max-height: none; }
+  .columnMain { position: static; max-height: none; }
   .columnMain .columnViewport { overflow: visible; scrollbar-gutter: auto; }
   .strip { grid-template-columns: repeat(4, minmax(0, 1fr)); }
 }
@@ -271,6 +280,61 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .skeletonThumb { display: flex; flex-direction: column; gap: 6px; padding: 4px; }
 /* A drawing in progress: the sheen sits where the drawing will appear. */
 .working { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; box-shadow: none; }
+.ghost { opacity: 0.26; filter: grayscale(1); }
+.workingFx.workingFx { position: absolute; inset: 0; width: 100%; height: 100%; border-radius: inherit; }
+.workingFx > :global(.image-gen-child) { width: 100%; height: 100%; }
+.checking { opacity: 1; animation: arrive 260ms var(--ease-smooth-out) backwards; }
+.liveFlag {
+  position: absolute;
+  top: 5px;
+  left: 5px;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 5px;
+  border: 1px solid color-mix(in srgb, var(--primary) 30%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card) 88%, transparent);
+  color: var(--primary);
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 14px;
+  backdrop-filter: blur(4px);
+}
+.liveFlag[data-stage="queued"] { border-color: var(--border); color: var(--muted-foreground); }
+/* The selected drawing while it is drawn: the old one under the pixel churn, dissolving into the new. */
+.workingLarge { position: relative; display: grid; width: 100%; height: 100%; place-items: center; }
+.workingLargeFx.workingLargeFx { max-width: 100%; }
+.workingLargeGhost.workingLargeGhost { display: block; height: 360px; width: auto; max-width: 100%; opacity: 0.18; filter: grayscale(1) blur(1px); transition: opacity 200ms; }
+.workingLargeGhost.workingLargeGhost[data-revealing] { opacity: 0; }
+.workingStatus {
+  position: absolute;
+  bottom: 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  padding-inline: 11px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--card) 82%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 7%, transparent), 0 6px 18px -8px #00000059;
+  font-size: 11px;
+  font-weight: 500;
+  white-space: nowrap;
+  backdrop-filter: blur(10px);
+}
+@keyframes arrive { from { opacity: 0; } }
+@media (prefers-reduced-motion: reduce) { .checking { animation: none; } }
+
+/* Earlier drawings of one frame: a row that scrolls sideways, newest first. */
+.versions { display: flex; gap: 6px; overflow-x: auto; padding: 2px 2px 6px; scrollbar-width: thin; }
+.version { position: relative; flex: none; display: flex; width: 52px; flex-direction: column; gap: 3px; padding: 0; border: 0; background: transparent; color: inherit; cursor: pointer; text-align: center; }
+.versionThumb { position: relative; display: block; aspect-ratio: 2 / 3; overflow: hidden; border-radius: 7px; background: color-mix(in srgb, var(--foreground) 1.6%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent); transition: box-shadow 150ms; }
+.versionThumb img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.version[data-shown="true"] .versionThumb { box-shadow: 0 0 0 2px var(--primary); }
+.version[data-current="true"] .versionThumb::after { content: ""; position: absolute; right: 3px; bottom: 3px; width: 8px; height: 8px; border-radius: 999px; background: var(--primary); box-shadow: 0 0 0 2px var(--card); }
+.version:disabled { cursor: default; }
+.versionNumber { color: var(--muted-foreground); font-size: 10px; font-variant-numeric: tabular-nums; }
 .workingLabel { position: relative; z-index: 1; color: var(--muted-foreground); font-size: 12px; }
 
 /* ── With a drawing: the video editor's layout (editor-view.module.css) ── */
@@ -328,12 +392,70 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .castItem[aria-pressed="true"] { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--primary) 70%, transparent), inset 0 1px 0 color-mix(in srgb, var(--foreground) 3.1%, transparent); background-color: color-mix(in srgb, var(--foreground) 3.1%, transparent); }
 .castItem:disabled { cursor: default; opacity: 0.5; }
 .castItem:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-.castBadge { display: grid; width: 20px; height: 20px; flex-shrink: 0; place-items: center; margin-left: auto; border-radius: 999px; background: var(--primary); color: #fff; font-size: 11px; font-weight: 600; }
-.castLineup { display: flex; min-height: 0; flex: 1; align-items: flex-end; justify-content: center; gap: 12px; padding: 24px 16px; }
-.castLineup figure { display: flex; min-width: 0; flex: 1 1 0; max-width: 240px; flex-direction: column; align-items: center; gap: 6px; }
-.castLineup img { display: block; width: auto; max-width: 100%; height: auto; max-height: min(52vh, 480px); object-fit: contain; }
-.castLineup figcaption { max-width: 100%; overflow: hidden; color: var(--muted-foreground); font-size: 11px; text-overflow: ellipsis; white-space: nowrap; }
-.castEmpty { display: grid; min-height: 220px; place-items: center; padding: 24px; color: var(--muted-foreground); font-size: 13px; text-align: center; }
+.castBadge { display: grid; width: 20px; height: 20px; flex-shrink: 0; place-items: center; margin-left: auto; border-radius: 999px; background: var(--primary); color: #fff; font-size: 10.5px; font-weight: 600; font-variant-numeric: tabular-nums; }
+/* The scene: a framed stage as tall as the window, so the column never ends in a void while the controls scroll beside it. */
+.scene {
+  position: sticky;
+  top: 24px;
+  height: calc(100dvh - 60px - 48px);
+  min-height: 420px;
+  overflow: hidden;
+  border-radius: 24px;
+  background:
+    radial-gradient(70% 55% at 50% 38%, color-mix(in srgb, var(--primary) 7%, transparent), transparent 72%),
+    linear-gradient(180deg, color-mix(in srgb, var(--foreground) 2%, transparent), color-mix(in srgb, var(--foreground) 0.6%, transparent));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5.5%, transparent), inset 0 1px 0 color-mix(in srgb, var(--foreground) 3%, transparent);
+}
+@media (max-width: 760px) {
+  .scene { position: relative; top: auto; height: auto; min-height: 420px; }
+}
+/* CastStage lays the tiles out in script; this is the box it measures. */
+.castStage { position: relative; min-height: 0; flex: 1; margin: 12px; }
+.scene .castTile {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: hidden;
+  margin: 0;
+  border-radius: 18px;
+  /* Covers are drawn on white paper; the tile is that paper, so it can grow without showing a frame. */
+  background: #fff;
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--foreground) 7%, transparent), 0 18px 40px -18px #00000059;
+  will-change: transform, width, height;
+}
+.castTile img { display: block; width: 100%; height: 100%; padding: 6% 6% 16%; object-fit: contain; user-select: none; }
+.scene .castTile figcaption {
+  position: absolute;
+  bottom: 10px;
+  left: 50%;
+  display: inline-flex;
+  max-width: calc(100% - 20px);
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px 4px 4px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 999px;
+  background: #0b0d12b8;
+  box-shadow: inset 0 0 0 1px #ffffff1a;
+  backdrop-filter: blur(10px);
+  color: #f2f4f8;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 18px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  transform: translateX(-50%);
+}
+.castOrder { display: grid; width: 18px; height: 18px; flex-shrink: 0; place-items: center; border-radius: 999px; background: var(--primary); color: #fff; font-size: 10px; font-weight: 600; font-variant-numeric: tabular-nums; }
+.castEmpty { display: flex; min-height: 0; flex: 1; flex-direction: column; align-items: center; justify-content: center; gap: 6px; padding: 32px 24px; text-align: center; }
+.castSlots { display: flex; gap: 12px; margin-bottom: 18px; }
+.castSlot { display: grid; width: 64px; height: 96px; place-items: center; border: 1.5px dashed color-mix(in srgb, var(--foreground) 14%, transparent); border-radius: 16px; background: color-mix(in srgb, var(--foreground) 2%, transparent); color: color-mix(in srgb, var(--foreground) 28%, transparent); }
+/* Slots past the minimum read as room to grow, not as required. */
+.castSlot[data-optional] { opacity: 0.5; }
+.castEmptyTitle { font-family: var(--font-sn-pro); font-size: 18px; font-weight: 600; letter-spacing: -0.02em; color: var(--foreground); }
+.castEmptyText { max-width: 320px; color: var(--muted-foreground); font-size: 13px; line-height: 1.55; }
+@media (max-width: 480px) { .castSlot { width: 52px; height: 80px; } }
 .cost { display: flex; flex-wrap: wrap; align-items: baseline; justify-content: space-between; gap: 4px 12px; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
 .cost strong { color: var(--foreground); font-weight: 600; font-variant-numeric: tabular-nums; }
 .pickerEmpty { display: flex; align-items: center; gap: 8px; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
@@ -349,28 +471,38 @@ fieldset.controlField > legend { margin-bottom: 8px; }
   gap: 24px;
   padding-bottom: 24px;
 }
-.createWorkspace[data-variant="page"] .createPreview { position: sticky; top: 16px; gap: 12px; }
+/* The preview is a stage as tall as the window, held in view while the controls scroll, as in Animate together:
+   the picture fills it, and its name and summary sit at its foot. */
+.createWorkspace[data-variant="page"] .createPreview { position: sticky; top: 24px; height: calc(100dvh - 60px - 48px); min-height: 520px; gap: 12px; }
+.createWorkspace[data-variant="page"] .createPreview > figure { flex: 1 1 auto; min-height: 0; border-radius: 20px; }
+.createWorkspace[data-variant="page"] .createPreview .drawingStage { flex: 1 1 auto; min-height: 0; border-radius: 20px; container-type: size; }
 .createPreview .drawingStage img { max-height: min(66dvh, 680px); }
-.createPreview .reading { gap: 6px; padding: 14px 0 0; border-top: 1px solid var(--border); border-bottom: 0; }
+.createWorkspace[data-variant="page"] .createPreview .drawingStage img { max-height: calc(100cqh - 48px); }
+.createPreview .reading { gap: 8px; padding: 14px 0 0; border-top: 1px solid color-mix(in srgb, var(--foreground) 7%, transparent); border-bottom: 0; }
+/* The run at a glance: frames, rate and span as quiet chips over the fine print. */
+.readingStats { display: flex; flex-wrap: wrap; gap: 6px; }
+.readingStats > span { display: inline-flex; align-items: baseline; gap: 5px; padding: 4px 10px; border-radius: 999px; background: color-mix(in srgb, var(--foreground) 4%, transparent); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 5%, transparent); color: var(--muted-foreground); font-size: 12px; }
+.readingStats strong { color: var(--foreground); font-weight: 600; font-variant-numeric: tabular-nums; }
+.readingNote { color: var(--muted-foreground); font-size: 12px; line-height: 1.55; text-wrap: pretty; }
 .createWorkspace[data-variant="page"] .createControls { padding: 0; border: 0; border-radius: 0; background: transparent; }
-.createForm { display: flex; min-width: 0; flex-direction: column; gap: 16px; }
-.createCard { display: flex; min-width: 0; flex-direction: column; gap: 12px; padding: 18px; border: 1px solid var(--border); border-radius: 16px; background: color-mix(in srgb, var(--card) 70%, transparent); }
+/* Sections sit flat on the page, split by hairlines, as the editor's panels do: no cards. */
+.createForm { display: flex; min-width: 0; flex-direction: column; }
+.createCard { display: flex; min-width: 0; flex-direction: column; gap: 12px; padding-block: 22px; border-top: 1px solid color-mix(in srgb, var(--foreground) 7%, transparent); }
+.createCard:first-child { padding-top: 4px; border-top: 0; }
 .createCard > h2 { margin-bottom: 2px; }
-.createFooter { display: flex; flex-direction: column; gap: 10px; padding: 0 2px; }
+.createFooter { display: flex; flex-direction: column; gap: 10px; padding-top: 20px; border-top: 1px solid color-mix(in srgb, var(--foreground) 7%, transparent); }
 .createFooter > p { min-width: 0; }
 .createSubmit { display: flex; flex-shrink: 0; flex-direction: column; gap: 8px; }
 .createTiming, .createFraming { display: grid; min-width: 0; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px 20px; }
 .createFraming > :only-child { grid-column: 1 / -1; }
 .createTiming > p, .createTiming > details { grid-column: 1 / -1; }
 .createDisclosure { min-width: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.5; }
-.createDisclosure > summary { cursor: pointer; }
-.createDisclosure > summary:hover { color: var(--foreground); }
-.createDisclosure > summary:focus-visible { outline: 2px solid var(--ring); outline-offset: 4px; border-radius: 4px; }
-.createDisclosure[open] > summary { margin-bottom: 10px; }
 .promptPreview { white-space: pre-wrap; overflow-wrap: anywhere; color: var(--muted-foreground); font-family: inherit; font-size: 12px; line-height: 1.6; }
 @container flipbook-workspace (max-width: 760px) {
   .createWorkspace[data-variant="page"] { grid-template-columns: minmax(0, 1fr); max-width: 640px; gap: 20px; }
-  .createWorkspace[data-variant="page"] .createPreview { position: static; }
+  .createWorkspace[data-variant="page"] .createPreview { position: static; height: auto; min-height: 0; }
+  .createWorkspace[data-variant="page"] .createPreview .drawingStage { container-type: normal; }
+  .createWorkspace[data-variant="page"] .createPreview .drawingStage img { max-height: min(66dvh, 680px); }
 }
 @media (max-width: 860px) {
   .createWorkspace[data-variant="page"] .createPreview { top: 76px; }
@@ -382,3 +514,67 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 /* A frame's own failure sits in its panel as plain text: the editor shows at most one alert at a time. */
 .frameError { color: var(--status-failed-fg); font-size: 12px; line-height: 1.5; overflow-wrap: anywhere; }
 .pickerItem[data-selected] { box-shadow: inset 0 0 0 1px var(--primary), inset 0 1px 0 color-mix(in srgb, var(--foreground) 3.1%, transparent); }
+
+/* The inspector beside the preview, as in Rotoscope: one tab at a time instead of every panel stacked. */
+.dock { display: flex; min-width: 0; min-height: 0; flex-direction: column; gap: 14px; }
+.dockTabs { min-width: 0; flex-shrink: 0; }
+.dockTabs :global(.t-tab) { height: 28px; min-width: 0; flex: 1 1 0; padding-inline: 6px; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
+.dockTabs :global(.t-tabs-pill) { height: 28px; }
+.dockSwap { display: flex; min-width: 0; flex-direction: column; gap: 24px; animation: dock-swap-in 260ms var(--ease-smooth-out) backwards; }
+@keyframes dock-swap-in { from { opacity: 0; translate: 0 8px; } }
+@media (prefers-reduced-motion: reduce) { .dockSwap { animation: none; } }
+.dock > .columnSide { flex: 1; min-height: 0; }
+
+/* ── Editor workspace: Rotoscope's dock beside the preview, a timeline under both ── */
+.workspace {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  height: clamp(640px, 82dvh, 980px);
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: var(--shadow-soft);
+}
+/* The inspector's width: the person's own (rotoscope/dock-resizer.tsx), else the default. */
+.canvasRow { --dock-w: var(--dock-user, 400px); position: relative; display: flex; min-width: 0; min-height: 0; flex: 1; }
+/* While the edge is dragged the inspector follows the pointer, not an ease. */
+.canvasRow:has(> [role="separator"][data-dragging]) { cursor: col-resize; user-select: none; }
+.canvasRow:has(> [role="separator"][data-dragging]) :is(aside, aside > div, [role="separator"]) { transition: none; }
+.canvasCol { position: relative; display: flex; min-width: 0; min-height: 0; flex: 1; flex-direction: column; }
+.canvasCta { display: flex; flex-shrink: 0; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 12px; padding: 10px 14px; border-bottom: 1px solid var(--border); }
+.dockShow { position: absolute; top: 12px; right: 12px; z-index: 5; background: color-mix(in srgb, var(--card) 88%, transparent); box-shadow: var(--shadow-float); backdrop-filter: blur(12px); }
+/* The preview takes the room it has at its own proportions (container units of the fit box). */
+.previewFit {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  flex: 1;
+  place-items: center;
+  padding: clamp(14px, 2.4vw, 28px);
+  container-type: size;
+  background: radial-gradient(120% 90% at 50% 0%, color-mix(in srgb, var(--foreground) 3.1%, transparent), color-mix(in srgb, var(--foreground) 0.8%, transparent) 60%, transparent);
+}
+.previewStage {
+  position: relative;
+  width: min(100cqw, 100cqh * var(--stage-ratio, 1.7778));
+  overflow: hidden;
+  border-radius: 12px;
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 3.9%, transparent), 0 18px 40px -18px #000000a0, 0 2px 8px #0000002e;
+  outline: none;
+}
+.previewStage:focus-visible { box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 3.9%, transparent), 0 0 0 2px var(--primary); }
+.previewStage[data-transparent] {
+  background-color: var(--checker-base);
+  background-image: linear-gradient(45deg, color-mix(in srgb, var(--foreground) 3.9%, transparent) 25%, transparent 25%), linear-gradient(-45deg, color-mix(in srgb, var(--foreground) 3.9%, transparent) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--foreground) 3.9%, transparent) 75%), linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--foreground) 3.9%, transparent) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+@container flipbook-workspace (max-width: 1080px) {
+  .canvasRow[data-dock="true"] .dockShow { display: none; }
+}
+@media (max-width: 860px) {
+  .workspace { height: clamp(620px, 88dvh, 900px); }
+}

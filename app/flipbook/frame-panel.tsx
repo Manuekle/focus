@@ -1,17 +1,20 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { AiDrawingIcon, ArrowLeft01Icon, ArrowRight01Icon, Refresh01Icon, Undo02Icon, Upload01Icon } from "@hugeicons/core-free-icons";
+import { AiDrawingIcon, ArrowLeft01Icon, ArrowRight01Icon, PencilEdit02Icon, Refresh01Icon, Undo02Icon, Upload01Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { Disclosure } from "../../components/ui/disclosure";
-import { MediaLightbox, ZoomButton } from "../../components/ui/media-lightbox";
-import { Skeleton } from "../../components/ui/skeleton";
+import { ImageViewer, ImageViewerContent, ImageViewerThumbnail, type ImageViewerImage } from "../../components/motion/image-viewer";
+import { useImageSizes } from "../../lib/hooks/use-image-sizes";
 import { Switch } from "../../components/ui/switch";
 import { ToggleChip } from "../../components/ui/toggle-chip";
-import { IMAGE_ACCEPT_ATTRIBUTE, flipbookUrls, importedFromLabel, type Flipbook, type FlipbookFrame, type FrameAction } from "../../shared/flipbook";
+import { FRAME_NOTE_LIMITS, IMAGE_ACCEPT_ATTRIBUTE, flipbookUrls, importedFromLabel, type Flipbook, type FlipbookFrame, type FrameAction } from "../../shared/flipbook";
 import { messageFor } from "./flipbook-client";
+import { PencilNote } from "../rotoscope/pencil-note";
 import { frameThumb } from "./frame-strip";
+import { FrameWorkingLarge, drawStage, ghostOf } from "./frame-working";
+import { VersionTray } from "./version-tray";
 import styles from "./flipbook.module.css";
 
 const ISSUE_LABEL: Record<string, string> = {
@@ -35,6 +38,7 @@ export function FramePanel({
   busy,
   onAction,
   onReplace,
+  onCorrect,
   onMove,
   canMove = true,
 }: {
@@ -45,6 +49,8 @@ export function FramePanel({
   readonly busy: boolean;
   readonly onAction: (action: FrameAction) => void;
   readonly onReplace: (file: File) => void;
+  /** A pencil note: the red marks and what to change. */
+  readonly onCorrect: (note: { comment: string; marks: Blob }) => void;
   readonly onMove: (delta: -1 | 1) => void;
   /** Cycle drawings can change places; a scene's beats can't. */
   readonly canMove?: boolean;
@@ -52,13 +58,24 @@ export function FramePanel({
   const [view, setView] = useState<"sprite" | "raw">("sprite");
   const [note, setNote] = useState("");
   const [zoomed, setZoomed] = useState(false);
+  const [marking, setMarking] = useState(false);
+  // An earlier drawing being looked at; it is not in the animation until "Use this drawing".
+  const [looking, setLooking] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const sprite = frameThumb(flipbook, frame);
   const raw = frame.version ? flipbookUrls.raw(flipbook.id, frame.id, frame.version) : null;
-  const shown = view === "raw" ? raw : sprite;
+  const previewing = looking && looking !== frame.version && frame.versions.some((entry) => entry.id === looking) ? looking : null;
+  const previewNumber = previewing ? frame.versions.findIndex((entry) => entry.id === previewing) + 1 : 0;
+  const shown = previewing ? flipbookUrls.raw(flipbook.id, frame.id, previewing) : view === "raw" ? raw : sprite;
+  const asRaw = Boolean(previewing) || view === "raw";
+  const sizeOf = useImageSizes(shown ? [shown] : []);
+  const label = previewing ? `${frame.label}, earlier drawing ${previewNumber}` : `${frame.label}, ${view === "raw" ? "drawing as generated" : "aligned sprite"}`;
+  const picture: ImageViewerImage = { id: "frame", src: shown ?? "", alt: label, caption: `Frame ${index + 1} · ${frame.label} · ${previewing ? `drawing ${previewNumber}` : view === "raw" ? "as drawn" : "aligned sprite"}`, transparent: !asRaw, ...sizeOf(shown ?? "") };
+  const stage = drawStage(flipbook, frame);
+  // The pencil marks the drawing as Muse Image made it, at its own pixels.
+  const markSize = frame.metrics ? { width: frame.metrics.rawWidth, height: frame.metrics.rawHeight } : undefined;
   const pose = flipbook.plan?.poses[frame.poseIndex];
   const locked = frame.approved;
-  const working = frame.status === "generating" || frame.status === "processing";
   const canRestore = Boolean(frame.originalVersion && frame.originalVersion !== frame.version);
   const metrics = frame.metrics;
   const flagged = frame.warnings.length + (frame.review?.issues.length ?? 0);
@@ -74,31 +91,49 @@ export function FramePanel({
         </label>
       </div>
 
-      {shown ? (
-        <ZoomButton className={styles.inspect} data-transparent={view === "sprite" || undefined} label={`Open ${frame.label} larger`} onOpen={() => setZoomed(true)}>
-          {/* eslint-disable-next-line @next/next/no-img-element -- versioned media route */}
-          <img src={shown} alt={`${frame.label}, ${view === "raw" ? "drawing as generated" : "aligned sprite"}`} />
-        </ZoomButton>
+      {stage ? (
+        <div className={styles.inspect}>
+          <FrameWorkingLarge flipbook={flipbook} frame={frame} stage={stage} ghost={ghostOf(flipbook, sprite ?? raw)} />
+        </div>
+      ) : marking && raw ? (
+        <PencilNote
+          image={raw}
+          busy={busy}
+          size={markSize}
+          maxComment={FRAME_NOTE_LIMITS.maxCommentLength}
+          single
+          hint="Muse Image redraws this frame keeping what you did not mark. It is one drawing; the old version stays in this frame’s history."
+          onCancel={() => setMarking(false)}
+          onSend={(note) => { setMarking(false); onCorrect({ comment: note.comment, marks: note.marks }); }}
+        />
+      ) : shown ? (
+        <ImageViewer
+          images={[picture]}
+          label="Drawing"
+          value={zoomed ? picture.id : null}
+          onValueChange={(id) => setZoomed(id !== null)}
+        >
+          <ImageViewerThumbnail imageId={picture.id} className={`${styles.inspect} rounded-xl bg-transparent`} data-transparent={!asRaw || undefined} />
+          <ImageViewerContent />
+        </ImageViewer>
       ) : (
         <div className={styles.inspect}>
-          {working ? (
-            <>
-              <Skeleton className={styles.working} />
-              <p className={styles.workingLabel}>{frame.status === "processing" ? "Cutting out this drawing…" : "Drawing this pose…"}</p>
-            </>
-          ) : <p className="text-xs text-muted-foreground">No drawing yet.</p>}
+          <p className="text-xs text-muted-foreground">No drawing yet.</p>
         </div>
       )}
-      <MediaLightbox
-        items={shown ? [{ kind: "image", src: shown, alt: `${frame.label}, ${view === "raw" ? "drawing as generated" : "aligned sprite"}`, caption: `Frame ${index + 1} · ${frame.label} · ${view === "raw" ? "as drawn" : "aligned sprite"}`, transparent: view === "sprite" }] : []}
-        index={zoomed && shown ? 0 : null}
-        onClose={() => setZoomed(false)}
-      />
-      <div className={styles.chips}>
-        <ToggleChip size="xs" selected={view === "sprite"} onClick={() => setView("sprite")}>Aligned sprite</ToggleChip>
-        <ToggleChip size="xs" selected={view === "raw"} onClick={() => setView("raw")} disabled={!raw}>As drawn</ToggleChip>
-        {frame.versions.length > 1 ? <span className="text-xs text-muted-foreground">{frame.versions.length} versions</span> : null}
-      </div>
+      {previewing ? (
+        <div className={styles.controlRow}>
+          <span className="text-xs text-muted-foreground">Drawing {previewNumber} of {frame.versions.length}, not in the animation.</span>
+          <Button size="xs" variant="outline" disabled={locked || busy} onClick={() => { onAction({ action: "use", version: previewing }); setLooking(null); }}>Use this drawing</Button>
+          <Button size="xs" variant="ghost" onClick={() => setLooking(null)}>Back to current</Button>
+        </div>
+      ) : !marking ? (
+        <div className={styles.chips}>
+          <ToggleChip size="xs" selected={view === "sprite"} onClick={() => setView("sprite")}>Aligned sprite</ToggleChip>
+          <ToggleChip size="xs" selected={view === "raw"} onClick={() => setView("raw")} disabled={!raw}>As drawn</ToggleChip>
+        </div>
+      ) : null}
+      {frame.versions.length > 1 ? <VersionTray flipbook={flipbook} frame={frame} shown={previewing ?? frame.version} onPick={(version) => setLooking(version === frame.version ? null : version)} /> : null}
 
       {frame.error ? <p className={styles.frameError} role="status">{messageFor(frame.error.code, frame.error.message)}</p> : null}
 
@@ -152,6 +187,9 @@ export function FramePanel({
           </Button>
           <Button size="sm" variant="outline" disabled={locked || busy || Boolean(flipbook.importedFrom) || !flipbook.reference} onClick={() => send("regenerate")} title="Muse Image draws this pose again from the reference (1 drawing).">
             <HugeiconsIcon icon={Refresh01Icon} size={14} strokeWidth={1.75} />Redraw
+          </Button>
+          <Button size="sm" variant="outline" disabled={locked || busy || marking || Boolean(flipbook.importedFrom) || !flipbook.reference || !raw} onClick={() => setMarking(true)} title="Draw red marks on what is wrong and say what to change (1 drawing).">
+            <HugeiconsIcon icon={PencilEdit02Icon} size={14} strokeWidth={1.75} />Mark &amp; redraw
           </Button>
           <Button size="sm" variant="outline" disabled={locked || busy} onClick={() => fileRef.current?.click()}>
             <HugeiconsIcon icon={Upload01Icon} size={14} strokeWidth={1.75} />Replace

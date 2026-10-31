@@ -1,0 +1,112 @@
+{
+  "at": "2026-10-31T01:35:54.516Z",
+  "rows": [
+    {
+      "attempt": 1,
+      "human": "reject: mirrored",
+      "decision": "REJECTED",
+      "reasons": [
+        "pose (critical): MIRRORED, 8 bones, mean 62.8° beyond noise, worst left upper arm 171° (±15°); moving bones measured 4/4",
+        "alpha (major): figure touches the canvas edge (18 px)"
+      ],
+      "checks": [
+        {
+          "name": "pose",
+          "passed": false,
+          "status": "fail",
+          "detail": "MIRRORED, 8 bones, mean 62.8° beyond noise, worst left upper arm 171° (±15°); moving bones measured 4/4"
+        },
+        {
+          "name": "scale",
+          "passed": true,
+          "detail": "hair 1.7/1.6, soles 12/11.4 (head +1 %, feet +6 %, centre -2 %)"
+        },
+        {
+          "name": "colour",
+          "passed": true,
+          "detail": "98.3 % similar to the palette (88.7 % as drawn)"
+        },
+        {
+          "name": "proportions",
+          "passed": true,
+          "detail": "8 limbs measured, worst left-of-image thigh +13 %, head -5 %; left-of-image forearm, right-of-image forearm judged against an estimate (foreshortened on the character sheet)"
+        },
+        {
+          "name": "alpha",
+          "passed": false,
+          "detail": "figure touches the canvas edge (18 px)"
+        }
+      ]
+    },
+    {
+      "attempt": 2,
+      "human": "accept",
+      "decision": "ACCEPTED",
+      "reasons": [],
+      "checks": [
+        {
+          "name": "pose",
+          "passed": true,
+          "status": "pass",
+          "detail": "8 bones, mean 0.1° beyond noise, worst left thigh 6° (±5°); moving bones measured 4/4"
+        },
+        {
+          "name": "scale",
+          "passed": true,
+          "detail": "hair 1.6/1.6, soles 12/11.4 (head 0 %, feet +6 %, centre +2 %)"
+        },
+        {
+          "name": "colour",
+          "passed": true,
+          "detail": "98.7 % similar to the palette (86.3 % as drawn)"
+        },
+        {
+          "name": "proportions",
+          "passed": true,
+          "detail": "8 limbs measured, worst right-of-image upper arm -12 %, head -13 %; left-of-image forearm, right-of-image forearm judged against an estimate (foreshortened on the character sheet)"
+        },
+        {
+          "name": "alpha",
+          "passed": true,
+          "detail": "clean cutout, figure 23.9 % of canvas"
+        }
+      ]
+    },
+    {
+      "attempt": 3,
+      "human": "reject: raised upper arm off",
+      "decision": "REJECTED",
+      "reasons": [
+        "pose (critical): 8 bones, mean 10.3° beyond noise, worst right upper arm 85° (±25°); moving bones measured 4/4"
+      ],
+      "checks": [
+        {
+          "name": "pose",
+          "passed": false,
+          "status": "fail",
+          "detail": "8 bones, mean 10.3° beyond noise, worst right upper arm 85° (±25°); moving bones measured 4/4"
+        },
+        {
+          "name": "scale",
+          "passed": true,
+          "detail": "hair 1.6/1.6, soles 11.9/11.4 (head +0 %, feet +5 %, centre 0 %)"
+        },
+        {
+          "name": "colour",
+          "passed": true,
+          "detail": "98.5 % similar to the palette (88.8 % as drawn)"
+        },
+        {
+          "name": "proportions",
+          "passed": true,
+          "detail": "8 limbs measured, worst right-of-image forearm +16 %, head -3 %; left-of-image forearm, right-of-image forearm judged against an estimate (foreshortened on the character sheet)"
+        },
+        {
+          "name": "alpha",
+          "passed": true,
+          "detail": "clean cutout, figure 23.2 % of canvas"
+        }
+      ]
+    }
+  ]
+}

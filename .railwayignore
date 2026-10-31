@@ -25,3 +25,6 @@ playwright-report/
 
 # The GPU worker is deployed separately (Hugging Face Space or GPU host).
 services/
+
+# Local debug and repair runs (single_frame_debug, rebuilt runs).
+debug_runs/

@@ -1,10 +1,12 @@
 "use client";
 
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { DropdownMenu } from "radix-ui";
-import { Logout01Icon } from "@hugeicons/core-free-icons";
+import { Logout01Icon, Settings02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { SoundToggle } from "../../components/sound-toggle";
 import { ThemeToggle } from "../../components/theme-toggle";
 import { cn } from "../../lib/utils";
 import type { PublicUser, SessionInfo } from "../../shared/account";
@@ -23,7 +25,7 @@ export function Avatar({ user, className }: { readonly user: PublicUser; readonl
 
 /** Header account control: generations left and "Sign in", or the signed-in person's menu. */
 export function AccountButton({ session, next }: { readonly session: SessionInfo | null; readonly next: string }) {
-  return <div className="flex items-center gap-2"><ThemeToggle /><AccountControl session={session} next={next} /></div>;
+  return <div className="flex items-center gap-2"><SoundToggle /><ThemeToggle /><AccountControl session={session} next={next} /></div>;
 }
 
 function AccountControl({ session, next }: { readonly session: SessionInfo | null; readonly next: string }) {
@@ -61,6 +63,12 @@ function AccountControl({ session, next }: { readonly session: SessionInfo | nul
               {session.quota ? <p className="mt-1 text-xs text-muted-foreground" role="status">{session.quota.remaining} of {session.quota.limit} generations left</p> : null}
             </div>
             <DropdownMenu.Separator className="my-1 h-px bg-border" />
+            <DropdownMenu.Item asChild className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground outline-none data-[highlighted]:bg-muted">
+              <Link href="/settings">
+                <HugeiconsIcon icon={Settings02Icon} size={14} strokeWidth={1.75} />
+                Settings
+              </Link>
+            </DropdownMenu.Item>
             <DropdownMenu.Item
               onSelect={() => void signOut().then(() => router.push("/editor"))}
               className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground outline-none data-[highlighted]:bg-muted"

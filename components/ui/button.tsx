@@ -59,6 +59,9 @@ const buttonVariants = cva(
         ),
         ghost:
           "bg-transparent hover:bg-[var(--btn-ghost-hover-bg)]",
+        // Soft red for delete/remove: a tint of --destructive, not the solid alarm.
+        danger:
+          "text-destructive bg-[color-mix(in_oklab,var(--destructive)_10%,transparent)] hover:bg-[color-mix(in_oklab,var(--destructive)_16%,transparent)] active:bg-[color-mix(in_oklab,var(--destructive)_22%,transparent)] focus-visible:outline-[color:var(--destructive)]",
         link:
           "text-primary underline-offset-4 hover:underline",
       },

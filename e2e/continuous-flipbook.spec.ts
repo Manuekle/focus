@@ -26,6 +26,8 @@ test("an exhausted signed-in account sees the generation alert even with a stale
   });
   await page.goto(`/flipbook?f=${book.id}`);
   await expect(page.getByText("1 of 3 generations left", { exact: true })).toBeVisible();
+  // The selected drawing's actions live in the inspector's Frame tab.
+  await page.getByRole("button", { name: "Frame", exact: true }).click();
   await page.getByRole("button", { name: "Redraw", exact: true }).click();
   const dialog = page.getByRole("dialog", { name: "No generations left" });
   await expect(dialog).toBeVisible();
@@ -107,6 +109,7 @@ test("a failed motion update keeps its settings and offers a persistent retry", 
   });
   await page.route(`**/api/flipbooks/${book.id}/media**`, (route) => route.fulfill({ body: pixel, contentType: "image/png" }));
   await page.goto(`/flipbook?f=${book.id}`);
+  await page.getByRole("button", { name: "Advanced", exact: true }).click();
   const sequence = page.getByRole("region", { name: "Continuous sequence", exact: true });
   await sequence.getByRole("button", { name: "12", exact: true }).click();
   await sequence.getByRole("button", { name: "Update motion plan", exact: true }).click();
@@ -156,6 +159,7 @@ test("reducing density keeps the selected drawing inside the shorter timeline", 
   await page.goto(`/flipbook?f=${book.id}`);
   for (let index = 0; index < 3; index++) await page.getByRole("button", { name: "Next drawings", exact: true }).click();
   await page.getByRole("button", { name: /^Frame 96,/ }).click();
+  await page.getByRole("button", { name: "Advanced", exact: true }).click();
   const sequence = page.getByRole("region", { name: "Continuous sequence", exact: true });
   await sequence.getByRole("button", { name: "8", exact: true }).click();
   await sequence.getByRole("button", { name: "Update motion plan", exact: true }).click();
@@ -186,6 +190,8 @@ test("creation defaults to 96 drawings and sends continuous settings", async ({ 
   await page.route(`**/api/flipbooks/${book.id}/media**`, (route) => route.fulfill({ body: pixel, contentType: "image/png" }));
   await page.goto("/flipbook");
   await page.locator('input[type="file"][accept*="image/png"]').first().setInputFiles({ name: "character.png", mimeType: "image/png", buffer: pixel });
+  // The manual form sits behind Advanced; Guided asks Muse Spark, which is off here.
+  await page.getByRole("button", { name: "Advanced", exact: true }).click();
   await expect(page.getByText(/96 drawings across 4 s/)).toBeVisible();
   await page.getByRole("button", { name: "Prepare continuous animation", exact: true }).click();
   await expect.poll(() => created).toMatchObject({ imageId: image.id, sequence: { durationSeconds: 4, drawingFps: 24 } });
@@ -197,6 +203,7 @@ test("the complete timeline, finite playback and all new controls work on deskto
   await page.route(`**/api/flipbooks/${book.id}`, (route) => route.fulfill({ json: book }));
   await page.route(`**/api/flipbooks/${book.id}/media**`, (route) => route.fulfill({ body: pixel, contentType: "image/png" }));
   await page.goto(`/flipbook?f=${book.id}`);
+  await page.getByRole("button", { name: "Advanced", exact: true }).click();
   await expect(page.getByRole("heading", { name: "Continuous sequence", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Loop", exact: true })).toHaveAttribute("aria-pressed", "false");
   await expect(page.getByText("1–24 of 96", { exact: true })).toBeVisible();

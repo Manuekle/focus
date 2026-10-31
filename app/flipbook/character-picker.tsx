@@ -1,5 +1,6 @@
 "use client";
 
+import { MediaThumb } from "../../components/ui/media-image";
 import Link from "next/link";
 import { cn } from "../../lib/utils";
 import { useEffect, useState } from "react";
@@ -59,8 +60,7 @@ export function CharacterPicker({ onPick, selected, title = "My characters" }: {
           {ready.map((entry) => {
             const card = (
               <>
-                {/* eslint-disable-next-line @next/next/no-img-element -- the character's cover, from the media route */}
-                <img src={entry.coverUrl} alt="" className={styles.pickerCover} />
+                <MediaThumb src={entry.coverUrl} className={styles.pickerCover} />
                 <span className="min-w-0">
                   <span className="block truncate text-xs text-foreground">{entry.name}</span>
                   <span className="block text-[11px] text-muted-foreground">{entry.versions} {entry.versions === 1 ? "version" : "versions"}</span>

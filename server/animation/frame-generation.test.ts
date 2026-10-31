@@ -151,3 +151,37 @@ describe("pose reference roles", () => {
     expect(request.prompt).not.toContain("Image 2");
   });
 });
+
+it("draws a cycle key between the finished drawings around it, carrying their size and secondary motion", async () => {
+  const walk = { ...parsePlanOutput(JSON.stringify({ direction: "right", motion: "in_place", pace: "gentle", poses: ACTION_SPECS.walk.poses.map((pose) => ({ phase: pose.phase, detail: "" })) }), { ...analysis, view: "front", requestedAction: "walk" }, "walk", undefined, "front") };
+  const before = Buffer.from("left contact"), after = Buffer.from("right contact"), extra = Buffer.from("back view sheet");
+  await drawPose({ reference: anchor, neighbor: Buffer.from("old previous drawing"), continuity: { before: { png: before, index: 0 }, after: { png: after, index: 4 } }, extras: [extra], analysis, plan: walk, index: 2, flipbookId: "test" });
+  const request = vi.mocked(generateImage).mock.lastCall![0];
+  expect(request.references.map((entry) => entry.png)).toEqual([anchor, before, after, extra]);
+  expect(request.prompt).toContain('Image 2 is the nearest finished drawing before this one ("Left contact", drawing 1) and Image 3 the nearest one after it ("Right contact", drawing 5)');
+  expect(request.prompt).toContain("Image 4 is extra reference");
+  expect(request.prompt).toContain("Pace: slow and gentle");
+  expect(request.prompt).toContain("never sideways");
+
+  await drawPose({ reference: anchor, neighbor: null, continuity: { before: { png: before, index: 0 } }, analysis, plan: walk, index: 4, flipbookId: "test" });
+  const single = vi.mocked(generateImage).mock.lastCall![0];
+  expect(single.references.map((entry) => entry.png)).toEqual([anchor, before]);
+  expect(single.prompt).toContain('Image 2 is a finished drawing of the same walk cycle ("Left contact", drawing 1): keep exactly its size');
+
+  // A repair keeps its own drawing as Image 2 and the single neighbor; continuity is for fresh drawings.
+  await drawPose({ reference: anchor, neighbor: after, continuity: { before: { png: before, index: 0 } }, repair: { png: Buffer.from("broken"), problems: [] }, analysis, plan: walk, index: 1, flipbookId: "test" });
+  expect(vi.mocked(generateImage).mock.lastCall![0].references.map((entry) => entry.png)).toEqual([anchor, Buffer.from("broken"), after]);
+});
+
+it("draws an in-between strictly between the finished drawings around its point", async () => {
+  const from = Buffer.from("key a"), to = Buffer.from("key b"), before = Buffer.from("at a sixth"), after = Buffer.from("at two thirds"), extra = Buffer.from("sheet");
+  await drawInbetween({ reference: anchor, from, to, between: { before, after }, extras: [extra], analysis, plan, fromIndex: 0, toIndex: 1, position: 0.4, flipbookId: "test" });
+  const request = vi.mocked(generateImage).mock.lastCall![0];
+  expect(request.references.map((entry) => entry.png)).toEqual([anchor, from, to, before, after, extra]);
+  expect(request.prompt).toContain("Image 4 is the finished drawing just before this point of the movement and Image 5 the finished drawing just after it. Land strictly between them");
+  expect(request.prompt).toContain("Image 6 is extra reference");
+  await drawInbetween({ reference: anchor, from, to, between: { after }, analysis, plan, fromIndex: 0, toIndex: 1, position: 0.3, flipbookId: "test" });
+  const one = vi.mocked(generateImage).mock.lastCall![0];
+  expect(one.references.map((entry) => entry.png)).toEqual([anchor, from, to, after]);
+  expect(one.prompt).toContain("Image 4 the finished drawing just after it. Land strictly between Image 2 and it");
+});
