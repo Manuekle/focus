@@ -13,7 +13,7 @@ import { readDiagnostics } from "./diagnostics";
 import { area, bounds, fromAlpha, maskFromPng, maskToPng, type Mask } from "./mask";
 import { analyzeDrawing, characterFullLengths, type Analysis } from "./profile";
 import type { PoseEstimator, PoseFile } from "./pose-estimator";
-import { retarget, sourceFullLengths, type FullLengths, type Target } from "./retarget";
+import { followDrawing, retarget, sourceFullLengths, type FullLengths, type Target } from "./retarget";
 import { buildRig, type Rig } from "./rig";
 import { samSegmenter, type Segmenter } from "./segmenter";
 import { mapSkeleton, skeletonFromPose, type BoneName, type JointName } from "./skeleton";
@@ -150,7 +150,13 @@ async function placedSheet(sheet: Analysis, at: { scale: number; x: number; y: n
 }
 
 export type MappedFrame = {
+  /** The frame's target on the pose guide: what the drawing is validated against. */
   readonly target: Target;
+  /**
+   * What the base was deformed onto: the same motion in the base drawing's own skeleton (followDrawing) when the base
+   * is an approved drawing, else `target`.
+   */
+  readonly deformedTo: Target;
   readonly decision: PlanDecision;
   readonly base: { readonly candidate: BaseCandidate; readonly rig: Rig; readonly mask: Mask; readonly analysis: Analysis | null };
   readonly result: DeformResult;
@@ -199,10 +205,11 @@ export async function mapFrame(mapping: RunMapping, input: {
   if (placement) candidates.push({ id: "character sheet", index: null, skeleton: mapSkeleton(mapping.sheet.rig.skeleton, (p) => [p[0] * placement.scale + Math.round(placement.x), p[1] * placement.scale + Math.round(placement.y)]), depth: 0 });
 
   const override = mapping.overrides.frames?.[String(input.index)]?.joints;
+  const character = characterFullLengths([mapping.sheet.profile, ...[...analyses.values()].map((analysis) => analysis.profile)]);
   const target = retarget({
     source: mapping.track[input.index - 1],
     guide: input.guide,
-    character: characterFullLengths([mapping.sheet.profile, ...[...analyses.values()].map((analysis) => analysis.profile)]),
+    character,
     sourceFull: mapping.sourceFull,
     overrides: override as Partial<Record<JointName, readonly [number, number]>> | undefined,
   });
@@ -213,12 +220,24 @@ export async function mapFrame(mapping: RunMapping, input: {
   const base = analysis
     ? { rig: analysis.rig, image: analysis.image, mask: analysis.mask }
     : await placedSheet(mapping.sheet, placement!, input.canvas, mapping.overrides.layers);
-  const result = deform(base.image, base.rig, target.skeleton);
+  // A drawing follows the person's motion in its own skeleton; the sheet, which has no frame of the video, is placed by the guide.
+  const sourceBase = decision.base.index !== null ? mapping.track[decision.base.index - 1] : undefined;
+  const deformedTo = analysis && sourceBase && !override
+    ? (() => {
+      try {
+        return followDrawing({ base: base.rig.skeleton, sourceBase, source: mapping.track[input.index - 1], character, sourceFull: mapping.sourceFull });
+      } catch {
+        return target;
+      }
+    })()
+    : target;
+  const result = deform(base.image, base.rig, deformedTo.skeleton);
   const preparation = registry.run("frame-preparation", { stage: "frame-preparation", plan: result.plan });
   const rendering = registry.run("rendering", { stage: "rendering", result, baseArea: area(base.mask) });
   const regions: Mask = { width: result.exposed.width, height: result.exposed.height, data: result.exposed.data.map((v, p) => (v || result.distorted.data[p] ? 1 : 0)) };
   return {
     target,
+    deformedTo,
     decision,
     base: { candidate: decision.base, rig: base.rig, mask: base.mask, analysis },
     result,

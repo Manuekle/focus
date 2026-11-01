@@ -1,5 +1,6 @@
 .player { display: flex; min-width: 0; flex-direction: column; overflow: hidden; border: 1px solid var(--border); border-radius: 12px; background: var(--card); }
-.video { display: block; width: 100%; max-height: min(38dvh, 320px); object-fit: contain; background: var(--editor-stage); }
+.video { display: block; width: 100%; max-height: min(38dvh, 320px); object-fit: contain; background: var(--editor-stage); cursor: pointer; outline: none; }
+.video:focus-visible { outline: 2px solid var(--btn-focus-ring); outline-offset: -2px; }
 .toolbar { flex-shrink: 0; padding: 4px 10px 8px; border-top: 1px solid var(--border); }
 .row { display: flex; align-items: center; gap: 8px; }
 .control:hover { color: var(--primary); background: var(--accent); }
@@ -8,12 +9,12 @@
 .actions { display: flex; align-items: center; gap: 4px; margin-left: auto; }
 .error { margin: 0; padding: 0 12px; color: var(--muted-foreground); font-size: 12px; }
 .error:not(:empty) { padding-bottom: 10px; }
-/* Fullscreen: the picture takes everything the controls leave. The player is used inside pages that cap every
+/* Fullscreen: the picture takes everything the controls leave, edge to edge (no page card radius or margin). The player is used inside pages that cap every
    <video> in their preview (editor-view, rotoscope create), and those selectors are more specific, so these win by force. */
 .player:fullscreen { width: 100%; height: 100%; border: 0; border-radius: 0; background: #000; }
-.player:fullscreen .video { flex: 1 1 0% !important; width: 100% !important; height: 0 !important; min-height: 0 !important; max-height: none !important; background: #000; }
+.player:fullscreen .video { flex: 1 1 0% !important; width: 100% !important; height: 0 !important; min-height: 0 !important; max-width: none !important; max-height: none !important; margin: 0 !important; border-radius: 0 !important; box-shadow: none !important; background: #000 !important; }
 .player:fullscreen .toolbar { padding: 8px 20px max(12px, env(safe-area-inset-bottom)); }
 .player:-webkit-full-screen { width: 100%; height: 100%; border: 0; border-radius: 0; background: #000; }
-.player:-webkit-full-screen .video { flex: 1 1 0% !important; width: 100% !important; height: 0 !important; min-height: 0 !important; max-height: none !important; background: #000; }
+.player:-webkit-full-screen .video { flex: 1 1 0% !important; width: 100% !important; height: 0 !important; min-height: 0 !important; max-width: none !important; max-height: none !important; margin: 0 !important; border-radius: 0 !important; box-shadow: none !important; background: #000 !important; }
 .player:-webkit-full-screen .toolbar { padding: 8px 20px max(12px, env(safe-area-inset-bottom)); }
 @media (pointer: coarse) { .control { width: 40px; height: 40px; } }

@@ -9,10 +9,11 @@ const TEMPLATES: Record<EffectId, readonly string[]> = {
   "reality-shift": ["Keep the {s} in color", "Keep the {s} sharp and blur the background", "Blur everything but the {s}"],
   "break-the-frame": ["Make the {s} step out of the frame", "Let the {s} break the frame"],
   "motion-echo": ["Add motion trails to the {s}", "Give the {s} a cinematic echo"],
+  erase: ["Remove the {s}", "Erase the {s} from the video"],
   "time-freeze": ["Freeze time when the {s} jumps", "Freeze the {s} mid-air with echoes"],
 };
 
-const ORDER: readonly EffectId[] = ["reality-shift", "break-the-frame", "motion-echo"];
+const ORDER: readonly EffectId[] = ["reality-shift", "break-the-frame", "motion-echo", "erase"];
 
 /** Strips a leading article so "two people" reads well after "the". */
 function bare(subject: string): string {

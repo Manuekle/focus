@@ -39,6 +39,12 @@ export const EFFECTS: readonly {
     examples: ["Add motion trails to the cyclist", "Give the dancer a cinematic echo"],
   },
   {
+    id: "erase",
+    name: "Erase",
+    summary: "Remove text, logos or objects. SAM 3.1 finds them in every frame; the background fills in.",
+    examples: ["Remove all the text", "Erase the subtitles", "Remove the watermark", "Remove the person in the background"],
+  },
+  {
     id: "time-freeze",
     name: "Time Freeze",
     summary: "Freeze a moment. Multiply the motion.",

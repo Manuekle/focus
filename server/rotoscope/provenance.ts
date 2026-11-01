@@ -76,6 +76,8 @@ export type GeneratedFrame = {
 const ROLES: readonly (readonly [string, Entity])[] = [
   ["REFERENCE A, THE CHARACTER", "B"],
   ["REFERENCE C, THE TARGET POSE", "A"],
+  // The previous approved drawing (guardrails.ts continuityGuardrail): an output, shown for continuity only.
+  ["REFERENCE D, CONTINUITY", "C"],
   ["THE CHARACTER", "B"],
   ["THE POSE", "A+B"],
   ["THE VIDEO FRAME", "A"],

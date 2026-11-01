@@ -32,6 +32,7 @@ import { DockResizer, useDockWidth } from "./dock-resizer";
 import { RunMeasures } from "./run-measures";
 import { PromptLab } from "./prompt-lab";
 import { RotoscopeCanvas } from "./rotoscope-canvas";
+import { PipelineCanvas } from "./pipeline-canvas";
 import { RotoscopePlayer, type LiveStage } from "./rotoscope-player";
 import styles from "./rotoscope.module.css";
 
@@ -93,6 +94,8 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
   const dock = useDockWidth();
   const [dockOpen, setDockOpen] = useState(() => typeof window === "undefined" || window.matchMedia("(min-width: 861px)").matches);
   const [dockTab, setDockTab] = useState<"frame" | "preview" | "run">("frame");
+  // The canvas shows the frame sheet, or how the selected frame is drawn step by step (the Pipeline view).
+  const [stageView, setStageView] = useState<"frames" | "pipeline">("frames");
   // Picking a frame leaves the Run tab for its inspector; the Preview tab follows the pick instead.
   const pick = (index: number) => { setPicked(index); setDockTab((tab) => (tab === "run" ? "frame" : tab)); };
 
@@ -175,6 +178,14 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
     }
   };
 
+  // One face for the blue action that carries on drawing, wherever it appears: the notice at the top and the canvas bar.
+  const drawFace = (label: ReactNode) => (
+    <>
+      {acting ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={14} strokeWidth={1.75} />}
+      {label}
+    </>
+  );
+
   // One notice at a time, most urgent first. Informational ones can be closed, and the next one in line takes their place.
   const { isDismissed, dismiss } = useDismissedNotices(run.id);
   const hints: { readonly key: string; readonly tone: AlertTone; readonly text: ReactNode }[] = [];
@@ -187,7 +198,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
   ) : halted ? (
     <Alert tone="warning" size="sm" title={`Stopped at frame ${halted.frame}`} action={
       <div className={fb.buttonRow}>
-        <Button size="sm" variant="ai" disabled={acting} onClick={draw}>Resume from frame {halted.frame}</Button>
+        <Button size="sm" variant="ai" disabled={acting} onClick={draw} title={`Keeps frames 1–${halted.frame - 1} and draws the rest.`}>{drawFace(`Resume from frame ${halted.frame}`)}</Button>
         {selectedIndex !== halted.frame ? <Button size="sm" variant="ghost" onClick={() => setPicked(halted.frame)}>Review frame {halted.frame}</Button> : null}
       </div>
     }>
@@ -234,8 +245,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
       ) : null}
       {!complete && run.total > 0 ? (
         <Button size="sm" variant="ai" disabled={acting} onClick={draw} title={started ? `Keeps frames 1–${(next ?? 1) - 1} and draws the rest.` : "Draws one image per frame, in order."}>
-          {acting ? <Spinner className="size-3.5" /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={14} strokeWidth={1.75} />}
-          {started ? `Resume from frame ${next}` : `Draw ${run.total} frames`}
+          {drawFace(started ? `Resume from frame ${next}` : `Draw ${run.total} frames`)}
         </Button>
       ) : null}
       {redrawable && selected ? (
@@ -260,6 +270,16 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
           <h1 className={fb.editorTitle} title={run.name}>{run.name}</h1>
         </div>
         <div className={fb.headActions}>
+          {run.frames.length ? (
+            <div role="group" aria-label="Canvas view">
+              <SlidingTabs
+                className={styles.stepTabs}
+                tabs={[{ id: "frames", label: "Frames" }, { id: "pipeline", label: "Pipeline" }]}
+                value={stageView}
+                onValueChange={(id) => setStageView(id as "frames" | "pipeline")}
+              />
+            </div>
+          ) : null}
           <Badge tone={complete ? "success" : "neutral"} title="Approved frames">{run.approved}/{run.total || "—"} approved</Badge>
           <Badge title="Drawings made for this run, rejected ones included">{attempts} attempts</Badge>
           {run.approved > 0 ? (
@@ -317,7 +337,17 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
 
       <div className={styles.workspace} data-dock={dockOpen} data-wide={dockTab === "preview"} style={dock.style}>
         <div className={styles.stage}>
-          <RotoscopeCanvas
+          {stageView === "pipeline" && selected ? (
+            <PipelineCanvas
+              key={run.id}
+              run={run}
+              frame={selected.index}
+              onFrame={pick}
+              dockOpen={dockOpen}
+              onToggleDock={() => setDockOpen((open) => !open)}
+              actions={canvasActions}
+            />
+          ) : <RotoscopeCanvas
             key={run.id}
             run={run}
             selected={selected?.index ?? null}
@@ -332,7 +362,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
               setDockTab("frame");
               setDockOpen(true);
             }}
-          />
+          />}
           {comparing && selected ? (
             <CompareSheet
               run={run}
@@ -456,8 +486,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
                         <div className={fb.cta}>
                           <p className="text-xs text-muted-foreground">{!started ? `Next: ${run.total} drawings, one per frame, in order.` : next === 1 ? "Frame 1 gets fresh attempts; its rejected ones stay in its history." : next === 2 ? "Frame 1 stays as it is; drawing continues at frame 2." : `Frames 1–${(next ?? 1) - 1} stay as they are; drawing continues at frame ${next}.`}</p>
                           <Button className="w-full" variant="ai" disabled={acting} onClick={draw}>
-                            {acting ? <Spinner /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={14} strokeWidth={1.75} />}
-                            {started ? `Resume from frame ${next}` : `Draw ${run.total} frames`}
+                            {drawFace(started ? `Resume from frame ${next}` : `Draw ${run.total} frames`)}
                           </Button>
                         </div>
                       ) : null}

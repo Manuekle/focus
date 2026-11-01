@@ -51,7 +51,7 @@ export const VideoAssetSchema = z.object({
 export type VideoAsset = z.infer<typeof VideoAssetSchema>;
 
 /** The creative effects, in delivery order. "time-freeze" is behind NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS. */
-export const EffectIdSchema = z.enum(["reality-shift", "break-the-frame", "motion-echo", "time-freeze"]);
+export const EffectIdSchema = z.enum(["reality-shift", "break-the-frame", "motion-echo", "erase", "time-freeze"]);
 export type EffectId = z.infer<typeof EffectIdSchema>;
 
 export const PROMPT_MIN_LENGTH = 3;
@@ -77,7 +77,7 @@ export const ConceptSchema = z
   .regex(/^[\p{L}\p{N}][\p{L}\p{N} '\-]*$/u, "Concept must be a plain noun phrase")
   .refine((value) => value.split(/\s+/).length <= 6, "Concept must be at most six words");
 
-export const PlanEffectSchema = z.enum(["selective_color", "background_blur", "spotlight", "break_frame", "motion_echo", "time_freeze_echo"]);
+export const PlanEffectSchema = z.enum(["selective_color", "background_blur", "spotlight", "break_frame", "motion_echo", "erase", "time_freeze_echo"]);
 export type PlanEffect = z.infer<typeof PlanEffectSchema>;
 
 /** Which plan effects each editor effect may resolve to. */
@@ -85,6 +85,7 @@ export const EFFECT_PLAN_EFFECTS: Record<EffectId, readonly PlanEffect[]> = {
   "reality-shift": ["selective_color", "background_blur", "spotlight"],
   "break-the-frame": ["break_frame"],
   "motion-echo": ["motion_echo"],
+  erase: ["erase"],
   "time-freeze": ["time_freeze_echo"],
 };
 
@@ -281,6 +282,7 @@ export const SuggestionsSchema = z.object({
     "reality-shift": z.array(z.string().trim().min(3).max(90)).max(4),
     "break-the-frame": z.array(z.string().trim().min(3).max(90)).max(4),
     "motion-echo": z.array(z.string().trim().min(3).max(90)).max(4),
+    erase: z.array(z.string().trim().min(3).max(90)).max(4).default([]),
     "time-freeze": z.array(z.string().trim().min(3).max(90)).max(4).default([]),
   }),
 });

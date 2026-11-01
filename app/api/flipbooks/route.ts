@@ -1,6 +1,7 @@
 import { CreateEnsembleRequestSchema, CreateFlipbookRequestSchema } from "../../../shared/flipbook";
 import { AppError, errorResponse } from "../../../server/errors";
 import { guardAiRequest, readJsonBody } from "../../../server/guard";
+import { recordRights, requireRights } from "../../../server/rights";
 import { anonymousId } from "../../../server/auth/session";
 import { jsonWithCookies } from "../../../server/auth/routes";
 import { currentUser } from "../../../server/auth/users";
@@ -26,12 +27,14 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     assertFlipbookEnabled();
+    requireRights(request);
     const body = await readJsonBody(request);
     if (body && typeof body === "object" && "cast" in body) {
       const scene = CreateEnsembleRequestSchema.safeParse(body);
       if (!scene.success) throw new AppError("invalid_flipbook", 400, "Pick two to four characters, describe what happens and choose how many seconds it lasts.");
       const user = await requireUser(request);
       const flipbook = await createEnsemble({ ...scene.data, ownerId: user.id }, (cost) => guardAiRequest(request, cost));
+      await recordRights("flipbook", flipbook.id, scene.data.cast.map((member) => member.characterId));
       return Response.json(flipbook, { status: 202 });
     }
     const parsed = CreateFlipbookRequestSchema.safeParse(body);
@@ -44,6 +47,7 @@ export async function POST(request: Request) {
     const flipbook = await createFlipbook({ ...parsed.data, ownerId: user?.id ?? null }, async (cost) => {
       await guardAiRequest(request, cost);
     });
+    await recordRights("flipbook", flipbook.id, [parsed.data.imageId ?? parsed.data.characterSource?.characterId ?? ""].filter(Boolean));
     return jsonWithCookies(flipbook, [anon?.setCookie ?? null], { status: 202 });
   } catch (error) {
     return errorResponse(error);

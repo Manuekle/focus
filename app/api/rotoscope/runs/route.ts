@@ -5,6 +5,7 @@ import { SERVER_MAX_UPLOAD_BYTES } from "../../../../server/media-limits";
 import { declaredLength } from "../../../../server/animation/http";
 import { activeRuns, assertRotoscopeEnabled, createRun, listRuns } from "../../../../server/rotoscope/service";
 import { measuresFrom } from "../../../../server/rotoscope/measures";
+import { recordRights, requireRights } from "../../../../server/rights";
 
 export async function GET(request: Request) {
   try {
@@ -21,6 +22,7 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     assertRotoscopeEnabled();
+    requireRights(request);
     const user = await requireUser(request);
     const bytes = declaredLength(request);
     if (bytes !== undefined && bytes > SERVER_MAX_UPLOAD_BYTES + 32 * 1024 * 1024) throw new AppError("upload_too_large", 413, "These files are too large.");
@@ -42,6 +44,7 @@ export async function POST(request: Request) {
       poseSheet: form?.get("poseSheet") !== "0",
       options: { name: String(form?.get("name") ?? "") || undefined, fps: String(form?.get("fps") ?? ""), start: String(form?.get("start") ?? "0"), seconds: String(form?.get("seconds") ?? "") },
     });
+    await recordRights("rotoscope", run.id, [run.id]);
     return Response.json(run, { status: 201 });
   } catch (error) {
     return errorResponse(error);

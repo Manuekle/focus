@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { backgroundBlur, blendOver, cropGhost, drawGhost, luma, selectiveColor, trailOpacity } from "./effects";
+import { backgroundBlur, blendOver, cropGhost, dilate, drawGhost, inpaintRegion, luma, selectiveColor, trailOpacity } from "./effects";
 import { computeBreakFrameLayout, subjectMotion, visibleSourceRect } from "./layout";
 import { feather } from "./masks";
 
@@ -151,5 +151,55 @@ describe("Break the Frame layout", () => {
     const motion = subjectMotion(boxes)!;
     expect(motion.extent.right).toBeLessThan(1000);
     expect(motion.typical.top).toBe(100);
+  });
+});
+
+describe("erase helpers", () => {
+  it("dilate grows a mask by exactly the radius and keeps the rest empty", () => {
+    const mask = new Uint8Array(W * H);
+    mask[20 * W + 30] = 255;
+    const grown = dilate(mask, W, H, 3);
+    expect(grown[17 * W + 27]).toBe(255);
+    expect(grown[23 * W + 33]).toBe(255);
+    expect(grown[16 * W + 30]).toBe(0);
+    expect(grown[20 * W + 34]).toBe(0);
+    expect(grown.reduce((sum, value) => sum + (value ? 1 : 0), 0)).toBe(49);
+    expect(dilate(mask, W, H, 0)).toBe(mask);
+  });
+
+  it("inpaintRegion fills a hole from its surroundings and leaves known pixels alone", () => {
+    const { frame, alpha } = scene();
+    // Horizontal gradient background, so the fill has to interpolate.
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) frame.set([x * 4, 100, 200 - x * 2, 255], (y * W + x) * 4);
+    const before = Buffer.from(frame);
+    for (let y = SUBJECT.top; y < SUBJECT.bottom; y++) for (let x = SUBJECT.left; x < SUBJECT.right; x++) frame.set([255, 0, 0], (y * W + x) * 4);
+    inpaintRegion(frame, alpha, W, { left: 0, top: 0, right: W, bottom: H });
+    const at = (buffer: Buffer, x: number, y: number) => [...buffer.subarray((y * W + x) * 4, (y * W + x) * 4 + 3)];
+    // Known pixels unchanged.
+    expect(at(frame, 2, 2)).toEqual(at(before, 2, 2));
+    // Hole: no red left, close to the gradient it interrupted.
+    const center = at(frame, 32, 24);
+    expect(Math.abs(center[0] - 128)).toBeLessThan(24);
+    expect(Math.abs(center[1] - 100)).toBeLessThan(4);
+    // Monotone across the hole, like the gradient.
+    expect(at(frame, 24, 24)[0]).toBeLessThan(at(frame, 40, 24)[0]);
+  });
+
+  it("inpaintRegion continues hard edges that cross the hole, like stripes under a subtitle", () => {
+    const frame = Buffer.alloc(W * H * 4);
+    const stripe = (x: number) => (Math.floor(x / 8) % 2 ? [240, 220, 30] : [20, 40, 200]);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) frame.set([...stripe(x), 255], (y * W + x) * 4);
+    // A subtitle band across the stripes.
+    const hole = new Uint8Array(W * H);
+    for (let y = 20; y < 30; y++) for (let x = 4; x < 60; x++) {
+      hole[y * W + x] = 255;
+      frame.set([255, 255, 255], (y * W + x) * 4);
+    }
+    inpaintRegion(frame, hole, W, { left: 0, top: 0, right: W, bottom: H });
+    const at = (x: number, y: number) => [...frame.subarray((y * W + x) * 4, (y * W + x) * 4 + 3)];
+    // Every hole pixel takes its own stripe's color, right up to the stripe edge.
+    for (const x of [6, 7, 8, 9, 23, 24, 31, 32, 55]) {
+      for (const y of [20, 25, 29]) at(x, y).forEach((value, c) => expect(Math.abs(value - stripe(x)[c])).toBeLessThan(12));
+    }
   });
 });

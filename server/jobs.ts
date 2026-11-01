@@ -19,6 +19,7 @@ import {
 import {
   RENDERER_VERSION,
   TEMPORAL_RENDERER_VERSION,
+  ERASE_RENDERER_VERSION,
   RenderParamsSchema,
   RenderResultSchema,
   applyParamsPatch,
@@ -36,10 +37,13 @@ import { checkTemporalTracking, selectionTrack } from "../shared/temporal-track"
 import { assistEdit } from "./ai/assistant";
 import { interpretInstruction } from "./ai/planner";
 import { prefetchVideoFile, segmentVideo, type SamPrompt } from "./ai/sam";
+import { coveredShare, locateOverlays, overlaySampleFrames, type OverlayRegion } from "./ai/overlays";
 import { recordUsage } from "./ai/usage";
 import { concurrency, Limiter } from "./ai/meta";
 import { AppError } from "./errors";
 import { renderComparison, renderVideo, trackingMaskSource, verifyOutput } from "./video/compositor";
+import { readFrames } from "./video/frames";
+import sharp from "sharp";
 import { retainedIds } from "./projects";
 import { activeFlipbookCount } from "./animation/store";
 import { activeCharacterCount } from "./characters/store";
@@ -82,6 +86,7 @@ export const services = {
   interpret: interpretInstruction,
   segment: segmentVideo,
   assist: assistEdit,
+  locateOverlays,
 };
 
 function jobsDir(): string {
@@ -437,8 +442,16 @@ async function runJob(id: string, video: VideoAsset, request: EditRequest, key: 
   // A gap-filled version of this same segmentation (a superset: same objects,
   // more frames) is reused when one exists, so the first render is complete.
   const filled = await filledVariant(video, conceptId);
-  const segmentationId = filled?.id ?? conceptId;
-  const tracking = filled ?? conceptTracking;
+  let segmentationId = filled?.id ?? conceptId;
+  let tracking = filled ?? conceptTracking;
+
+  // Text removal: SAM's concept pass misses small writing, so Muse Spark boxes
+  // every overlay it sees and SAM tracks the ones not found yet.
+  if (plan.effect === "erase" && TEXT_ERASE_CONCEPTS.has(plan.target.concept)) {
+    const more = await overlayTracking(id, video, tracking, segmentationId, signal).catch(() => null);
+    if (signal.aborted) return;
+    if (more) ({ tracking, segmentationId } = more);
+  }
 
   if (tracking.objects.length === 0) {
     await patchJob(id, {
@@ -475,8 +488,62 @@ async function runJob(id: string, video: VideoAsset, request: EditRequest, key: 
   if (autoSelect.length) await renderJob(id, video, null, signal);
 }
 
+/** Concepts the planner uses for on-screen writing. */
+const TEXT_ERASE_CONCEPTS = new Set(["caption", "captions", "text", "subtitle", "subtitles"]);
+/** Object ids of overlay boxes, clear of SAM's concept ids and of clicked points (100+). */
+const OVERLAY_OBJECT_BASE = 200;
+
+/** Decodes the requested frames of the normalized clip as PNGs. */
+async function framePngs(video: VideoAsset, indices: readonly number[], signal: AbortSignal): Promise<{ index: number; png: Buffer }[]> {
+  const { width, height } = video.normalized;
+  const wanted = new Set(indices);
+  const last = Math.max(...indices);
+  const out: { index: number; png: Buffer }[] = [];
+  let index = 0;
+  for await (const frame of readFrames(path.join(videoDir(video.id), VIDEO_FILES.normalized), width, height, signal)) {
+    if (wanted.has(index)) out.push({ index, png: await sharp(frame, { raw: { width, height, channels: 4 } }).png().toBuffer() });
+    if (++index > last) break;
+  }
+  return out;
+}
+
+/**
+ * Overlay boxes from Muse Spark (cached per video), minus what the concept
+ * pass already tracks, become one SAM box-prompt pass merged into the
+ * tracking. Null when nothing is left to add.
+ */
+async function overlayTracking(id: string, video: VideoAsset, base: Tracking, baseId: string, signal: AbortSignal): Promise<{ tracking: Tracking; segmentationId: string } | null> {
+  const cacheFile = path.join(videoDir(video.id), "overlays.json");
+  let regions = await readFile(cacheFile, "utf8").then((text) => JSON.parse(text) as OverlayRegion[]).catch(() => null);
+  if (!regions) {
+    await patchProgress(id, { progress: 0.9, phase: "finding", detail: "Finding the rest of the text with Muse Spark" });
+    const frames = await framePngs(video, overlaySampleFrames(video.normalized.frameCount), signal);
+    regions = await services.locateOverlays({ frames, media: video.normalized, videoId: video.id, signal });
+    await writeJson(cacheFile, regions);
+  }
+  const { width, height } = video.normalized;
+  const targets: { id: number; frameIndex: number; box: { left: number; top: number; right: number; bottom: number } }[] = [];
+  for (const region of regions) {
+    const known = (frameAt(base, region.frameIndex)?.objects ?? []).map((object) => object.box);
+    // Already tracked by the concept pass, or the same static text seen on another sampled frame.
+    if (coveredShare(region.box, known) >= 0.5 || coveredShare(region.box, targets.map((target) => target.box)) >= 0.6) continue;
+    const box = { left: Math.max(0, region.box.left - 2), top: Math.max(0, region.box.top - 2), right: Math.min(width, region.box.right + 2), bottom: Math.min(height, region.box.bottom + 2) };
+    targets.push({ id: OVERLAY_OBJECT_BASE + targets.length, frameIndex: region.frameIndex, box });
+  }
+  if (!targets.length) return null;
+  const extraId = `o-${hash(JSON.stringify(targets))}`;
+  const { tracking: extra } = await trackingFor(video, extraId, { kind: "box", objects: targets }, signal, (fraction) =>
+    void patchProgress(id, { progress: 0.9 + fraction * 0.08, phase: "tracking", detail: `Tracking ${targets.length} more text ${targets.length === 1 ? "area" : "areas"} · ${Math.round(fraction * video.normalized.frameCount)}/${video.normalized.frameCount} frames` }),
+  );
+  if (!extra.objects.length) return null;
+  const segmentationId = `${baseId}+${extraId}`;
+  const merged = { ...mergeTracking(base, extra), id: segmentationId };
+  await writeJson(segmentationFile(video, segmentationId), merged);
+  return { tracking: merged, segmentationId };
+}
+
 export function renderKey(segmentationId: string, selection: readonly string[], params: RenderParams): string {
-  return `r-${hash(JSON.stringify({ v: RENDERER_VERSION, ...(params.effect === "time_freeze_echo" ? { temporal: TEMPORAL_RENDERER_VERSION } : {}), segmentationId, selection: [...selection].sort(), params }))}`;
+  return `r-${hash(JSON.stringify({ v: RENDERER_VERSION, ...(params.effect === "time_freeze_echo" ? { temporal: TEMPORAL_RENDERER_VERSION } : {}), ...(params.effect === "erase" ? { erase: ERASE_RENDERER_VERSION } : {}), segmentationId, selection: [...selection].sort(), params }))}`;
 }
 
 /** The render key is in each URL so a re-render never hits a cached earlier result. */

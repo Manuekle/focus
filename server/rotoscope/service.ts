@@ -16,6 +16,7 @@ import {
   RotoscopeLiveSchema,
   type CharacterMeasures,
   type FramePrompt,
+  type FrameTrace,
   type GeneratorName,
   type MappingJoint,
   type MappingView,
@@ -26,6 +27,7 @@ import {
   type RotoscopePhase,
   type RotoscopeRun,
   type RotoscopeRunSummary,
+  type WorkPicture,
 } from "../../shared/rotoscope";
 import { AppError } from "../errors";
 import { ffmpeg, probe } from "../ffmpeg";
@@ -35,12 +37,13 @@ import { readJsonFile, writeAtomic } from "../animation/store";
 import { writeZip } from "../animation/zip";
 import { frameName } from "./extract";
 import { CANVAS } from "./draw";
-import { higgsfieldConfigured } from "./higgsfield";
 import { learn, PROMPT_LESSONS } from "./lessons";
 import { fillCharacterKitFromRun, findCharacterKit, kitFitsBody } from "../characters/kit";
 import { sha256 } from "./provenance";
 import { analyzeFramePrompt, characterSheet, diagnoseFrame, extendRun, fitsPerson, framePromptOf, generateRun, initRun, MEASURES_FILE, POSE_SHEET, poseToolAvailable, readingFile, refitRun, reguideRun, runsRoot, SCALED_CHARACTER, scaledCharacter, type LiveEvent } from "./pipeline";
 import { approveManually, attemptFile, readManifest, requestCorrection, type Manifest } from "./run-state";
+import { assertReady, preflight } from "./guardrails";
+import { readFrameTraces } from "./trace";
 import { readDiagnostics } from "../mapping/diagnostics";
 import { readOverrides, writeOverrides } from "../mapping/engine";
 
@@ -181,8 +184,9 @@ function view(state: State, manifest: Manifest | null, readings: ReadonlyMap<num
     live: state.phase === "generating" || state.phase === "stopping" ? state.live : null,
     log: state.log,
     frames,
-    dual: state.dual && higgsfieldConfigured(),
-    dualAvailable: higgsfieldConfigured(),
+    // Muse models only (guardrails.ts): Higgsfield never draws, whatever the server has configured.
+    dual: false,
+    dualAvailable: false,
     guidesVersion: "",
     hasAudio: state.audio === true,
     renderer: state.renderer,
@@ -298,7 +302,8 @@ export async function createRun(input: CreateRunInput): Promise<RotoscopeRun> {
     const character = path.join(inputs, "character.png");
     await writeFile(character, await characterSheet(Buffer.from(await input.character.arrayBuffer())));
     const measures = input.measures ?? { heightCm: null, weightKg: null, personHeightCm: null };
-    const dual = Boolean(input.dual) && higgsfieldConfigured();
+    // Muse models only (guardrails.ts): a run never draws with Higgsfield.
+    const dual = false;
     const state: State = {
       id, ownerId: input.ownerId,
       name: options.name || path.basename(name, path.extname(name)).slice(0, 80) || "Rotoscope",
@@ -342,7 +347,6 @@ export async function createRun(input: CreateRunInput): Promise<RotoscopeRun> {
  * only its first `frames` frames, once each per round (with Higgsfield too when `dual`). The video is stored once and linked.
  */
 export async function createBatch(input: { readonly ownerId: string; readonly video: File; readonly characters: readonly { readonly file: File; readonly name: string; readonly frontOn: boolean; readonly measures: CharacterMeasures | null }[]; readonly options: z.input<typeof CreateRunSchema>; readonly poseSheet: boolean; readonly frames: number; readonly dual: boolean }): Promise<RotoscopeBatch> {
-  if (input.dual && !higgsfieldConfigured()) throw new AppError("higgsfield_unconfigured", 422, "Comparing with Higgsfield needs it configured on this server (HF_CREDENTIALS).");
   if (!input.characters.length || input.characters.length > MAX_BATCH_CHARACTERS) throw new AppError("INPUT_INVALID", 400, `Choose one to ${MAX_BATCH_CHARACTERS} characters.`);
   const batch = randomUUID();
   const scratch = path.join(runsRoot(), `.batch-${batch}`);
@@ -355,7 +359,7 @@ export async function createBatch(input: { readonly ownerId: string; readonly vi
     const runs: RotoscopeRun[] = [];
     for (const character of input.characters) {
       runs.push(await createRun({
-        ownerId: input.ownerId, video, character: character.file, frontOn: character.frontOn, measures: character.measures, poseSheet: input.poseSheet, batch, batchFrames: input.frames, dual: input.dual,
+        ownerId: input.ownerId, video, character: character.file, frontOn: character.frontOn, measures: character.measures, poseSheet: input.poseSheet, batch, batchFrames: input.frames, dual: false,
         options: { ...input.options, name: `${base} · ${character.name}`.slice(0, 80) },
       }));
     }
@@ -427,13 +431,15 @@ const PHASE_BUSY: Partial<Record<RotoscopePhase, string>> = {
 export async function startGeneration(id: string, ownerId: string, gate: () => Promise<void>, options: { dual?: boolean; only?: number; renderer?: Renderer; prompt?: string; attempts?: number; /** Frames 1 to this, each drawn once more (a test batch's round). */ frames?: number } = {}): Promise<RotoscopeRun> {
   const state = await ownedState(id, ownerId);
   if (PHASE_BUSY[state.phase]) throw new AppError("run_busy", 409, PHASE_BUSY[state.phase]!);
-  const dual = options.dual ?? state.dual;
-  if (dual && !higgsfieldConfigured()) throw new AppError("higgsfield_unconfigured", 422, "Two drawings per attempt need Higgsfield, and it isn’t configured on this server (HF_CREDENTIALS).");
+  // Muse Image draws alone (guardrails.ts): a run made with two generators draws with one from now on.
+  const dual = false;
   const manifest = await readManifest(runDir(id));
   const only = options.only;
   // `only` redraws one frame, approved or not; without it the run draws what is still open.
   if (only !== undefined && !manifest.frames.some((frame) => frame.index === only)) throw new AppError("frame_not_found", 404, "That frame doesn’t exist.");
   if (only === undefined && manifest.frames.every((frame) => frame.status === "approved")) throw new AppError("run_complete", 409, "Every frame is already approved.");
+  // The environment before anything is charged: a broken Python (DWPose, the fidelity gate) or a non-Muse model stops here, with its fix.
+  await assertReady();
   await gate();
   // A prompt under test is a setting of that one drawing, not of the run.
   const renderer = options.renderer ?? state.renderer;
@@ -787,14 +793,43 @@ export async function diagnoseMapping(id: string, ownerId: string, frame: number
 
 // ── Media ──────────────────────────────────────────────────────────────────
 
+/** Every attempt's pipeline trace for one frame, and the environment's guardrails as they are now. */
+export async function getTrace(id: string, ownerId: string, frame: number): Promise<FrameTrace> {
+  await ownedState(id, ownerId);
+  const dir = runDir(id);
+  const manifest = await readManifest(dir);
+  if (!manifest.frames.some((entry) => entry.index === frame)) throw new AppError("frame_not_found", 404, "That frame doesn’t exist.");
+  return { frame, attempts: await readFrameTraces(dir, frame), preflight: await preflight() };
+}
+
+/** Where each pipeline picture is kept in work/, beside its attempt (`person` belongs to the frame). */
+const WORK_FILE: Readonly<Record<WorkPicture, readonly string[]>> = {
+  raw: ["muse_raw", "rig_raw"],
+  // The rig's draft before Muse Image redrew it (rig + heal).
+  draft: ["rig_raw"],
+  keyed: ["muse_keyed", "rig_keyed"],
+  mannequin: ["mannequin"],
+  continuity: ["continuity"],
+  fidelity: ["fidelity"],
+  person: ["person"],
+};
+
 /** The file each review picture is kept under, next to the attempt it belongs to. */
 const REVIEW_PICTURE = { overlay: "review_overlay", build: "review_build", scan: "scan" } as const;
 
 /** Only files the run's own state names are served. */
-export async function mediaFile(id: string, ownerId: string, kind: RotoscopeMedia, frame?: number, attempt?: number, by?: GeneratorName): Promise<string> {
+export async function mediaFile(id: string, ownerId: string, kind: RotoscopeMedia, frame?: number, attempt?: number, by?: GeneratorName, name?: WorkPicture): Promise<string> {
   const state = await ownedState(id, ownerId);
   const dir = runDir(id);
   const missing = () => new AppError("media_not_found", 404, "This file is no longer available.");
+  if (kind === "work") {
+    // Only the names WORK_FILE lists, at a frame (and attempt) number: never a path from the request.
+    if (!frame || !name || (name !== "person" && !attempt)) throw missing();
+    const stem = path.join(dir, "work", frameName(frame).replace(".png", ""));
+    const file = WORK_FILE[name].map((suffix) => (name === "person" ? `${stem}_${suffix}.png` : `${stem}_a${attempt}_${suffix}.png`)).find((candidate) => existsSync(candidate));
+    if (!file) throw missing();
+    return file;
+  }
   if (kind === "character") return path.join(dir, "input", "character.png");
   if (kind === "posesheet") {
     if (!existsSync(path.join(dir, POSE_SHEET))) throw missing();

@@ -1,7 +1,7 @@
 import path from "node:path";
 import sharp from "sharp";
 import { BREAK_FRAME_CANVAS, type RenderParams, type RenderParamsOf } from "../../shared/render";
-import { BREAK_FRAME_WARNING, missingSubjectMaskWarning } from "../../shared/render-warnings";
+import { BREAK_FRAME_WARNING, ERASE_MOVING_CAMERA_WARNING, missingSubjectMaskWarning } from "../../shared/render-warnings";
 import type { NormalizedMedia } from "../../shared/schemas";
 import type { FreezePlan } from "../../shared/temporal";
 import { selectionTrack, type TrackPoint } from "../../shared/temporal-track";
@@ -9,7 +9,8 @@ import { frameAt, type Box, type Tracking } from "../../shared/tracking";
 import { AppError } from "../errors";
 import { probe } from "../ffmpeg";
 import { parseRate } from "../media-validation";
-import { backgroundBlur, blendOver, blurSigma, cropGhost, drawGhost, padBox, selectiveColor, spotlight, trailOpacity, type Ghost } from "./effects";
+import { backgroundBlur, blendOver, blurSigma, cropGhost, dilate, drawGhost, inpaintRegion, luma, padBox, selectiveColor, spotlight, trailOpacity, type Ghost } from "./effects";
+import { createDeliverer } from "./delivery";
 import { createFinisher } from "./finish";
 import { renderTimeFreeze, type FreezeSummary } from "./temporal";
 import { readFrames, runFfmpeg, writeFrames } from "./frames";
@@ -28,6 +29,8 @@ export type FrameProcessor = {
   readonly width: number;
   readonly height: number;
   process(index: number, frame: Buffer, alpha: Alpha): Promise<ProcessedFrame>;
+  /** Optional first look at every frame and its raw mask, before the render pass. */
+  prepare?(frames: AsyncIterable<{ readonly index: number; readonly frame: Buffer; readonly alpha: Alpha }>): Promise<void>;
   /** Extra per-render facts for the result. */
   summary(): { breakoutFrameRatio: number | null; warnings: string[] };
 };
@@ -92,6 +95,138 @@ export function motionEchoProcessor(media: NormalizedMedia, params: RenderParams
     ghosts.delete(index - span);
     return out;
   });
+}
+
+/** Mean luma change between frames, on a coarse grid, above which the camera counts as moving. */
+export const STILL_CAMERA_THRESHOLD = 2.5;
+
+/**
+ * Erase: SAM's mask of the target, grown by `expand`, becomes a hole. With a
+ * still camera (measured in a first pass) each hole pixel takes the closest
+ * clean view of the same spot from other frames: the last one seen, or the
+ * first one ahead. What was never seen is painted from its surroundings.
+ * Feathering happens here, after the growth, so thin strokes vanish fully.
+ */
+export function eraseProcessor(media: NormalizedMedia, params: RenderParamsOf<"erase">): FrameProcessor {
+  const { width, height } = media;
+  const pixels = width * height;
+  const grow = Math.round((params.expand * Math.max(width, height)) / 1280);
+  const soften = featherRadius(params.feather, width, height);
+  const holeOf = (alpha: Alpha) => (alpha.box ? dilate(alpha.data, width, height, grow) : null);
+  // Clean plate: one RGBA frame of background plus whether each pixel was ever seen.
+  let plate: Buffer | null = null;
+  let seen: Uint8Array | null = null;
+  let still = false;
+  let erased = 0;
+  let painted = 0;
+  let restored = 0;
+
+  const remember = (frame: Buffer, hole: Uint8Array | null, onlyNew: boolean) => {
+    if (!plate || !seen) return;
+    for (let i = 0, p = 0; i < pixels; i++, p += 4) {
+      if (hole?.[i] || (onlyNew && seen[i])) continue;
+      seen[i] = 1;
+      plate[p] = frame[p];
+      plate[p + 1] = frame[p + 1];
+      plate[p + 2] = frame[p + 2];
+    }
+  };
+
+  return {
+    width,
+    height,
+    async prepare(frames) {
+      if (params.fill !== "auto") return;
+      plate = Buffer.alloc(pixels * 4);
+      seen = new Uint8Array(pixels);
+      // Camera motion on a 64-wide grid, masked samples left out.
+      const step = Math.max(1, Math.floor(width / 64));
+      let previous: Float32Array | null = null;
+      const diffs: number[] = [];
+      for await (const { frame, alpha } of frames) {
+        const hole = holeOf(alpha);
+        // First clean view of every pixel, so holes early in the clip can look ahead.
+        remember(frame, hole, true);
+        const grid = new Float32Array(Math.ceil(height / step) * Math.ceil(width / step)).fill(-1);
+        let g = 0;
+        for (let y = 0; y < height; y += step) {
+          for (let x = 0; x < width; x += step, g++) {
+            const i = y * width + x;
+            if (hole?.[i]) continue;
+            grid[g] = luma(frame[i * 4], frame[i * 4 + 1], frame[i * 4 + 2]);
+          }
+        }
+        if (previous) {
+          let sum = 0;
+          let count = 0;
+          for (let k = 0; k < grid.length; k++) {
+            if (grid[k] < 0 || previous[k] < 0) continue;
+            sum += Math.abs(grid[k] - previous[k]);
+            count++;
+          }
+          if (count) diffs.push(sum / count);
+        }
+        previous = grid;
+      }
+      diffs.sort((a, b) => a - b);
+      const median = diffs.length ? diffs[Math.floor(diffs.length / 2)] : 0;
+      still = median <= STILL_CAMERA_THRESHOLD;
+      if (!still) {
+        plate = null;
+        seen = null;
+      }
+    },
+    async process(_index, frame, alpha) {
+      const hole = holeOf(alpha);
+      if (!hole || !alpha.box) {
+        remember(frame, null, false);
+        return { rgba: frame, alpha: null };
+      }
+      // The soft edge reaches past the grown hole by the feather radius.
+      const soft = soften > 0 ? feather(dilate(hole, width, height, soften), width, height, soften) : hole;
+      const unknown = new Uint8Array(pixels);
+      const filled = Buffer.from(frame);
+      const region = padBox(alpha.box, grow + soften * 2 + 2, width, height);
+      let holes = 0;
+      for (let y = region.top; y < region.bottom; y++) {
+        for (let x = region.left; x < region.right; x++) {
+          const i = y * width + x;
+          if (!soft[i]) continue;
+          if (still && plate && seen?.[i]) {
+            const p = i * 4;
+            filled[p] = plate[p];
+            filled[p + 1] = plate[p + 1];
+            filled[p + 2] = plate[p + 2];
+            restored++;
+          } else {
+            unknown[i] = 255;
+            holes++;
+          }
+        }
+      }
+      if (holes) {
+        // Paint from a margin around the hole wide enough to carry texture and light.
+        const reach = Math.max(16, Math.round(Math.max(region.right - region.left, region.bottom - region.top) * 0.1));
+        inpaintRegion(filled, unknown, width, padBox(region, reach, width, height));
+        painted += holes;
+      }
+      erased++;
+      // The clean plate learns from this frame's visible background.
+      remember(frame, soft, false);
+      const out = Buffer.from(frame);
+      blendOver(out, filled, soft, 1, region, width);
+      // Nothing of the erased target is left to light up.
+      return { rgba: out, alpha: null };
+    },
+    summary() {
+      const warnings: string[] = [];
+      const total = restored + painted;
+      if (erased && total && painted / total > 0.5 && params.fill === "auto" && !still) {
+        warnings.push(ERASE_MOVING_CAMERA_WARNING);
+      }
+      return { breakoutFrameRatio: null, warnings };
+    },
+  };
 }
 
 export function breakFrameProcessor(media: NormalizedMedia, params: RenderParamsOf<"break_frame">, layout: BreakFrameLayout): FrameProcessor {
@@ -249,6 +384,8 @@ export function createProcessor(media: NormalizedMedia, params: RenderParams, ma
       return spotlightProcessor(media, params);
     case "motion_echo":
       return motionEchoProcessor(media, params);
+    case "erase":
+      return eraseProcessor(media, params);
     case "break_frame":
       return breakFrameProcessor(
         media,
@@ -285,13 +422,28 @@ export async function renderVideo(input: {
   // Changes the clip's length, so it has its own frame loop.
   if (params.effect === "time_freeze_echo") return renderTimeFreeze({ ...input, params });
   const processor = createProcessor(media, params, masks);
-  const finisher = createFinisher(processor.width, processor.height, params.finish);
-  const radius = featherRadius(params.feather, media.width, media.height);
+  const deliverer = await createDeliverer({ width: processor.width, height: processor.height, fps: media.fps }, params.delivery);
+  const finisher = createFinisher(deliverer.width, deliverer.height, params.finish);
+  // Erase grows the raw mask before softening it, so it feathers on its own.
+  const radius = params.effect === "erase" ? 0 : featherRadius(params.feather, media.width, media.height);
+  if (processor.prepare) {
+    await processor.prepare(
+      (async function* () {
+        let index = 0;
+        for await (const frame of readFrames(input.normalizedPath, media.width, media.height, signal)) {
+          if (signal?.aborted) throw new AppError("canceled", 499, "Processing canceled.");
+          if (index >= media.frameCount) break;
+          yield { index, frame, alpha: masks.alphaAt(index) };
+          index++;
+        }
+      })(),
+    );
+  }
   const output = path.join(input.outputDir, "output.mp4");
   const writer = writeFrames({
     output,
-    width: processor.width,
-    height: processor.height,
+    width: deliverer.width,
+    height: deliverer.height,
     fps: media.fps,
     frameCount: media.frameCount,
     audioFrom: media.hasAudio ? input.normalizedPath : undefined,
@@ -308,7 +460,9 @@ export async function renderVideo(input: {
       if (!raw.box) framesWithoutMask++;
       const alpha: Alpha = raw.box ? { data: feather(raw.data, media.width, media.height, radius), box: raw.box } : raw;
       const processed = await processor.process(index, frame, alpha);
-      await writer.write(finisher ? await finisher.apply(index, processed.rgba, processed.alpha) : processed.rgba);
+      const cropped = deliverer.crop(processed.rgba, processed.alpha);
+      const finished = finisher ? await finisher.apply(index, cropped.rgba, cropped.alpha) : cropped.rgba;
+      await writer.write(deliverer.titles(index, finished));
       index++;
       input.onProgress?.(index / media.frameCount);
     }
@@ -324,10 +478,11 @@ export async function renderVideo(input: {
 
   const summary = processor.summary();
   const warnings = [...summary.warnings];
-  if (framesWithoutMask > 0) {
+  // Erase targets come and go (captions, a passer-by): frames without one are expected.
+  if (framesWithoutMask > 0 && params.effect !== "erase") {
     warnings.push(missingSubjectMaskWarning(framesWithoutMask, media.frameCount));
   }
-  return { width: processor.width, height: processor.height, frameCount: index, framesWithoutMask, breakoutFrameRatio: summary.breakoutFrameRatio, warnings };
+  return { width: deliverer.width, height: deliverer.height, frameCount: index, framesWithoutMask, breakoutFrameRatio: summary.breakoutFrameRatio, warnings };
 }
 
 /**

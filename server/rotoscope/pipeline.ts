@@ -7,35 +7,40 @@ import { constraintFailures } from "../policies/registry";
 import type { PolicyOutcome } from "../policies/rules";
 import { diagnosticsFile, exposedFile, jointMap, readDiagnostics, skeletonFromMap, writeDiagnostics, type FrameDiagnostics, type RenderMethod } from "../mapping/diagnostics";
 import { mapFrame, openMapping, readOverrides, writeOverrides, type MappedFrame, type Overrides, type RunMapping } from "../mapping/engine";
-import { area, fromAlpha, intersectionOverUnion, maskToPng, type Mask } from "../mapping/mask";
+import { area, fromAlpha, intersectionOverUnion, largestComponent, maskToPng, type Mask } from "../mapping/mask";
 import { palette, paletteSimilarity } from "../mapping/profile";
 import { estimatePose, poseToolAvailable as estimatorAvailable, runPoseTool } from "../mapping/pose-estimator";
 import { repairRegions } from "../mapping/refine";
 import { boneAngleErrors, jointErrors } from "../mapping/retarget";
-import { JOINT_NAMES, skeletonFromPose, type Skeleton } from "../mapping/skeleton";
+import { JOINT_NAMES, skeletonFromPose, torsoLength, type JointName, type Skeleton } from "../mapping/skeleton";
 import { ffmpeg } from "../ffmpeg";
 import { dataRoot } from "../storage";
 import { decodeImage } from "../animation/image-input";
 import { checkAlpha, closeCuts, fromRgba, KEY_COLOR, keyBackground, toRgba } from "./alpha";
 import { checkStyle, outlineDensity } from "./style";
 import { bodySpec, checkProportions, describeFace, fullLengths, onCanvas, sheetEstimates, sheetLengths, type BodySpec } from "./body-map";
-import { analyzePrompt, CANVAS, describeCharacter, describeStyle, writeFramePrompt, describeFrame, describeMotion, drawPoseSheet, drawSwap, swapFramePrompt, type PromptAnalysis, buildPair, buildText, ghostOverlay, profileCharacter, validBuild, reconcileBuild, type BuildProfile, fitCanvas, framePrompt, healFrame, isFrameSpec, isIdentityLine, namePalette, onColour, reviewCheck, reviewFrame, sideBySide, toCanvas, type Correction, type FrameInput } from "./draw";
+import { analyzePrompt, CANVAS, redrawRigFrame, describeCharacter, describeStyle, writeFramePrompt, describeFrame, describeMotion, drawPoseSheet, drawSwap, swapFramePrompt, type PromptAnalysis, buildPair, buildText, ghostOverlay, profileCharacter, validBuild, reconcileBuild, type BuildProfile, fitCanvas, framePrompt, isFrameSpec, isIdentityLine, namePalette, onColour, reviewCheck, reviewFrame, sideBySide, toCanvas, type Correction, type FrameInput } from "./draw";
 import { holdColours, PALETTE_VERSION, paletteImage, paletteShares, paletteText, profiledPalette, sheetColours, type Palette } from "./colour";
 import { mannequin, sheetBuild } from "./mannequin";
-import { generateHiggsfield, higgsfieldConfigured } from "./higgsfield";
+import { generateHiggsfield } from "./higgsfield";
 import { lessonLines } from "./lessons";
 import { keepMemory, noteKitOrigin, recallMemory } from "./prompt-memory";
 import { detectCrop, extractFrames, frameName } from "./extract";
 import { armLengths, comparePoses, describeLegs, describePose, measureArms, type Pose } from "./pose-match";
 import { checkScale, figureBox, GRID, hairTop, REGISTER_SCALE, proportions, sheetHairTop, targets, toLine, withGrid, type Marks } from "./grid";
-import { acquireLock, copyInto, readManifest, runFrames, writeManifest, type Check, type Manifest, type RunOutcome } from "./run-state";
+import { acquireLock, attemptFile, copyInto, readManifest, runFrames, writeManifest, type Check, type DrawContext, type Manifest, type RunOutcome } from "./run-state";
 import { canonicalJoints, unconfirmed } from "./joints";
 import { decide } from "./decision";
 import { scanOverlay, scanPose } from "./scan";
 import type { TrackedFrame } from "../mapping/source-track";
 import { assertIsolation, ProvenanceError, recordReferences, sha256, type CharacterIdentity, type GeneratedFrame, type GenerationTarget } from "./provenance";
 import { heightRatio, personFigure, personMarks, type PersonFigure } from "./stature";
-import { CharacterMeasuresSchema, measuresText, type CharacterMeasures } from "../../shared/rotoscope";
+import { CharacterMeasuresSchema, measuresText, type CharacterMeasures, type TraceImage } from "../../shared/rotoscope";
+import { segmentImage } from "../ai/sam";
+import { samUse } from "../mapping/segmenter";
+import { fidelityCheck, fidelityThresholds, judgeFidelity, measureFidelity } from "./fidelity";
+import { assertReady, blocked, continuityGuardrail, guardPrompt, sourceGuardrails, type Guardrail } from "./guardrails";
+import { openTrace, type Trace } from "./trace";
 
 // The rotoscope pipeline, shared by the console (cli.ts) and the app
 // (service.ts): video → frames at N fps → DWPose guides on the character's
@@ -810,6 +815,46 @@ function closePose(source: Pose, drawn: Pose, clip: readonly Pose[]): boolean {
 /** A repair may change a limb this much (degrees) before it is thrown away. */
 const REPAIR_POSE_TOLERANCE = 8;
 
+/**
+ * How broken a rig draft may be and still go to Muse Image's redraw (rig + heal): folded or collapsed mesh triangles,
+ * over-stretched pixels and a smaller silhouette (a limb moved in front of the body covers it) are what the redraw
+ * repairs. A limb stretched past its limits is not: its length would be wrong in the finished frame too.
+ */
+const REDRAWABLE = { triangles: 40, distortedShare: 0.05, areaChange: 0.7 } as const;
+
+function redrawable(frame: MappedFrame, failed: readonly PolicyOutcome[]): boolean {
+  if (!failed.every((outcome) => outcome.id === "solid-drawing/structure")) return false;
+  const { flipped, collapsed = 0, distortedArea, coverageArea, exposedArea } = frame.result.stats;
+  const base = area(frame.base.mask) * frame.result.plan.scale ** 2;
+  return flipped + collapsed <= REDRAWABLE.triangles
+    && (coverageArea ? distortedArea / coverageArea : 1) <= REDRAWABLE.distortedShare
+    && (base ? (coverageArea + exposedArea) / base : 0) >= REDRAWABLE.areaChange;
+}
+
+/** The wrists and the ankles (COCO indices), and the rig joints they are: what a viewer reads a pose by, visible however wide the sleeves are. */
+const ENDS: readonly (readonly [number, JointName, number])[] = [[9, "leftWrist", 10], [10, "rightWrist", 9], [15, "leftAnkle", 16], [16, "rightAnkle", 15]];
+/** How far (torso lengths) the redraw may move one of them from where the rig put it. */
+const REDRAW_TOLERANCE = 0.15;
+
+/**
+ * Whether Muse Image's redraw kept the rig's pose: every wrist and ankle the rig placed (`placed`, the deformation's
+ * own joints: exact, no estimator reading a broken draft) is within REDRAW_TOLERANCE of where the redraw has it.
+ * Elbows and knees aren't compared: under a wide sleeve or a skirt the estimator guesses them. A swapped left and
+ * right label isn't a moved limb, so each end is matched to the nearer of the two.
+ */
+export function redrawKeptPose(placed: Skeleton, redrawn: Pose): { readonly kept: boolean; readonly worst: number | null } {
+  const torso = torsoLength(placed);
+  if (!torso) return { kept: false, worst: null };
+  const moved = ENDS.flatMap(([index, joint, other]) => {
+    const p = placed[joint]?.p;
+    if (!p) return [];
+    const found = [at(redrawn, index), at(redrawn, other)].flatMap((q) => (q ? [Math.hypot(q[0] - p[0], q[1] - p[1]) / torso] : []));
+    return [found.length ? Math.min(...found) : Infinity];
+  });
+  const worst = moved.length ? Math.max(...moved) : null;
+  return { kept: worst !== null && worst <= REDRAW_TOLERANCE, worst };
+}
+
 /** One generator's drawing of a frame, cut out, registered and measured. */
 type Candidate = {
   readonly generator: Generator;
@@ -884,7 +929,7 @@ async function scoreDrawing(keyed: Buffer, drawn: Pose, colour: Check, scoring: 
  * measures it: keyed out, colours held to the run's palette, DWPose on the cut-out (local; skipped when
  * `drawn` is given), then every measured check. No model call; files go to `work` as `<name>_*`.
  */
-export async function measureDrawing(dir: string, index: number, raw: Buffer, options: { readonly work: string; readonly name: string; readonly drawn?: Pose }): Promise<{ checks: Check[]; drawn: Pose; keyed: Buffer; placed: Buffer }> {
+export async function measureDrawing(dir: string, index: number, raw: Buffer, options: { readonly work: string; readonly name: string; readonly drawn?: Pose }): Promise<{ checks: Check[]; drawn: Pose; keyed: Buffer; placed: Buffer; placedPose: Pose }> {
   const sourcePoses = JSON.parse(await readFile(path.join(dir, "source-poses.json"), "utf8")) as PoseFile;
   const { character, reference, sheet, poseImages } = await layoutRun(dir);
   const { marks, spec } = await poseImages(index);
@@ -902,7 +947,7 @@ export async function measureDrawing(dir: string, index: number, raw: Buffer, op
     drawn = (JSON.parse(await readFile(file.replace(".png", "_pose.json"), "utf8")) as PoseFile).frames[0];
   }
   const scored = await scoreDrawing(keyed, drawn, held.check, { reference, sheet, source: sourcePoses.frames[index - 1], clip: sourcePoses.frames, hidden: (await sourceHidden(dir, sourcePoses))(index), marks, spec, anchorDensity: null });
-  return { checks: scored.checks, drawn, keyed, placed: scored.png };
+  return { checks: scored.checks, drawn, keyed, placed: scored.png, placedPose: scored.placed };
 }
 
 /**
@@ -936,9 +981,16 @@ export async function generateRun(dir: string, options: {
 } = {}): Promise<RunOutcome> {
   const log = options.log ?? (() => undefined);
   const live = (frame: number, attempt: number, tries: number, stage: LiveStage) => options.onLive?.({ frame, attempt, tries, stage });
-  if (options.dual && !higgsfieldConfigured()) throw new Error("two drawings per attempt need Higgsfield: set HF_CREDENTIALS");
-  const generators: Generator[] = options.dual ? ["muse", "higgsfield"] : ["muse"];
+  // Guardrail 1, before anything is drawn: the Python tools start, the Meta Model API is there and every model is a Muse
+  // model. A broken environment stops here with its fix, never halfway through a frame (guardrails.ts).
+  const ready = await assertReady();
+  for (const guardrail of ready) log(`preflight ${guardrail.passed ? "ok  " : "warn"} ${guardrail.name}: ${guardrail.detail}`);
+  // Muse models only: Muse Spark writes and reviews, SAM segments, Muse Image draws. Higgsfield is never called.
+  if (options.dual) log("two drawings per attempt are off: this pipeline draws with Muse Image only");
+  const generators: Generator[] = ["muse"];
   const writer = options.writer ?? "spark";
+  const meta = readMetaConfig()!;
+  const bar = fidelityThresholds();
   const sourcePoses = JSON.parse(await readFile(path.join(dir, "source-poses.json"), "utf8")) as PoseFile;
   /** Each arm bone's full length in the clip: a frame's shorter one is foreshortened (measureArms). */
   const fullArms = armLengths(sourcePoses.frames);
@@ -1087,23 +1139,19 @@ export async function generateRun(dir: string, options: {
     return mapping;
   };
   /**
-   * Approved frames the rig itself drew ("frame N", the mapping's base ids): never a base, so its cuts and
-   * smudges can't be deformed into the next frame and pile up. The rig deforms drawings made whole.
+   * Approved frames the rig drew and nobody redrew whole ("frame N", the mapping's base ids): never a base, so their
+   * cuts and smudges can't be deformed into the next frame and pile up. A rig draft Muse Image redrew is whole: it
+   * may be a base, and the planner's chain limit (STRAIGHT_AHEAD.maxChain) re-keys from a drawn frame before drift adds up.
    */
   const rigMade = async (): Promise<string[]> => (await readManifest(dir)).frames.flatMap((entry) => {
     const made = entry.approved && entry.attempts.find((attempt) => attempt.attempt === entry.approved!.attempt)?.checks.find((check) => check.name === "alpha")?.detail;
-    return made && !/Muse Image|Higgsfield/.test(made) || made && /healed/.test(made) ? [`frame ${entry.index}`] : [];
+    return made && !/Muse Image|Higgsfield/.test(made) ? [`frame ${entry.index}`] : [];
   });
   /** Bases already deformed per frame in this run: the next rig try uses the next-best drawing. */
   const triedBases = new Map<number, Set<string>>();
   const mapped = new Map<string, MappedFrame & { readonly repair: FrameDiagnostics["repair"] }>();
   /** The target skeleton per frame: the mapping's when it ran, else the pose guide on the canvas. */
   const targets = new Map<number, MappedFrame["target"]>();
-  /**
-   * The rig's drawing per frame when it passed every measurement: a later try closes its cuts with Muse Image
-   * (healFrame) before anything is drawn from scratch, so a pose the rig got right isn't thrown away.
-   */
-  const rigPosed = new Map<number, Buffer>();
   /** The rig's latest deformation per frame: the silhouette a generator's drawing is compared with. */
   const predictions = new Map<number, MappedFrame>();
   /** Why the rig didn't draw a frame: kept on the attempt the generators drew instead, so the fallback is on record. */
@@ -1142,7 +1190,7 @@ export async function generateRun(dir: string, options: {
    * the pose measured after it matches the pose before it. Null when the mapping can't draw
    * this frame (no drawing to deform, a failed constraint): the generators draw it instead.
    */
-  const drawByMapping = async (index: number, attempt: number, stem: string, marks: Marks, spec: BodySpec | null, anchorDensity: number | null): Promise<Candidate | null> => {
+  const drawByMapping = async (index: number, attempt: number, stem: string, marks: Marks, spec: BodySpec | null, anchorDensity: number | null, redraw: { readonly continuity: { readonly png: Buffer; readonly frame: number } | null; readonly problem?: string } | null = null): Promise<Candidate | null> => {
     const engine = await openMappingNow();
     if (!engine) return null;
     const tried = triedBases.get(index) ?? new Set<string>();
@@ -1162,13 +1210,43 @@ export async function generateRun(dir: string, options: {
     predictions.set(index, frame);
     const failed = constraintFailures(frame.outcomes);
     const route = `${frame.decision.mode} from ${frame.decision.base!.id}`;
-    if (failed.length) {
+    // A torn mesh is what Muse Image's redraw repairs; a limb stretched past its limits it can't.
+    if (failed.length && !(redraw && redrawable(frame, failed))) {
       const why = `${route} rejected: ${failed.map((outcome) => `${outcome.id} — ${outcome.detail}`).join("; ")}`;
       rigRefused.set(index, why);
       log(`  character rig (${why})`);
       return null;
     }
+    if (failed.length) log(`  character rig: ${route} drafted with ${failed.map((outcome) => outcome.detail).join("; ")}: Muse Image redraws it`);
     rigRefused.delete(index);
+    if (redraw) {
+      // Rig + heal: the rig's draft has the pose and the character's shape; Muse Image redraws what moving pieces
+      // broke, and the redraw is kept only when the face, wrists and ankles stay where the rig put them.
+      const draft = await measure("rig", frame.png, stem, index, marks, spec, anchorDensity);
+      let candidate: Candidate = draft;
+      let repair: FrameDiagnostics["repair"];
+      try {
+        const raw = await redrawRigFrame({
+          draft: frame.png, character: (await characterAtVideoScale()).png, frame: await sourceFitted(index), description, style,
+          continuity: redraw.continuity, problem: redraw.problem, signal: options.signal,
+        });
+        const redrawn = await measure("muse", raw, stem, index, marks, spec, anchorDensity);
+        // The redraw is on the same canvas as the draft (an edit keeps Image 1's layout): its pose is compared before registration.
+        const kept = redrawKeptPose(frame.result.plan.generated as Skeleton, redrawn.drawn);
+        const moved = kept.worst === null ? "pose not found" : `ends moved ≤ ${kept.worst.toFixed(2)} torso`;
+        repair = { applied: true, kept: kept.kept, note: kept.kept ? `rig draft redrawn by Muse Image; ${moved}` : `Muse Image's redraw discarded: ${moved} (limit ${REDRAW_TOLERANCE})` };
+        if (kept.kept) candidate = { ...redrawn, generator: "rig", note: `rig draft redrawn by Muse Image; ${redrawn.note}` };
+      } catch (error) {
+        options.signal?.throwIfAborted();
+        repair = { applied: false, kept: false, note: `redraw failed: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}` };
+      }
+      log(`  character rig: ${repair.note}`);
+      mapped.set(key(index, attempt), { ...frame, repair });
+      await mkdir(path.join(dir, "mapping", "diagnostics"), { recursive: true });
+      await writeFile(path.join(dir, exposedFile(index, attempt)), await maskToPng(frame.regions));
+      const mappingCheck: Check = { name: "mapping", passed: true, detail: `${route}${frame.decision.distance !== null ? ` (${frame.decision.distance.toFixed(0)}°)` : ""}; ${repair.note}` };
+      return { ...candidate, checks: [...candidate.checks, mappingCheck], note: `${route}; ${candidate.note}` };
+    }
     let png = frame.png;
     let repair: FrameDiagnostics["repair"] = null;
     if (repairs && frame.result.stats.exposedArea + frame.result.stats.distortedArea > 0) {
@@ -1220,14 +1298,85 @@ export async function generateRun(dir: string, options: {
     }));
   };
 
+  /** Each attempt's trace (trace.ts): opened when it is drawn, closed by its decision. */
+  const traces = new Map<string, Trace>();
+  const traced = async (context: DrawContext, body: (context: DrawContext, trace: Trace) => Promise<Buffer>): Promise<Buffer> => {
+    const trace = openTrace(dir, context.frame.index, context.attempt, context.feedback.length + 1);
+    trace.setBar(bar.overall);
+    traces.set(key(context.frame.index, context.attempt), trace);
+    try {
+      return await body(context, trace);
+    } catch (error) {
+      await trace.fail(error);
+      throw error;
+    }
+  };
+  const stemOf = (index: number) => path.join(dir, "work", frameName(index).replace(".png", ""));
+  /**
+   * The video person's mask on the canvas (SAM 3.1, concept "person"), once per frame and kept in work/: the
+   * silhouette the fidelity report compares the drawing with. Null when SAM is off or finds nobody.
+   */
+  const personMaskFor = async (index: number): Promise<string | null> => {
+    const file = `${stemOf(index)}_person.png`;
+    if (existsSync(file)) return file;
+    if (samUse() === "off") return null;
+    try {
+      const masks = await segmentImage({ png: await sourceFitted(index), width: CANVAS.width, height: CANVAS.height, concept: "person", signal: options.signal });
+      const best = [...masks].sort((a, b) => b.area - a.area)[0];
+      if (!best) return null;
+      await writeFile(file, await maskToPng(largestComponent({ width: CANVAS.width, height: CANVAS.height, data: best.alpha.map((value) => (value ? 1 : 0)) })));
+      return file;
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      log(`  SAM couldn’t segment the video person of frame ${index} (${error instanceof Error ? error.message.slice(0, 120) : String(error)}): fidelity without the silhouette`);
+      return null;
+    }
+  };
+  /** The character sheet at a frame's drawing scale (sheetOnCanvas), kept in work/: what the colours are held to. */
+  const sheetFor = async (index: number): Promise<string> => {
+    const file = `${stemOf(index)}_sheet.png`;
+    if (!existsSync(file)) await writeFile(file, await sheetOnCanvas(index));
+    return file;
+  };
+  /** The approved drawing of the frame right before, with its pose on the canvas when it was kept: the continuity the gate measures. */
+  const previousDrawing = async (index: number): Promise<{ file: string; drawn: Pose | null } | null> => {
+    const previous = (await readManifest(dir)).frames.find((entry) => entry.index === index - 1);
+    if (!previous?.approved) return null;
+    const placed = await readFile(`${stemOf(index - 1)}_a${previous.approved.attempt}_placed.json`, "utf8").then((text) => JSON.parse(text) as Pose, () => null);
+    return { file: path.join(dir, previous.approved.file), drawn: placed };
+  };
+  const work = (index: number, attempt: number, name: TraceImage["name"], label: string): TraceImage => ({ label, kind: "work", frame: index, attempt, name });
+
   return runFrames(dir, {
     log,
-    draw: async ({ frame, attempt, anchor, feedback }) => {
+    draw: (context) => traced(context, async ({ frame, attempt, anchor, feedback }, trace) => {
       const name = frameName(frame.index);
       const tries = feedback.length + 1;
       live(frame.index, attempt, tries, "drawing");
       const { guide, sourceGrey, marks, spec } = await poseImages(frame.index);
       const source = sourcePoses.frames[frame.index - 1];
+      const stem = path.join(dir, "work", `${name.replace(".png", "")}_a${attempt}`);
+      // Guardrail 2, the inputs: the video frame has a body to follow; the previous frame is shown only when it is trusted.
+      await trace.start("inputs", { model: "DWPose · guardrails", summary: "checking the video frame and the references" });
+      const inputs: Guardrail[] = sourceGuardrails(source);
+      const pick = continuityGuardrail(await readManifest(dir), frame.index);
+      inputs.push(pick.guardrail);
+      const continuity = pick.frame?.approved ? { png: await onColour(await readFile(path.join(dir, pick.frame.approved.file)), "#d8d8d8"), frame: pick.frame.index } : null;
+      if (continuity) await writeFile(`${stem}_continuity.png`, continuity.png);
+      const stop = blocked(inputs);
+      await trace.end("inputs", {
+        status: stop ? "failed" : inputs.every((guardrail) => guardrail.passed) ? "done" : "warn",
+        summary: stop ? stop.detail : `video frame ${frame.index}, the character${continuity ? `, frame ${continuity.frame} for continuity` : ""}${poseSheet ? ", the pose sheet" : ""}`,
+        guardrails: inputs,
+        images: [
+          { label: `Video frame ${frame.index}`, kind: "source", frame: frame.index },
+          { label: "Character", kind: "scaled" },
+          ...(continuity ? [work(frame.index, attempt, "continuity", `Frame ${continuity.frame} (continuity)`)] : []),
+          { label: "Pose guide", kind: "guide", frame: frame.index },
+          ...(poseSheet ? [{ label: "Pose sheet", kind: "posesheet" }] : []),
+        ],
+      });
+      if (stop) throw new Error(`guardrail ${stop.name}: ${stop.detail}`);
       const input: FrameInput = {
         character,
         description,
@@ -1254,39 +1403,31 @@ export async function generateRun(dir: string, options: {
         body,
         signal: options.signal,
       };
-      const stem = path.join(dir, "work", `${name.replace(".png", "")}_a${attempt}`);
       // Line work is held to the approved frames on average, not to the first alone: how much outline a
       // figure shows changes with its pose (arms out show less per area), and one frame is a narrow bar.
       const anchorDensity = anchor ? await approvedDensity() : null;
-      // A prompt under test is Muse Image's: the rig draws nothing from words.
+      // A prompt under test is Muse Image's: the rig draws nothing from words. Rig + heal first: an approved drawing
+      // deformed onto this frame's pose (exact by construction, the character's own shape), redrawn whole by Muse Image.
       if (!options.prompt && (renderer === "rig" || (renderer === "auto" && tries === 1))) {
-        const rigged = await drawByMapping(frame.index, attempt, stem, marks, spec, anchorDensity);
+        await trace.start("generate", { model: repairs ? `Character rig → ${meta.imageModel}` : "Character rig", summary: "deforming the approved drawing before onto this pose" });
+        const rigged = await drawByMapping(frame.index, attempt, stem, marks, spec, anchorDensity, repairs ? { continuity, problem: feedback.at(-1) } : null);
+        if (!rigged) await trace.update("generate", { summary: `rig not used (${rigRefused.get(frame.index) ?? "no drawing to deform"}); Muse Image draws it` });
         if (rigged) {
-          // Only a drawing that passed every measurement is worth closing up: healing a broken one invents parts.
-          if (rigged.checks.every((check) => check.passed)) rigPosed.set(frame.index, rigged.png);
+          const repair = mapped.get(key(frame.index, attempt))?.repair ?? null;
+          await trace.end("prompt", { status: "skipped", summary: repair?.applied ? "a fixed redraw prompt: keep the rig's pose, repair what moving pieces broke" : "the rig draws from no words" });
+          await trace.end("generate", {
+            status: repair && !repair.kept ? "warn" : "done",
+            summary: rigged.note,
+            detail: repair?.note ?? null,
+            images: [work(frame.index, attempt, "draft", "Rig draft (exact pose)"), ...(repair?.applied ? [work(frame.index, attempt, "raw", "Muse Image redraw")] : [])],
+          });
+          await trace.end("measure", { model: "DWPose · sharp", summary: rigged.note, checks: rigged.checks.map(traceCheck), images: [work(frame.index, attempt, "keyed", "Cut-out"), { label: "Registered", kind: "attempt", frame: frame.index, attempt }] });
           live(frame.index, attempt, tries, "measuring");
           chosen.set(key(frame.index, attempt), rigged);
           await writeFile(`${stem}_pose.json`, JSON.stringify({ width: CANVAS.width, height: CANVAS.height, frames: [rigged.drawn] }));
           return rigged.png;
         }
         if (renderer === "rig") throw new Error("the character rig can't draw this frame and the generators are off for this run");
-      }
-      // The rig had the pose right: close its cuts (once per frame) instead of drawing anew.
-      const torn = renderer === "auto" && !options.prompt ? rigPosed.get(frame.index) : undefined;
-      if (torn) {
-        rigPosed.delete(frame.index);
-        try {
-          const raw = await healFrame({ drawing: torn, character, description, problem: feedback.at(-1), signal: options.signal });
-          live(frame.index, attempt, tries, "measuring");
-          const healed = await measure("muse", raw, stem, frame.index, marks, spec, anchorDensity);
-          const note = `rig drawing healed by Muse Image; ${healed.note}`;
-          chosen.set(key(frame.index, attempt), { ...healed, note, checks: [...healed.checks, ...fallbackCheck(frame.index, "muse")] });
-          await writeFile(`${stem}_pose.json`, JSON.stringify({ width: CANVAS.width, height: CANVAS.height, frames: [healed.drawn] }));
-          return healed.png;
-        } catch (error) {
-          options.signal?.throwIfAborted();
-          log(`  healing the rig's drawing failed: ${error instanceof Error ? error.message.slice(0, 160) : String(error)}; drawing anew`);
-        }
       }
       // The generators follow the pose mannequin, built on the rig's target when it ran, else on the pose guide.
       const target = targets.get(frame.index)?.skeleton ?? skeletonFromPose(onCanvas(guides.frames[frame.index - 1], fit));
@@ -1295,8 +1436,9 @@ export async function generateRun(dir: string, options: {
       const posed: FrameInput = { ...input, mannequin: await withGrid(await fromRgba(mannequin(target, CANVAS, engine ? sheetBuild(engine.sheet.rig) : null).shaded), marks) };
       await writeFile(`${stem}_mannequin.png`, posed.mannequin!);
       // Muse Image edits the colour video frame into the character with a short prompt; Higgsfield still gets the full one.
+      await trace.start("prompt", { model: !options.prompt && writer === "spark" ? meta.plannerModel : "template", summary: "reading the pose and writing Muse Image's prompt" });
       const written = generators.includes("muse")
-        ? swapFramePrompt({ frame: await sourcePlaced(frame.index), character: (await characterAtVideoScale()).png, characterSheet: character, description, style, note: await noteFor(frame.index), correction: input.correction, feedback, body, poseSheet, signal: options.signal })
+        ? swapFramePrompt({ frame: await sourcePlaced(frame.index), character: (await characterAtVideoScale()).png, characterSheet: character, description, style, note: await noteFor(frame.index), correction: input.correction, feedback, body, poseSheet, continuity, signal: options.signal })
         : null;
       // Muse Spark's own prompt, written from the template and the images; the template draws when it can't write one.
       const manifestNow = written && !options.prompt && writer === "spark" ? await readManifest(dir) : null;
@@ -1307,7 +1449,20 @@ export async function generateRun(dir: string, options: {
           return null;
         })
         : null;
-      const swap = written && options.prompt ? { ...written, prompt: options.prompt } : written && spark ? { ...written, prompt: spark } : written;
+      const unguarded = written && options.prompt ? { ...written, prompt: options.prompt } : written && spark ? { ...written, prompt: spark } : written;
+      // Guardrail 3, the prompt: the clauses that keep limbs, sides, identity and the key colour are in it, whatever the
+      // writer (or a person testing a prompt) left out; added back as a GUARDRAILS section (guardrails.ts).
+      const guarded = unguarded ? guardPrompt(unguarded.prompt, unguarded.references.length) : null;
+      const swap = unguarded && guarded ? { ...unguarded, prompt: guarded.prompt } : unguarded;
+      const promptStop = guarded ? blocked(guarded.guardrails) : null;
+      const added = guarded?.guardrails.filter((guardrail) => guardrail.detail.startsWith("added")) ?? [];
+      await trace.end("prompt", {
+        status: promptStop ? "failed" : added.length ? "warn" : "done",
+        summary: promptStop ? promptStop.detail : `${options.prompt ? "your prompt" : spark ? "written by Muse Spark" : "the template"}${added.length ? `; guardrails added: ${added.map((guardrail) => guardrail.name.replace("prompt-", "")).join(", ")}` : ""}`,
+        detail: swap ? `${swap.references.map((reference, i) => `Image ${i + 1}: ${reference.role}`).join("\n")}\n\n${swap.prompt}` : null,
+        guardrails: guarded?.guardrails ?? [],
+      });
+      if (promptStop) throw new Error(`guardrail ${promptStop.name}: ${promptStop.detail}`);
       // Every reference recorded with its entity and hash, and refused if B isn't the run's character or an output stands in for A or B.
       const generation: GenerationTarget = {
         kind: "generation-target", frame: frame.index, attempt,
@@ -1323,6 +1478,7 @@ export async function generateRun(dir: string, options: {
       // Beside Muse Spark's prompt, the template it was written from: the two can be compared frame by frame.
       if (spark && written) await record(`${stem}_template_prompt.txt`, written);
       if (generators.includes("higgsfield")) await record(swap ? `${stem}_higgsfield_prompt.txt` : `${stem}_prompt.txt`, framePrompt(posed));
+      await trace.start("generate", { model: meta.imageModel, summary: `editing video frame ${frame.index} with ${swap?.references.length ?? 0} labelled images` });
       // With two generators both draw the same prompt at once; one failing still leaves the other.
       const drawings = await Promise.allSettled(generators.map(async (generator) => {
         if (generator === "muse") return { generator, raw: await drawSwap(swap!, options.signal) };
@@ -1335,7 +1491,9 @@ export async function generateRun(dir: string, options: {
         if (result.status === "rejected") log(`  ${GENERATOR_NAME[generators[i]]} failed: ${result.reason instanceof Error ? result.reason.message : String(result.reason)}`);
       }
       if (!ready.length) throw (drawings[0] as PromiseRejectedResult).reason;
+      await trace.end("generate", { summary: "drawing received", images: [work(frame.index, attempt, "raw", "Muse Image output")] });
       live(frame.index, attempt, tries, "measuring");
+      await trace.start("measure", { model: "DWPose · sharp", summary: "keying the background, holding the palette, finding the drawn pose" });
       const candidates = await Promise.all(ready.map(({ generator, raw }) => measure(generator, raw, stem, frame.index, marks, spec, anchorDensity)));
       const best = candidates.reduce((winner, candidate) => (better(candidate, winner) ? candidate : winner));
       const others = candidates.filter((candidate) => candidate !== best)
@@ -1346,74 +1504,154 @@ export async function generateRun(dir: string, options: {
       await writeFile(`${stem}_pose.json`, JSON.stringify({ width: CANVAS.width, height: CANVAS.height, frames: [best.drawn] }));
       const output: GeneratedFrame = { kind: "generated-frame", frame: frame.index, attempt, generator: best.generator, sha256: sha256(ready.find((drawing) => drawing.generator === best.generator)!.raw), target: sha256(Buffer.from(JSON.stringify(generation))) };
       await writeFile(`${stem}_generated.json`, `${JSON.stringify(output, null, 2)}\n`);
+      await trace.end("measure", { summary: best.note, checks: best.checks.map(traceCheck), images: [work(frame.index, attempt, "keyed", "Cut-out"), { label: "Registered", kind: "attempt", frame: frame.index, attempt }] });
       return best.png;
-    },
-    validate: async (png, { frame, attempt, previous, anchor, feedback }) => {
-      const tries = feedback.length + 1;
-      live(frame.index, attempt, tries, "checking");
-      const winner = chosen.get(key(frame.index, attempt))!;
-      const checks: Check[] = winner.checks.map((check) => (check.name === "alpha" ? { ...check, detail: `${check.detail}; ${winner.note}` } : check));
-      // The runtime animation policies on the finished drawing, against the previous approved frame.
-      const target = targets.get(frame.index) ?? { skeleton: skeletonFromPose(onCanvas(guides.frames[frame.index - 1], fit)), rotations: [], unseen: [] };
-      const generated = skeletonFromPose(winner.placed);
-      const previousRecord = await previousDiagnostics(frame.index);
-      const engine = mapping ? await mapping : null;
-      const validation = engine?.registry.run("validation", {
-        stage: "validation", index: frame.index, target: target.skeleton, generated,
-        previous: previousRecord ? { target: skeletonFromMap(previousRecord.target.joints), generated: previousRecord.generated ? skeletonFromMap(previousRecord.generated.joints) : null } : null,
-      }).outcomes ?? [];
-      const broken = constraintFailures(validation);
-      if (validation.length) {
-        checks.push({
-          name: "policies",
-          passed: broken.length === 0,
-          detail: broken.length ? broken.map((outcome) => outcome.detail).join("; ") : validation.map((outcome) => `${outcome.id.split("/")[1]} ${outcome.passed ? "ok" : `warn (${outcome.detail})`}`).join(", "),
-          ...(broken.length ? { feedback: "Keep every joint the source holds still exactly where it was in the previous frame." } : {}),
-        });
+    }),
+    validate: async (png, context) => {
+      const trace = traces.get(key(context.frame.index, context.attempt));
+      try {
+        return await validateOne(png, context, trace ?? null);
+      } catch (error) {
+        await trace?.fail(error);
+        throw error;
       }
-      // The overlay scan (scan.ts): every joint's distance from the video frame's pose after the drawing is aligned on its
-      // torso, in torso lengths, plus the grid cells where a limb is missing or misplaced. Kept as evidence beside the
-      // attempt (the error map) and listed with the checks; it doesn't decide a frame until its limits are calibrated on
-      // this generator's drawings (the limits were set on rig and mannequin drawings).
-      const scan = scanPose(target.skeleton, generated, await toRgba(png));
-      checks.push({ name: "scan", passed: true, ...(scan.passed ? {} : { status: "warn" as const }), severity: "info", detail: scan.detail, ...(scan.score !== undefined ? { score: scan.score } : {}) });
-      await writeFile(path.join(dir, "work", `${frameName(frame.index).replace(".png", "")}_a${attempt}_scan.png`), await scanOverlay((await poseImages(frame.index)).sourceGrey, png, target.skeleton, generated, scan)).catch((error: unknown) => log(`  scan overlay not saved: ${error instanceof Error ? error.message : String(error)}`));
-      // The pictures Muse Spark reviews with, made for every attempt and kept beside it (the debug panel shows them), also
-      // for one the measurements already reject. The finished drawing, registered onto the frame's marks, ghosted over the
-      // video frame placed the same way: it shows the pose differences a side by side hides, and whether the character
-      // stands where the person stood, as tall. Next to the character sheet at the drawings' scale it shows the build.
-      const overlay = await ghostOverlay(await sourceFitted(frame.index), png);
-      const pair = build ? await buildPair(await sheetOnCanvas(frame.index), png) : undefined;
-      const seen = path.join(dir, "work", `${frameName(frame.index).replace(".png", "")}_a${attempt}`);
-      await writeFile(`${seen}_review_overlay.png`, overlay);
-      if (pair) await writeFile(`${seen}_review_build.png`, pair);
-      // Muse Spark looks at every drawing the measurements don't already reject (a pose they couldn't measure
-      // is exactly what it should see), and at every drawing in debug (`review: "always"`), whatever was measured.
-      if (options.review === "always" || decide(checks).decision !== "REJECTED") {
-        live(frame.index, attempt, tries, "reviewing");
-        const correction = await correctionFor(frame);
-        checks.push(reviewCheck(await reviewFrame({
-          overlay,
-          build: pair && build ? { pair, profile: buildText(build) } : undefined,
-          character,
-          pair: await sideBySide(await readFile(path.join(dir, frame.source)), png),
-          drawing: await onColour(png, "#d8d8d8"),
-          previous: previous ? await onColour(previous, "#d8d8d8") : null,
-          anchor: anchor ? await onColour(anchor, "#d8d8d8") : null,
-          correction,
-          legs: describeLegs(sourcePoses.frames[frame.index - 1]),
-          poseSheet,
-          signal: options.signal,
-        }), correction, closePose(sourcePoses.frames[frame.index - 1], winner.drawn, sourcePoses.frames)));
-      }
-      live(frame.index, attempt, tries, decide(checks).decision === "ACCEPTED" ? "approved" : "rejected");
-      await recordDiagnostics(frame.index, attempt, winner, target, generated, validation, png).catch((error: unknown) => log(`  diagnostics not saved: ${error instanceof Error ? error.message : String(error)}`));
-      return checks;
     },
   }, { limit: options.limit, only: options.only, signal: options.signal, attempts: options.attempts })
     // What this run's prompts taught goes to the character's kit, for its next runs.
     .finally(() => readManifest(dir).then((manifest) => keepMemory(dir, manifest)).catch((error: unknown) => log(`  prompt memory not saved: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}`)));
+
+  async function validateOne(png: Buffer, { frame, attempt, previous, anchor, feedback }: DrawContext, trace: Trace | null): Promise<Check[]> {
+    const tries = feedback.length + 1;
+    live(frame.index, attempt, tries, "checking");
+    const winner = chosen.get(key(frame.index, attempt))!;
+    const checks: Check[] = winner.checks.map((check) => (check.name === "alpha" ? { ...check, detail: `${check.detail}; ${winner.note}` } : check));
+    // The runtime animation policies on the finished drawing, against the previous approved frame.
+    const target = targets.get(frame.index) ?? { skeleton: skeletonFromPose(onCanvas(guides.frames[frame.index - 1], fit)), rotations: [], unseen: [] };
+    const generated = skeletonFromPose(winner.placed);
+    const previousRecord = await previousDiagnostics(frame.index);
+    const engine = mapping ? await mapping : null;
+    const validation = engine?.registry.run("validation", {
+      stage: "validation", index: frame.index, target: target.skeleton, generated,
+      previous: previousRecord ? { target: skeletonFromMap(previousRecord.target.joints), generated: previousRecord.generated ? skeletonFromMap(previousRecord.generated.joints) : null } : null,
+    }).outcomes ?? [];
+    const broken = constraintFailures(validation);
+    if (validation.length) {
+      checks.push({
+        name: "policies",
+        passed: broken.length === 0,
+        detail: broken.length ? broken.map((outcome) => outcome.detail).join("; ") : validation.map((outcome) => `${outcome.id.split("/")[1]} ${outcome.passed ? "ok" : `warn (${outcome.detail})`}`).join(", "),
+        ...(broken.length ? { feedback: "Keep every joint the source holds still exactly where it was in the previous frame." } : {}),
+      });
+    }
+    // The overlay scan (scan.ts): every joint's distance from the video frame's pose after the drawing is aligned on its
+    // torso, in torso lengths, plus the grid cells where a limb is missing or misplaced. Kept as evidence beside the
+    // attempt (the error map) and listed with the checks; it doesn't decide a frame until its limits are calibrated on
+    // this generator's drawings (the limits were set on rig and mannequin drawings).
+    const scan = scanPose(target.skeleton, generated, await toRgba(png));
+    checks.push({ name: "scan", passed: true, ...(scan.passed ? {} : { status: "warn" as const }), severity: "info", detail: scan.detail, ...(scan.score !== undefined ? { score: scan.score } : {}) });
+    await writeFile(path.join(dir, "work", `${frameName(frame.index).replace(".png", "")}_a${attempt}_scan.png`), await scanOverlay((await poseImages(frame.index)).sourceGrey, png, target.skeleton, generated, scan)).catch((error: unknown) => log(`  scan overlay not saved: ${error instanceof Error ? error.message : String(error)}`));
+    // The pictures Muse Spark reviews with, made for every attempt and kept beside it (the debug panel shows them), also
+    // for one the measurements already reject. The finished drawing, registered onto the frame's marks, ghosted over the
+    // video frame placed the same way: it shows the pose differences a side by side hides, and whether the character
+    // stands where the person stood, as tall. Next to the character sheet at the drawings' scale it shows the build.
+    const overlay = await ghostOverlay(await sourceFitted(frame.index), png);
+    const pair = build ? await buildPair(await sheetOnCanvas(frame.index), png) : undefined;
+    const seen = path.join(dir, "work", `${frameName(frame.index).replace(".png", "")}_a${attempt}`);
+    await writeFile(`${seen}_review_overlay.png`, overlay);
+    if (pair) await writeFile(`${seen}_review_build.png`, pair);
+    // Guardrail 4, the output: the fidelity gate (fidelity.ts). fidelity.py measures the drawing against its pose guide,
+    // the video person's move from the previous frame, the previous approved drawing, the character sheet's colours and
+    // the person's SAM silhouette; the drawing passes only at the bar (95 % by default) with no floor broken.
+    await writeFile(`${seen}_placed.json`, JSON.stringify(winner.placed));
+    await trace?.start("fidelity", { model: "OpenCV · NumPy (fidelity.py) · SAM 3.1", summary: "measuring against the guide, the video and the previous frame" });
+    try {
+      const before = await previousDrawing(frame.index);
+      const report = await measureFidelity({
+        stem: seen,
+        drawing: path.join(dir, attemptFile(frame.index, attempt)),
+        target: onCanvas(guides.frames[frame.index - 1], fit),
+        drawn: winner.placed,
+        previous: before,
+        source: onCanvas(sourcePoses.frames[frame.index - 1], fit),
+        sourcePrevious: before && frame.index > 1 ? onCanvas(sourcePoses.frames[frame.index - 2], fit) : null,
+        sheet: await sheetFor(frame.index),
+        personMask: await personMaskFor(frame.index),
+        reference,
+      }, options.signal);
+      const check = fidelityCheck(report, bar);
+      const verdict = judgeFidelity(report, bar);
+      checks.push(check);
+      await trace?.end("fidelity", {
+        status: check.passed ? "done" : "failed",
+        summary: verdict.overall === null ? "nothing measurable" : `${verdict.overall.toFixed(1)} % of ${bar.overall} %${verdict.failures.length ? ` — ${verdict.failures.slice(0, 3).join("; ")}` : ""}`,
+        score: verdict.overall,
+        metrics: Object.fromEntries(Object.entries(report.metrics).map(([name, value]) => [name, value ?? null])),
+        detail: [
+          ...report.bones.map((bone) => `${bone.bone}${bone.screen ? ` (${bone.screen} of image)` : ""}: ${bone.error === null ? "not found" : `${bone.error.toFixed(0)}° off`}${bone.ratio !== undefined ? `, length ×${bone.ratio.toFixed(2)}` : ""}`),
+          ...report.limbs.map((limb) => `${limb.limb}: ${limb.present ? `on the guide ${(limb.onGuide * 100).toFixed(0)} %, on ink ${(limb.onInk * 100).toFixed(0)} %` : "missing"}`),
+          ...report.notes,
+          ...(verdict.feedback.length ? ["", "Next attempt is told:", ...verdict.feedback] : []),
+        ].join("\n"),
+        images: [work(frame.index, attempt, "fidelity", "Guide (green) vs drawing"), ...(existsSync(`${stemOf(frame.index)}_person.png`) ? [work(frame.index, attempt, "person", "Video person · SAM")] : [])],
+      });
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      // Unmeasured is never approved: a person decides (decision.ts INCONCLUSIVE).
+      const why = error instanceof Error ? error.message.split("\n").at(-1)?.slice(0, 200) ?? error.message : String(error);
+      checks.push({ name: "fidelity", passed: false, status: "inconclusive", detail: `not measured: ${why}` });
+      await trace?.end("fidelity", { status: "failed", summary: `not measured: ${why}` });
+    }
+    // Muse Spark looks at every drawing the measurements don't already reject (a pose they couldn't measure
+    // is exactly what it should see), and at every drawing in debug (`review: "always"`), whatever was measured.
+    if (options.review === "always" || decide(checks).decision !== "REJECTED") {
+      live(frame.index, attempt, tries, "reviewing");
+      await trace?.start("review", { model: meta.plannerModel, summary: "comparing every limb, the identity and the build" });
+      const correction = await correctionFor(frame);
+      const review = reviewCheck(await reviewFrame({
+        overlay,
+        build: pair && build ? { pair, profile: buildText(build) } : undefined,
+        character,
+        pair: await sideBySide(await readFile(path.join(dir, frame.source)), png),
+        drawing: await onColour(png, "#d8d8d8"),
+        previous: previous ? await onColour(previous, "#d8d8d8") : null,
+        anchor: anchor ? await onColour(anchor, "#d8d8d8") : null,
+        correction,
+        legs: describeLegs(sourcePoses.frames[frame.index - 1]),
+        poseSheet,
+        signal: options.signal,
+      }), correction, closePose(sourcePoses.frames[frame.index - 1], winner.drawn, sourcePoses.frames));
+      checks.push(review);
+      await trace?.end("review", {
+        status: review.passed ? "done" : review.status === "inconclusive" ? "warn" : "failed",
+        summary: review.passed ? "same character, same pose, clean" : review.detail.slice(0, 160),
+        detail: review.detail,
+        images: [{ label: "Ghosted over the video", kind: "overlay", frame: frame.index, attempt }, ...(pair ? [{ label: "Build beside the sheet", kind: "build", frame: frame.index, attempt }] : [])],
+      });
+    } else {
+      await trace?.end("review", { status: "skipped", summary: "the measures already reject it: no review spent" });
+    }
+    const verdict = decide(checks);
+    live(frame.index, attempt, tries, verdict.decision === "ACCEPTED" ? "approved" : "rejected");
+    const fidelity = checks.find((check) => check.name === "fidelity");
+    await trace?.end("decision", {
+      model: "decision.ts",
+      status: verdict.decision === "ACCEPTED" ? "done" : verdict.decision === "REJECTED" ? "failed" : "warn",
+      summary: verdict.decision === "ACCEPTED" ? "approved" : verdict.decision === "REJECTED" ? `rejected: ${verdict.reasons[0] ?? ""}`.slice(0, 160) : `a person decides: ${verdict.reasons[0] ?? ""}`.slice(0, 160),
+      detail: [
+        ...verdict.reasons,
+        ...(verdict.decision === "REJECTED" ? ["", "Next attempt fixes:", ...checks.filter((check) => !check.passed && check.feedback).map((check) => `• ${check.feedback}`)] : []),
+      ].join("\n") || null,
+      checks: checks.map(traceCheck),
+      score: fidelity?.score ?? null,
+      images: [{ label: verdict.decision === "ACCEPTED" ? "Approved drawing" : "This attempt", kind: "attempt", frame: frame.index, attempt }],
+    });
+    await recordDiagnostics(frame.index, attempt, winner, target, generated, validation, png).catch((error: unknown) => log(`  diagnostics not saved: ${error instanceof Error ? error.message : String(error)}`));
+    return checks;
+  }
 }
+
+/** A check as the trace shows it. */
+const traceCheck = (check: Check) => ({ name: check.name, passed: check.passed, ...(check.status ? { status: check.status } : {}), detail: check.detail });
 
 type DiagnosticsInput = {
   readonly dir: string;

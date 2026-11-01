@@ -14,6 +14,8 @@ Provides-Extra: pose
 Requires-Dist: rtmlib==0.0.13; extra == "pose"
 Requires-Dist: onnxruntime==1.21.1; extra == "pose"
 Requires-Dist: tqdm>=4.66; extra == "pose"
+Provides-Extra: zerogpu
+Requires-Dist: gradio_client<2,>=1.10; extra == "zerogpu"
 Provides-Extra: dev
 Requires-Dist: pytest==8.3.5; extra == "dev"
 Requires-Dist: pytest-asyncio==0.26.0; extra == "dev"

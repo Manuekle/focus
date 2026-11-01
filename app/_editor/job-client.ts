@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { ACTIVE_JOB_STATUSES, ApiErrorBodySchema, EditJobSchema, type EditJob } from "../../shared/schemas";
 import type { RenderParamsInput } from "../../shared/render";
 import { TrackingSchema, type Tracking } from "../../shared/tracking";
+import { rightsHeaders } from "../../shared/rights";
 import { editorErrorMessage } from "./messages";
 import { generationFeedback } from "../_auth/generation-feedback";
 import { editActivity, observeEdit } from "../_activity/activity-adapters";
@@ -38,7 +39,7 @@ const json = (body: unknown): RequestInit => ({ method: "POST", headers: { "Cont
 const parseJob = (value: unknown) => EditJobSchema.parse(value);
 
 export const jobApi = {
-  create: (body: { videoId: string; effect: string; prompt: string }) => trackActivity({ title: "Video effect", href: `/editor?v=${body.videoId}` }, () => call("/api/edits", json(body), parseJob), editActivity),
+  create: (body: { videoId: string; effect: string; prompt: string }) => trackActivity({ title: "Video effect", href: `/editor?v=${body.videoId}` }, () => call("/api/edits", { ...json(body), headers: { "Content-Type": "application/json", ...rightsHeaders() } }, parseJob), editActivity),
   get: (id: string) => call(`/api/jobs/${id}`, { cache: "no-store" }, parseJob),
   cancel: (id: string) => call(`/api/jobs/${id}/cancel`, { method: "POST" }, parseJob),
   select: (id: string, objectIds: readonly string[]) => call(`/api/jobs/${id}/selection`, json({ objectIds }), parseJob),

@@ -495,8 +495,16 @@ export type SwapInput = {
   readonly body?: string | null;
   /** The character drawn in other poses before the run (drawPoseSheet): how its joints bend. */
   readonly poseSheet?: Buffer | null;
+  /**
+   * The previous frame's approved drawing, when guardrails.ts continuityGuardrail trusts it: how the character was
+   * drawn a moment ago, so this frame follows it without a jump. Never its pose; the sheet stays the identity's authority.
+   */
+  readonly continuity?: { readonly png: Buffer; readonly frame: number } | null;
   readonly signal?: AbortSignal;
 };
+
+/** How the previous frame is named to the generator. */
+export const CONTINUITY_ROLE = (frame: number) => `REFERENCE D, CONTINUITY: frame ${frame} of this same animation, the moment just before, already approved. Draw the character exactly as it is drawn there (face, eyes, hair strands, line weight, colours, outfit folds and accessories) so this frame follows it without a jump. Its pose is the previous moment, never the pose to draw.`;
 
 /** How the model sheet is named to the generators and the reviewer. */
 export const POSE_SHEET_ROLE = "THE CHARACTER IN OTHER POSES, a model sheet drawn from the character before this animation: how its body bends and turns. Its joints, limb lengths and limb thickness stay exactly as there; elbows and knees never bend backwards or further than there. Its poses are not the pose to draw.";
@@ -510,6 +518,7 @@ export function swapFramePrompt(input: SwapInput): { prompt: string; references:
   const references: ImageReference[] = [
     { png: input.frame, role: "REFERENCE C, THE TARGET POSE: the video frame to edit. Take from it only the pose, the camera angle and framing, and the figure's size and place in the picture. Its person is replaced; nothing of their look stays." },
     { png: input.character, role: `REFERENCE A, THE CHARACTER: the authority on the character's identity (face, eyes, hair, body proportions, outfit, colours, silhouette) and on the drawing style (line work, eyes, shading, hair rendering, finish).${input.characterSheet ? " It is drawn as tall as the person of Image 1." : ""} Its own pose is not the pose to draw.`, ...(input.characterSheet ? { derivedFrom: input.characterSheet } : {}) },
+    ...(input.continuity ? [{ png: input.continuity.png, role: CONTINUITY_ROLE(input.continuity.frame) }] : []),
     ...(input.poseSheet ? [{ png: input.poseSheet, role: POSE_SHEET_ROLE }] : []),
     ...(input.correction ? [{ png: input.correction.marked, role: "AN EARLIER DRAWING OF THIS SAME FRAME with the director's RED pencil marks over the parts that are wrong. The red marks are notes only: never draw them." }] : []),
   ];
@@ -534,14 +543,18 @@ export function swapFramePrompt(input: SwapInput): { prompt: string; references:
       "Match the head turn and tilt, the shoulder and hip line, the torso lean and twist, every arm, elbow, wrist, hand and finger, every leg, knee, ankle and foot, the weight, the gaze and the expression, and the camera angle and framing.",
       // Muse Image's most frequent failure is a mirrored pose (framePrompt guards the same way).
       "Sides as seen in the picture, never mirrored: a limb on the left of Image 1 stays on the left of the frame, a raised arm stays the raised one, a lowered arm stays lowered.",
+      "Anatomy: exactly two arms, two hands, two legs and two feet, every one attached to the body; five fingers on every visible hand; no extra, missing, fused, duplicated or broken limbs.",
     ]),
+    ...section("CONTINUITY", input.continuity ? [
+      `Image ${n("REFERENCE D, CONTINUITY")} is the frame just before this one. The character must look drawn by the same hand in the same session: identical face, hair, colours, outfit details and line weight. Only the pose changes, and only as Image 1 shows.`,
+    ] : []),
     ...section("CORRECTIONS", [
       ...(input.correction ? [`Director's correction (see the red marks in Image ${n("AN EARLIER DRAWING")}): ${input.correction.comment}`] : []),
       ...(fixes.length ? [`The previous attempt at this frame was rejected. Fix: ${fixes.join(" ")}`] : []),
     ]),
     ...section("RENDERING", ["Clean hand-drawn 2D anime line art with the cel shading of Image 2. Avoid enlarged eyes, inflated faces, stretched or thickened limbs, glossy hair, artificial highlights, airbrushed gradients, plastic skin, 3D rendering and generic AI-illustration looks, unless Image 2 has them."]),
     ...section("COMPOSITION", [`One character, whole body visible; no other characters, panels, text or watermark. Background: perfectly flat solid ${KEY_COLOR} magenta everywhere; no floor, no shadow. Never use magenta on the character.`]),
-    ...section("PRIORITIES when these pull apart", ["1. The character's identity and proportions, from Image 2.", "2. The pose, never mirrored, at Image 1's size and placement.", "3. The drawing style, from Image 2.", "4. Everything not asked to change stays as it is."]),
+    ...section("PRIORITIES when these pull apart", ["1. The character's identity and proportions, from Image 2.", "2. The pose, never mirrored, at Image 1's size and placement.", `3. The drawing style, from Image 2${input.continuity ? `, drawn as in Image ${n("REFERENCE D, CONTINUITY")}` : ""}.`, "4. Everything not asked to change stays as it is."]),
   ].join("\n\n");
   return { prompt, references };
 }
@@ -627,6 +640,53 @@ export async function drawSwap(built: { readonly prompt: string; readonly refere
 export async function drawFrame(input: FrameInput): Promise<Buffer> {
   const { prompt, references } = framePrompt(input);
   const image = await generateImage({ prompt, references, size: `${CANVAS.width}x${CANVAS.height}`, signal: input.signal });
+  return toCanvas(image.png);
+}
+
+/** How the rig's draft is named to Muse Image: an earlier output (provenance C) whose pose is the frame's. */
+export const RIG_DRAFT_ROLE = "THE DRAWING TO EDIT: a rough draft of this frame, assembled by moving cut-out pieces of approved drawings of the character onto the video's pose. Its pose, size and placement are right; its drawing is broken where pieces moved.";
+
+/**
+ * Muse Image turning the character rig's draft of a frame into a finished drawing (rig + heal). The rig puts every
+ * limb where the video has it, at the character's own proportions, from the approved frame before: the pose and the
+ * shape are right by construction. Moving cut-out pieces breaks the drawing where they overlap or bend: torn and
+ * doubled outlines, gaps at the joints, sleeves cut or stretched, a face or hair sliced or covered by a piece that
+ * moved over it. healFrame only closes cuts; this redraws the broken parts whole (from the character sheet, the
+ * previous frame and, for what is in front of what, the video frame) while every limb, the head and the silhouette stay
+ * where the draft has them. The caller measures the pose again and keeps the drawing only when it didn't move.
+ */
+export function redrawPrompt(input: {
+  readonly draft: Buffer;
+  readonly character: Buffer;
+  readonly frame: Buffer;
+  readonly description: string;
+  readonly style?: string | null;
+  readonly continuity?: { readonly png: Buffer; readonly frame: number } | null;
+  readonly problem?: string;
+}): { prompt: string; references: ImageReference[] } {
+  const references: ImageReference[] = [
+    { png: input.draft, role: RIG_DRAFT_ROLE },
+    { png: input.character, role: "THE CHARACTER: the authority on the face, eyes, hair, body, outfit, colours and drawing style. Its own pose is not the pose to draw." },
+    ...(input.continuity ? [{ png: input.continuity.png, role: CONTINUITY_ROLE(input.continuity.frame) }] : []),
+    { png: input.frame, role: "THE VIDEO FRAME of this moment: only which body part is in front of which (a hand before the face, an arm across the chest). Nothing of the person's look." },
+  ];
+  const n = (role: string) => references.findIndex((reference) => reference.role.startsWith(role)) + 1;
+  const prompt = [
+    `TASK\nRedraw Image 1 as one clean, finished frame of a 2D anime animation. Its pose is right and its drawing is broken: keep the first, repair the second.`,
+    `KEEP EXACTLY AS IN IMAGE 1\nThe angle and position of every arm, forearm, hand, leg and foot; where each hand is; the head's position, tilt and turn; the torso's lean; the figure's size and place on the canvas; the silhouette. Do not straighten, raise, lower, lengthen or re-pose anything.`,
+    `REPAIR\nEvery torn, doubled or broken outline, every gap where pieces meet (shoulders, elbows, wrists, waist), every sleeve or fold that is cut, stretched or detached, and any loose piece: draw them whole and attached, as the character wears them in Image 2${input.continuity ? ` and in Image ${n("REFERENCE D, CONTINUITY")}` : ""}. A face or hair sliced, smeared or covered by a misplaced piece is drawn whole again from Image 2: the same eyes, expression and hair.`,
+    `IN FRONT OR BEHIND\nAs in Image ${n("THE VIDEO FRAME")}: a hand or arm in front of the face or body stays in front, and what it covers is hidden only where it really covers it.`,
+    `CHARACTER\n${identityLine(input.description)}${input.style ? `\n${input.style}` : ""}`,
+    ...(input.problem ? [`THE CHECKER FOUND\n${input.problem}`] : []),
+    "Anatomy: exactly two arms, two hands, two legs and two feet, every one attached to the body; five fingers on every visible hand; no extra, missing, fused, duplicated or broken limbs.",
+    `Background: perfectly flat solid ${KEY_COLOR} magenta everywhere, as in Image 1; never use that magenta on the character. One character only, whole body visible.`,
+  ].join("\n\n");
+  return { prompt, references };
+}
+
+export async function redrawRigFrame(input: Parameters<typeof redrawPrompt>[0] & { readonly signal?: AbortSignal }): Promise<Buffer> {
+  const { prompt, references } = redrawPrompt({ ...input, draft: await onColour(input.draft, KEY_COLOR) });
+  const image = await generateImage({ prompt, references, size: `${CANVAS.width}x${CANVAS.height}`, action: "edit", signal: input.signal });
   return toCanvas(image.png);
 }
 

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { ApiErrorBodySchema } from "../../shared/schemas";
+import { rightsHeaders } from "../../shared/rights";
 import {
   AnimationAssetSchema,
   AnimationJobSchema,
@@ -43,7 +44,8 @@ export const animateApi = {
   engines: () => call("/api/animations/engines", undefined, (value) => value as EngineAvailability),
   list: () => call("/api/animations/jobs", undefined, (value) => AnimationJobSchema.array().parse(value)),
   get: (id: string) => call(`/api/animations/jobs/${id}`, undefined, parseJob),
-  create: (request: CreateJobRequest) => call("/api/animations/jobs", json(request), parseJob),
+  /** Only called once the rights box is checked; the server refuses the request without the header. */
+  create: (request: CreateJobRequest) => call("/api/animations/jobs", json(request, rightsHeaders()), parseJob),
   cancel: (id: string) => call(`/api/animations/jobs/${id}/cancel`, { method: "POST" }, parseJob),
   toFlipbook: (id: string, method: ImportMethod) => call(`/api/animations/jobs/${id}/flipbook`, json({ method }), (value) => value as { flipbookId: string }),
   retry: (id: string) => call(`/api/animations/jobs/${id}/retry`, { method: "POST", headers: { "Idempotency-Key": crypto.randomUUID() } }, parseJob),

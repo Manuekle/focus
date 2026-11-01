@@ -203,8 +203,80 @@ export const OpenFlipbookOptionsSchema = z.object({ sound: z.boolean().optional(
 /** The new Flipbook a finished run opens as. */
 export const RotoscopeFlipbookSchema = z.object({ flipbookId: z.uuid() });
 
-/** overlay: an attempt's drawing ghosted over its video frame on the grid, as Muse Spark reviewed it; build: the character and the drawing at one scale; scan: the pose error map (joints, vectors, bad cells); exposed: an attempt's repaint regions; labels: the body regions of the drawing it was deformed from; mask: the character's silhouette; scaled: the character sheet as tall as the video person. */
-export type RotoscopeMedia = "source" | "guide" | "attempt" | "frame" | "character" | "scaled" | "posesheet" | "correction" | "audio" | "exposed" | "labels" | "mask" | "overlay" | "build" | "scan" | "drawn";
+/** overlay: an attempt's drawing ghosted over its video frame on the grid, as Muse Spark reviewed it; build: the character and the drawing at one scale; scan: the pose error map (joints, vectors, bad cells); exposed: an attempt's repaint regions; labels: the body regions of the drawing it was deformed from; mask: the character's silhouette; scaled: the character sheet as tall as the video person; work: one of an attempt's pipeline pictures (WORK_PICTURES). */
+export type RotoscopeMedia = "source" | "guide" | "attempt" | "frame" | "character" | "scaled" | "posesheet" | "correction" | "audio" | "exposed" | "labels" | "mask" | "overlay" | "build" | "scan" | "drawn" | "work";
+
+/** The pictures an attempt's pipeline keeps in work/, by name: what the generator got and what each step made. */
+export const WORK_PICTURES = ["raw", "draft", "keyed", "mannequin", "continuity", "fidelity", "person"] as const;
+export type WorkPicture = (typeof WORK_PICTURES)[number];
+
+// ── Pipeline trace (server/rotoscope/trace.ts) ─────────────────────────────
+
+/** Every step a drawing goes through, in order: what the Pipeline view draws as nodes. */
+export const TRACE_STEPS = ["inputs", "prompt", "generate", "measure", "fidelity", "review", "decision"] as const;
+export type TraceStepId = (typeof TRACE_STEPS)[number];
+export const TRACE_STEP_LABEL: Record<TraceStepId, string> = {
+  inputs: "Inputs & guardrails",
+  prompt: "Prompt · Muse Spark",
+  generate: "Drawing · Muse Image",
+  measure: "Cut-out & measures",
+  fidelity: "Fidelity · Python",
+  review: "Review · Muse Spark",
+  decision: "Decision",
+};
+
+export const TraceImageSchema = z.object({
+  label: z.string(),
+  kind: z.string(),
+  frame: z.number().int().optional(),
+  attempt: z.number().int().optional(),
+  name: z.enum(WORK_PICTURES).optional(),
+});
+export type TraceImage = z.infer<typeof TraceImageSchema>;
+
+export const TraceGuardrailSchema = z.object({ name: z.string(), passed: z.boolean(), detail: z.string(), blocking: z.boolean().optional() });
+export type TraceGuardrail = z.infer<typeof TraceGuardrailSchema>;
+
+export const TraceStepSchema = z.object({
+  id: z.enum(TRACE_STEPS),
+  status: z.enum(["running", "done", "warn", "failed", "skipped"]),
+  startedAt: z.string(),
+  ms: z.number().nullable().default(null),
+  /** One line under the node's title. */
+  summary: z.string(),
+  /** The model or tool the step ran on ("muse-image-1.0", "DWPose", "OpenCV"). */
+  model: z.string().nullable().default(null),
+  /** Long text shown when the node is opened: the exact prompt, the review's notes. */
+  detail: z.string().nullable().default(null),
+  images: z.array(TraceImageSchema).default([]),
+  guardrails: z.array(TraceGuardrailSchema).default([]),
+  /** Named measures, 0–100 unless said otherwise. */
+  metrics: z.record(z.string(), z.number().nullable()).default({}),
+  checks: z.array(z.object({ name: z.string(), passed: z.boolean(), status: z.string().optional(), detail: z.string() })).default([]),
+  score: z.number().nullable().default(null),
+});
+export type TraceStep = z.infer<typeof TraceStepSchema>;
+
+export const AttemptTraceSchema = z.object({
+  frame: z.number().int(),
+  attempt: z.number().int(),
+  /** This frame's try in the run that drew it. */
+  tries: z.number().int(),
+  startedAt: z.string(),
+  updatedAt: z.string(),
+  steps: z.array(TraceStepSchema),
+  /** The fidelity bar the attempt was held to. */
+  bar: z.number().nullable().default(null),
+});
+export type AttemptTrace = z.infer<typeof AttemptTraceSchema>;
+
+export const FrameTraceSchema = z.object({
+  frame: z.number().int(),
+  attempts: z.array(AttemptTraceSchema),
+  /** The environment's guardrails right now (Python tools, Meta API, Muse models). */
+  preflight: z.array(TraceGuardrailSchema),
+});
+export type FrameTrace = z.infer<typeof FrameTraceSchema>;
 
 /** The generators an attempt can be drawn by; with two, each one's cut-out is kept (kind=drawn). */
 export const GENERATORS = ["muse", "higgsfield"] as const;
@@ -230,6 +302,10 @@ export const rotoscopeUrls = {
   drawn: (id: string, frame: number, attempt: number, by: GeneratorName) => `/api/rotoscope/runs/${id}/media?kind=drawn&frame=${frame}&attempt=${attempt}&by=${by}`,
   /** An attempt's character-mapping diagnostics. */
   mapping: (id: string, frame: number, attempt: number) => `/api/rotoscope/runs/${id}/mapping?frame=${frame}&attempt=${attempt}`,
+  /** Every attempt's pipeline trace for a frame, and the environment's guardrails. */
+  trace: (id: string, frame: number) => `/api/rotoscope/runs/${id}/trace?frame=${frame}`,
+  /** One of an attempt's pipeline pictures (or the frame's own, for `person`). */
+  work: (id: string, frame: number, attempt: number | undefined, name: WorkPicture) => `/api/rotoscope/runs/${id}/media?kind=work&frame=${frame}${attempt ? `&attempt=${attempt}` : ""}&name=${name}`,
   /** A frame's pose guide, at the run's current guides. */
   guide: (run: { readonly id: string; readonly guidesVersion: string }, frame: number) => `/api/rotoscope/runs/${run.id}/media?kind=guide&frame=${frame}${run.guidesVersion ? `&v=${encodeURIComponent(run.guidesVersion)}` : ""}`,
 };

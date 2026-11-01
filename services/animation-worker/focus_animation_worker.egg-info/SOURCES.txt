@@ -1,3 +1,4 @@
+README.md
 pyproject.toml
 app/__init__.py
 app/config.py
@@ -11,6 +12,7 @@ app/infrastructure/storage.py
 app/infrastructure/telemetry.py
 app/pipeline/__init__.py
 app/pipeline/export.py
+app/pipeline/fidelity.py
 app/pipeline/ingest.py
 app/pipeline/interpolate.py
 app/pipeline/pose.py
@@ -20,11 +22,14 @@ app/providers/base.py
 app/providers/fake.py
 app/providers/steadydancer.py
 app/providers/wan_animate.py
+app/providers/wan_zerogpu.py
 focus_animation_worker.egg-info/PKG-INFO
 focus_animation_worker.egg-info/SOURCES.txt
 focus_animation_worker.egg-info/dependency_links.txt
 focus_animation_worker.egg-info/requires.txt
 focus_animation_worker.egg-info/top_level.txt
+tests/test_fidelity.py
 tests/test_pipeline.py
 tests/test_pose.py
 tests/test_security.py
+tests/test_zerogpu.py

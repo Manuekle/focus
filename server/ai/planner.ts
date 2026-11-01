@@ -19,7 +19,7 @@ import { recordUsage } from "./usage";
 
 import { FINISH_JSON_SCHEMA, nullable } from "./finish-schema";
 
-const V1_EFFECTS = ["selective_color", "background_blur", "spotlight", "break_frame", "motion_echo"] as const;
+const V1_EFFECTS = ["selective_color", "background_blur", "spotlight", "break_frame", "motion_echo", "erase"] as const;
 
 /**
  * Strict-mode JSON schema: every key required, optional values are nullable.
@@ -83,12 +83,14 @@ Supported effects (and only these):
 - background_blur: the target stays sharp, everything else is blurred.
 - spotlight: the background goes dark around a soft pool of light that follows the target ("spotlight", "light only the singer", "dramatic darkness").
 - break_frame: the target appears to step out of an inner frame, with depth.
-- motion_echo: trailing silhouettes of the moving target.${temporal ? TEMPORAL_EFFECT_LINE : ""}
+- motion_echo: trailing silhouettes of the moving target.
+- erase: the target is removed from the video and the background fills in where it was ("remove the text", "erase the subtitles", "delete the watermark", "remove the logo", "take out the person in the background").${temporal ? TEMPORAL_EFFECT_LINE : ""}
 
 The user picked an effect family in the interface. Use it as the default:
 - "reality-shift" → selective_color, background_blur or spotlight (choose by the wording; default selective_color).
 - "break-the-frame" → break_frame.
-- "motion-echo" → motion_echo.${temporal ? '\n- "time-freeze" → time_freeze_echo.' : ""}
+- "motion-echo" → motion_echo.
+- "erase" → erase.${temporal ? '\n- "time-freeze" → time_freeze_echo.' : ""}
 When the instruction explicitly asks for an effect of another family (e.g. "blur the background" while "motion-echo" is picked), follow the instruction and return that effect. Never set supported=false because of the family.
 
 target.concept is a segmentation prompt: ONE short English noun phrase naming the visible subject (1–4 words, e.g. "skateboarder", "red car", "dog", "woman in white dress"). Never a sentence, never a command, no punctuation. Translate to English if the instruction is in another language.
@@ -98,6 +100,7 @@ target.selection:
 - "several" when the user wants subjects of different kinds ("the girl and her dog"): concept names the main one; target.description tells the user, in English, to click the other subject in the video to add it.
 - "single" otherwise.
 target.description: a short note (in English) to tell instances apart, or null.
+For erase of on-screen writing (text, captions, subtitles, titles, lower thirds, any words) use the concept "caption" and selection "all": SAM finds overlaid writing as "caption", not as "text". For a logo or watermark use "logo". If some writing is missed, the user clicks it in the video to add it.
 
 parameters: intensity 0–1 (default 0.8 when unspecified, or null; for spotlight it is how dark the background gets), trailCount 2–8 and trailSpacingMs 40–1000 only for motion_echo, otherwise null.${temporal ? TEMPORAL_PARAMETER_LINES : ""}
 parameters.finish: optional finishing touches on top of the effect, only when the instruction asks for them, otherwise null. Each key null unless asked:
@@ -105,7 +108,7 @@ parameters.finish: optional finishing touches on top of the effect, only when th
 - subject: "glow" (soft halo around the subject) or "outline" (clean stroke around its silhouette); accent: "white", "gold", "cyan", "magenta" or "lime"; accentStrength 0.2–1.
 - vignette 0–1, grain 0–1 (film grain), letterbox true for cinematic black bars.
 
-Set supported=false with unsupportedReason (one sentence in English) only when the request needs something outside these effects: removing or adding objects, generating new content, changing faces or identity, text, audio. A color grade, glow, vignette, grain or letterbox alone is supported: pair it with the picked family's default effect and the most prominent subject. Still fill the other fields with your best guess.
+Set supported=false with unsupportedReason (one sentence in English) only when the request needs something outside these effects: adding objects or text, replacing one object with another, generating new content, changing faces or identity, audio. Removing text, logos or objects is supported: use erase. A color grade, glow, vignette, grain or letterbox alone is supported: pair it with the picked family's default effect and the most prominent subject. Still fill the other fields with your best guess.
 Set needsClarification=true with clarificationQuestion (one short question in English) only when nothing in the instruction or the image could be the subject. Never ask which instance the user means: when several match, the user picks them on the video.
 Use the attached frame to check the subject is visible and to pick the right noun phrase.
 If "Already segmented" lists a concept that names the same subject, return that exact string as target.concept: it reuses existing masks at no cost.`;

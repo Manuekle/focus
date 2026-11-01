@@ -5,6 +5,7 @@ import { requireUser } from "../../../../server/auth/require";
 import { renderGate } from "../../../../server/reference-motion/http";
 import { createAnimationJob } from "../../../../server/reference-motion/jobs";
 import { assertReferenceMotionEnabled, listJobs } from "../../../../server/reference-motion/store";
+import { recordRights, requireRights } from "../../../../server/rights";
 
 /** The signed-in user's renders, most recent first. */
 export async function GET(request: Request) {
@@ -21,10 +22,13 @@ export async function GET(request: Request) {
 export async function POST(request: Request) {
   try {
     assertReferenceMotionEnabled();
+    requireRights(request);
     const user = await requireUser(request);
     const input = CreateJobRequestSchema.safeParse(await readJsonBody(request));
     if (!input.success) throw new AppError("INPUT_INVALID", 400, "Choose a character, a movement video and a segment of up to 3 seconds.");
-    return Response.json(await createAnimationJob(user.id, input.data, renderGate(request, user.id)), { status: 202 });
+    const job = await createAnimationJob(user.id, input.data, renderGate(request, user.id));
+    await recordRights("animation", job.id, [job.characterAssetId, job.drivingVideoAssetId]);
+    return Response.json(job, { status: 202 });
   } catch (error) {
     return errorResponse(error);
   }

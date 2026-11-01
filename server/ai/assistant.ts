@@ -12,7 +12,7 @@ import { recordUsage } from "./usage";
 // patch of the same bounded knobs the sliders expose. The masks never change
 // here, so applying a turn is a local re-render, never a new SAM pass.
 
-const V1_EFFECTS = ["selective_color", "background_blur", "spotlight", "break_frame", "motion_echo"] as const;
+const V1_EFFECTS = ["selective_color", "background_blur", "spotlight", "break_frame", "motion_echo", "erase"] as const;
 const TEMPORAL_SETTINGS = ["echoCount", "echoSpacingMs", "freezeDurationMs"] as const;
 
 /** Strict-mode schema of one turn. Time Freeze knobs exist only with temporal effects enabled. */
@@ -28,7 +28,7 @@ export function assistantJsonSchema(temporal: boolean) {
       settings: {
         type: "object",
         additionalProperties: false,
-        required: ["intensity", "darkness", "level", "background", "frameSize", "trailCount", "trailSpacingMs", "feather", ...(temporal ? TEMPORAL_SETTINGS : [])],
+        required: ["intensity", "darkness", "level", "background", "frameSize", "trailCount", "trailSpacingMs", "expand", "fill", "feather", ...(temporal ? TEMPORAL_SETTINGS : [])],
         properties: {
           intensity: nullable({ type: "number" }),
           darkness: nullable({ type: "number" }),
@@ -37,6 +37,8 @@ export function assistantJsonSchema(temporal: boolean) {
           frameSize: nullable({ type: "string", enum: ["compact", "balanced", "wide"] }),
           trailCount: nullable({ type: "integer" }),
           trailSpacingMs: nullable({ type: "integer" }),
+          expand: nullable({ type: "integer" }),
+          fill: nullable({ type: "string", enum: ["auto", "spatial"] }),
           feather: nullable({ type: "number" }),
           ...(temporal ? Object.fromEntries(TEMPORAL_SETTINGS.map((key) => [key, nullable({ type: "integer" })])) : {}),
         },
@@ -55,7 +57,8 @@ Effects (the subject's masks work with all of them):
 - background_blur: subject sharp, background blurred. level low | medium | high.
 - spotlight: background dark except a soft pool of light following the subject. darkness 0.2–0.95.
 - break_frame: subject steps out of an inner frame on a 1080×1350 canvas. background dark | light, frameSize compact | balanced | wide.
-- motion_echo: fading trails of the subject. trailCount 2–6, trailSpacingMs 60–400, intensity 0.2–1. Best with a still camera.${temporal ? TEMPORAL_EFFECT_LINE : ""}
+- motion_echo: fading trails of the subject. trailCount 2–6, trailSpacingMs 60–400, intensity 0.2–1. Best with a still camera.
+- erase: the subject (text, a logo, an object) is removed and the background fills in. expand 0–24 = extra px of cover around it (raise it when outlines, shadows or traces remain), fill auto (reuse the background seen in other frames when the camera is still) | spatial (paint only from the surrounding pixels; try it when the fill shows ghosts). Only switch to or from erase when the user asks to remove or bring back the subject.${temporal ? TEMPORAL_EFFECT_LINE : ""}
 All effects: feather 0–4 = edge softness in px.
 
 Finish (on top of any effect):
@@ -66,7 +69,7 @@ Finish (on top of any effect):
 Return:
 - action "adjust" with only the knobs that must change (every other knob null). Set effect only to switch effect, else null. Interpret taste words: "more dramatic" → stronger values, darker look; "subtle" → smaller values; "undo the glow" → subject "none". Relative requests ("a bit more") move from the current value.
 - action "new_edit" when the request needs a different or additional subject, or a new tracking ("now the dog", "also the car"): put a complete standalone instruction for a new edit in newInstruction (English, imperative, names the subject and the effect), all knobs null.
-- action "none" for questions, greetings or anything Focus cannot do (removing objects, generating content, text, audio, changing faces, cutting or speeding the clip): explain briefly what you can do instead.
+- action "none" for questions, greetings or anything Focus cannot do (adding objects or text, generating content, audio, changing faces, cutting or speeding the clip): explain briefly what you can do instead.
 reply: one or two short, warm sentences in English saying what you changed or why not. Always reply in English, regardless of the user’s language. No lists, no markdown, no knob names in code style.`;
 }
 
@@ -88,6 +91,8 @@ const AssistantOutputSchema = z.object({
       frameSize: z.enum(["compact", "balanced", "wide"]).optional(),
       trailCount: NumberField.optional(),
       trailSpacingMs: NumberField.optional(),
+      expand: NumberField.optional(),
+      fill: z.enum(["auto", "spatial"]).optional(),
       feather: NumberField.optional(),
       echoCount: NumberField.optional(),
       echoSpacingMs: NumberField.optional(),

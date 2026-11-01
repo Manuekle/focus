@@ -2,10 +2,8 @@
 
 import { useRef, useState } from "react";
 import Link from "next/link";
-import { Checkbox } from "radix-ui";
-import { Tick02Icon } from "@hugeicons/core-free-icons";
 import { Button } from "../../components/ui/button";
-import { HugeiconsIcon } from "../../components/icons/icon";
+import { Checkbox } from "../../components/ui/checkbox";
 import { Input } from "../../components/ui/input";
 import { VideoPlayer } from "../../components/ui/video-player";
 import { rotoscopeEnabled } from "../../shared/features";
@@ -30,7 +28,7 @@ export function MotionReferencePanel({ flipbook, disabled, onUpload, onAttach }:
       <VideoPlayer src={`/api/flipbooks/${flipbook.id}/motion?v=${reference.version}`} label="Movement reference preview" hasAudio={reference.hasAudio} segment={valid ? { start, durationSeconds: seconds } : undefined} />
       <label className={styles.controlField}><span className={styles.controlLabel}>Start in reference (seconds)</span><Input type="number" min={0} max={Math.max(0, reference.sourceSeconds - seconds)} step={0.05} value={start} disabled={disabled} onChange={(event) => setStart(Number(event.target.value))} /></label>
       <label className={styles.controlField}><span className={styles.controlLabel}>Segment length (whole seconds)</span><Input type="number" min={1} max={Math.min(20, Math.floor(reference.sourceSeconds))} value={seconds} disabled={disabled} onChange={(event) => setSeconds(Number(event.target.value))} /></label>
-      {reference.hasAudio ? <label className={styles.inline} htmlFor="motion-use-audio"><Checkbox.Root className={styles.checkbox} checked={useAudio} disabled={disabled} onCheckedChange={(checked) => setUseAudio(checked === true)} id="motion-use-audio"><HugeiconsIcon icon={Tick02Icon} size={11} strokeWidth={2.5} /></Checkbox.Root>Use audio from this segment</label> : null}
+      {reference.hasAudio ? <label className={styles.inline} htmlFor="motion-use-audio"><Checkbox checked={useAudio} disabled={disabled} onCheckedChange={(checked) => setUseAudio(checked === true)} id="motion-use-audio" />Use audio from this segment</label> : null}
       <Button size="sm" disabled={disabled || !valid} onClick={() => onAttach({ version: reference.version, start, durationSeconds: seconds, useAudio })}>Plan movement from this segment</Button>
       <p className={styles.hint}>{seconds * (flipbook.sequence?.drawingFps ?? 24)} drawings. The current motion stays in history. This plans the movement; drawing starts when you choose “Generate”.</p>
       {!valid ? <p role="status" className={styles.hint}>Choose a segment entirely inside the video, lasting 1–20 whole seconds.</p> : null}

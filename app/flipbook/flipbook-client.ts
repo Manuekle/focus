@@ -30,6 +30,7 @@ import { generationFeedback } from "../_auth/generation-feedback";
 import type { FlipbookAudio } from "../../shared/sequence";
 import { discoverAnimations, flipbookActivity, observeFlipbook } from "../_activity/activity-adapters";
 import { getActivityVersion, trackActivity } from "../_activity/activity-store";
+import { rightsHeaders } from "../../shared/rights";
 
 // The browser side of Flipbook: typed calls to /api/flipbooks and a poller
 // that follows a flipbook while it works. Codes the editor already words
@@ -115,7 +116,7 @@ export async function renderLivingWithProgress(imageId: string, request: LivingR
   });
 }
 
-const json = (body: unknown, method = "POST"): RequestInit => ({ method, headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+const json = (body: unknown, method = "POST", headers: Record<string, string> = {}): RequestInit => ({ method, headers: { "Content-Type": "application/json", ...headers }, body: JSON.stringify(body) });
 const parseFlipbook = (value: unknown) => FlipbookSchema.parse(value);
 const parseFlipbookList = (value: unknown) => FlipbookSummarySchema.array().parse(value);
 const trackFlipbook = (title: string, work: () => Promise<Flipbook>, id?: string) => trackActivity({ title, href: id ? `/flipbook?f=${id}` : "/flipbook", ...(id ? { resource: { kind: "flipbook" as const, id } } : {}) }, work, flipbookActivity);
@@ -139,9 +140,9 @@ export const flipbookApi = {
   audioSettings: (id: string, settings: Pick<FlipbookAudio, "offset" | "startsAt" | "volume">) => call(`/api/flipbooks/${id}/audio`, json(settings, "PATCH"), parseFlipbook),
   removeAudio: (id: string) => call(`/api/flipbooks/${id}/audio`, { method: "DELETE" }, parseFlipbook),
   create: (imageId: string, prompt: string, options: { action?: CycleAction; keepScene?: boolean; characterSource?: CharacterSource; view?: ViewPreference; sequence?: SequenceSettings; motionSource?: "video"; motionNote?: string } = {}) =>
-    trackFlipbook("Preparing animation", () => call("/api/flipbooks", json({ ...(options.characterSource ? {} : { imageId }), prompt, ...options }), parseFlipbook)),
+    trackFlipbook("Preparing animation", () => call("/api/flipbooks", json({ ...(options.characterSource ? {} : { imageId }), prompt, ...options }, "POST", rightsHeaders()), parseFlipbook)),
   /** Several saved characters in one scene, as long as `seconds`. */
-  createEnsemble: (request: CreateEnsembleRequest) => trackFlipbook("Preparing scene", () => call("/api/flipbooks", json(request), parseFlipbook)),
+  createEnsemble: (request: CreateEnsembleRequest) => trackFlipbook("Preparing scene", () => call("/api/flipbooks", json(request, "POST", rightsHeaders()), parseFlipbook)),
   /** What Focus sees in an upload; read once, then cached with it. */
   look: (imageId: string) => call(imageUrls.look(imageId), { method: "POST" }, (value) => ImageLookSchema.parse(value)),
   /** One turn of the guided setup: Muse Spark asks what it can't decide, or returns every setting. */

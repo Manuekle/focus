@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { measuresText } from "../../shared/rotoscope";
-import { buildText, POSE_SHEET_ROLE, reconcileBuild, swapFramePrompt, validBuild, type BuildProfile } from "./draw";
+import { buildText, CONTINUITY_ROLE, POSE_SHEET_ROLE, reconcileBuild, swapFramePrompt, validBuild, type BuildProfile } from "./draw";
+import { assertIsolation, recordReferences, sha256 } from "./provenance";
 
 const png = (n: number) => Buffer.from([n]);
 const base = { frame: png(1), character: png(2), description: "Keep the character exactly as drawn: navy bob, red cheongsam.", note: "The arm on the right of the image is raised.", correction: null, feedback: [] as string[] };
@@ -27,6 +28,22 @@ describe("swapFramePrompt", () => {
     expect(prompt).toContain("Sides as seen in the picture, never mirrored");
     // Without a style sheet the section still holds the sheet as the authority.
     expect(swapFramePrompt(base).prompt).toContain("ART STYLE (as Image 2 is drawn)\nThe frame must look drawn by the same artist");
+  });
+
+  it("shows the previous approved frame for continuity, after the character, never as its pose", () => {
+    const { prompt, references } = swapFramePrompt({ ...base, poseSheet: png(4), continuity: { png: png(5), frame: 6 } });
+    expect(references.map((reference) => reference.png)).toEqual([png(1), png(2), png(5), png(4)]);
+    expect(references[2].role).toBe(CONTINUITY_ROLE(6));
+    expect(references[2].role).toContain("never the pose to draw");
+    expect(prompt).toContain("CONTINUITY\nImage 3 is the frame just before this one.");
+    expect(prompt).toContain("Joints: Image 4 shows");
+    expect(prompt).toContain("3. The drawing style, from Image 2, drawn as in Image 3.");
+    expect(prompt).toContain("exactly two arms, two hands, two legs and two feet");
+    // An earlier output, shown as itself: provenance lets it through as C, never as the character.
+    const records = recordReferences(references);
+    expect(records[2].entity).toBe("C");
+    expect(() => assertIsolation({ kind: "generation-target", frame: 7, attempt: 1, pose: { kind: "pose-source", frame: 7, file: "f", sha256: "a", crop: null, layout: { scale: 1, x: 0, y: 0 } }, identity: { kind: "character-identity", file: "c", sha256: sha256(png(2)) }, references: records }, new Set([sha256(png(9))]))).not.toThrow();
+    expect(swapFramePrompt(base).prompt).not.toContain("CONTINUITY");
   });
 
   it("says the character's height and weight, and shows the reference poses before the pencil marks", () => {

@@ -1,7 +1,7 @@
 "use client";
 
 import { useId, useMemo, useRef, useState } from "react";
-import { AiVideo01Icon, AiSearch02Icon } from "@hugeicons/core-free-icons";
+import { AiVideo01Icon, AiSearch02Icon, EraserIcon } from "@hugeicons/core-free-icons";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
 import { Button } from "../../components/ui/button";
 import { Skeleton } from "../../components/ui/skeleton";
@@ -12,6 +12,12 @@ import { availableEffects } from "../../shared/pipeline";
 import { PROMPT_MAX_LENGTH, PROMPT_MIN_LENGTH, type EffectId, type Suggestions } from "../../shared/schemas";
 import { completionCandidates, completionFor } from "./autocomplete";
 import styles from "./composer.module.css";
+
+/** Erase presets: Muse Spark plans them like any instruction, SAM 3.1 tracks the text. */
+const QUICK_EDITS = [
+  { label: "Remove all text", prompt: "Remove all the text from the video" },
+  { label: "Remove logos & watermarks", prompt: "Remove the logos and watermarks" },
+] as const;
 
 /**
  * The creative step, revealed once a clip is ready. Ideas come from the clip
@@ -28,6 +34,7 @@ export function Composer({
   busy,
   suggestions = null,
   suggestionsLoading = false,
+  onQuickEdit,
 }: {
   readonly effect: EffectId;
   readonly onEffectChange: (effect: EffectId) => void;
@@ -40,6 +47,8 @@ export function Composer({
   readonly busy: boolean;
   readonly suggestions?: Suggestions | null;
   readonly suggestionsLoading?: boolean;
+  /** One-click edits that skip typing, e.g. removing every piece of on-screen text. */
+  readonly onQuickEdit?: (effect: EffectId, prompt: string) => void;
 }) {
   const promptId = useId();
   const hintId = useId();
@@ -95,6 +104,16 @@ export function Composer({
         <p className={styles.summary} aria-live="polite">
           {selected.summary}
         </p>
+        {onQuickEdit && effects.some((entry) => entry.id === "erase") ? (
+          <div className={styles.chips} role="group" aria-label="Quick edits">
+            {QUICK_EDITS.map((quick) => (
+              <SuggestionChip size="xs" key={quick.label} className={styles.chip} disabled={!canSubmit || busy} onClick={() => onQuickEdit("erase", quick.prompt)}>
+                <HugeiconsIcon icon={EraserIcon} size={12} strokeWidth={1.75} />
+                {quick.label}
+              </SuggestionChip>
+            ))}
+          </div>
+        ) : null}
       </fieldset>
 
       <div className={styles.instruction}>

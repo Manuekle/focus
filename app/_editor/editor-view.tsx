@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
 import { motion } from "motion/react";
 import { EASE_OUT } from "../../lib/ease";
 import { cn } from "../../lib/utils";
@@ -8,6 +9,7 @@ import { ArrowLeftRightIcon, PanelRightCloseIcon, PanelRightOpenIcon } from "@hu
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { Switch } from "../../components/ui/switch";
+import { ToggleChip } from "../../components/ui/toggle-chip";
 import { formatBytes } from "../../shared/media";
 import type { FlowStepId } from "../../shared/pipeline";
 import type { RenderParams, RenderResult } from "../../shared/render";
@@ -23,10 +25,13 @@ import { TrackingOverlay } from "./tracking-overlay";
 import { VideoStage } from "./video-stage";
 import { editorErrorMessage } from "./messages";
 import { EffectControls } from "./effect-controls";
-import { temporalEffectsEnabled } from "../../shared/features";
+import { flipbookEnabled, rotoscopeEnabled, temporalEffectsEnabled } from "../../shared/features";
+import { CLIP_DESTINATION, fetchClip, stashClip, type ClipDestination } from "./clip-handoff";
 import { prefersReducedMotion, useReducedMotion } from "../../lib/hooks/use-reduced-motion";
 import { MediaTimeline, type TimelineLane } from "./media-timeline";
 import { ScrollArea } from "../../components/ui/scroll-area";
+import { RightsConfirmation, useRightsConfirmation } from "../../components/ui/rights-confirmation";
+import { RIGHTS_COPY, rightsAssetKey } from "../../shared/rights";
 import { DockResizer, useDockWidth } from "../rotoscope/dock-resizer";
 import roto from "../rotoscope/rotoscope.module.css";
 import styles from "./editor-view.module.css";
@@ -90,6 +95,10 @@ export function EditorView({
   const [editingMomentFor, setEditingMomentFor] = useState<string | null>(null);
   const [freezeInvalid, setFreezeInvalid] = useState(false);
   const editorRef = useRef<HTMLElement>(null);
+  const router = useRouter();
+  // The clip sent on to Rotoscope or Flipbook: the original, or the edit once there is one.
+  const [handoffSource, setHandoffSource] = useState<"original" | "edited">("edited");
+  const [handoffBusy, setHandoffBusy] = useState<ClipDestination | null>(null);
   const reducedMotion = useReducedMotion();
   // The full page is a workspace like Flipbook's: the controls dock on the right (resizable, hideable) and a timeline runs under both.
   const page = variant === "page";
@@ -161,17 +170,23 @@ export function EditorView({
     }
   };
 
-  const submit = () => run(() => jobApi.create({ videoId: video.id, effect, prompt }));
+  // Tied to this clip: a different upload starts unconfirmed. The server checks again.
+  const rights = useRightsConfirmation(rightsAssetKey(["edit", video.id]));
+  const submit = () => {
+    if (!rights.guard()) return Promise.resolve();
+    return run(() => jobApi.create({ videoId: video.id, effect, prompt }));
+  };
 
   // The instruction typed on the home page starts here, once.
   const autostarted = useRef(false);
   useEffect(() => {
-    if (!autostart || autostarted.current || prompt.trim().length < 3) return;
+    // Only when the clip was already confirmed at upload: otherwise the person confirms, then presses Generate.
+    if (!autostart || autostarted.current || !rights.confirmed || prompt.trim().length < 3) return;
     autostarted.current = true;
     void submit();
-    // Mount-only: later prop changes never generate again.
+    // The instruction only starts once; later prop changes never generate again.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [rights.confirmed]);
 
   const jobStatus = job?.status;
   const jobChangeRef = useRef(onJobChange);
@@ -269,6 +284,21 @@ export function EditorView({
     lanes.push({ id: "freeze", label: "Freeze point", spans: [], markers: [temporalDraft.trigger.timestampMs / 1000] });
   }
 
+  const sendClip = async (destination: ClipDestination) => {
+    setHandoffBusy(destination);
+    setFailure(null);
+    try {
+      const edited = handoffSource === "edited" && stageRender;
+      stashClip(await fetchClip(edited ? stageRender.urls.video : video.urls.preview, video.originalName));
+      router.push(CLIP_DESTINATION[destination]);
+    } catch (error) {
+      setFailure(error instanceof Error ? error.message : "We couldn’t send the video. Try again.");
+    } finally {
+      setHandoffBusy(null);
+    }
+  };
+  const sendTargets = [rotoscopeEnabled() ? ("rotoscope" as const) : null, flipbookEnabled() ? ("flipbook" as const) : null].filter((entry): entry is ClipDestination => entry !== null);
+
   const preview = (
     <>
       {stageRender && !diagnostic && !editingMoment ? (
@@ -335,6 +365,22 @@ export function EditorView({
           <HugeiconsIcon icon={ArrowLeftRightIcon} size={14} strokeWidth={1.5} />{variant === "page" ? "New clip" : "Change clip"}
         </Button>
       </div>
+      {sendTargets.length ? (
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-label="Use this video in">
+          <span className="text-xs text-muted-foreground">Use this video in</span>
+          {sendTargets.map((destination) => (
+            <Button key={destination} variant="outline" size="sm" disabled={active || handoffBusy !== null} aria-busy={handoffBusy === destination} onClick={() => void sendClip(destination)}>
+              {destination === "rotoscope" ? "Rotoscope" : "Flipbook"}
+            </Button>
+          ))}
+          {stageRender ? (
+            <span className="ml-auto flex gap-1.5" role="group" aria-label="Which video">
+              <ToggleChip size="xs" selected={handoffSource === "original"} onClick={() => setHandoffSource("original")}>Original</ToggleChip>
+              <ToggleChip size="xs" selected={handoffSource === "edited"} onClick={() => setHandoffSource("edited")}>Edited</ToggleChip>
+            </span>
+          ) : null}
+        </div>
+      ) : null}
       <div className="flex flex-wrap items-center justify-between gap-3">
         {job ? <FlowRail current={flowStep(job)} /> : null}
         {tracking && job && !active ? (
@@ -385,7 +431,7 @@ export function EditorView({
             onChangeSelection={() => void run(() => jobApi.reopen(job.id))}
             onNewInstruction={reset}
             onRender={applyDraft}
-            controls={temporalDraft ? <EffectControls family={job.request.effect} value={temporalDraft} onChange={setDraft} /> : undefined}
+            controls={temporalDraft ? <EffectControls family={job.request.effect} value={temporalDraft} onChange={setDraft} duration={video.normalized.durationSeconds} /> : undefined}
             busy={busy}
           />
         ) : null}
@@ -410,6 +456,7 @@ export function EditorView({
               // Another subject needs new masks: a new edit, started in plain sight.
               onStartEdit: (instruction) => {
                 onPromptChange(instruction);
+                if (!rights.guard()) return;
                 void run(() => jobApi.create({ videoId: video.id, effect, prompt: instruction }));
               },
             }}
@@ -427,16 +474,24 @@ export function EditorView({
             {job?.status === "canceled" ? (
               <EditorNotice status="info" title="Editing canceled" description="Your progress is saved. Adjust your instruction and generate again." duration={4200} />
             ) : null}
+            <RightsConfirmation confirmed={rights.confirmed} onConfirmedChange={rights.setConfirmed} invalid={rights.invalid} disabled={busy} className="mb-3" />
             <Composer
               effect={effect}
               onEffectChange={onEffectChange}
               prompt={prompt}
               onPromptChange={onPromptChange}
               onSubmit={() => void submit()}
-              canSubmit
+              canSubmit={rights.confirmed}
+              blockedReason={rights.confirmed ? undefined : RIGHTS_COPY.error}
               busy={busy}
               suggestions={clipSuggestions}
               suggestionsLoading={suggestionsLoading}
+              onQuickEdit={(quickEffect, quickPrompt) => {
+                onEffectChange(quickEffect);
+                onPromptChange(quickPrompt);
+                if (!rights.guard()) return;
+                void run(() => jobApi.create({ videoId: video.id, effect: quickEffect, prompt: quickPrompt }));
+              }}
             />
           </>
         ) : null}

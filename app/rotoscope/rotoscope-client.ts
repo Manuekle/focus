@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
 import { ApiErrorBodySchema } from "../../shared/schemas";
-import { BatchSchema, FramePromptSchema, MappingViewSchema, PromptAnalysisSchema, RotoscopeFlipbookSchema, RotoscopeRunSchema, RotoscopeRunSummarySchema, rotoscopeUrls, type CharacterMeasures, type MappingJoint, type Renderer, type RotoscopeBatch, type RotoscopeRun, type RotoscopeRunSummary } from "../../shared/rotoscope";
+import { BatchSchema, FramePromptSchema, FrameTraceSchema, MappingViewSchema, PromptAnalysisSchema, RotoscopeFlipbookSchema, RotoscopeRunSchema, RotoscopeRunSummarySchema, rotoscopeUrls, type CharacterMeasures, type MappingJoint, type Renderer, type RotoscopeBatch, type RotoscopeRun, type RotoscopeRunSummary } from "../../shared/rotoscope";
 import { discoverRotoscopeRuns, observeRotoscope } from "../_activity/activity-adapters";
 import { getActivityVersion } from "../_activity/activity-store";
+import { rightsHeaders } from "../../shared/rights";
 
 export class RotoscopeApiError extends Error {
   constructor(message: string, readonly code: string) {
@@ -71,6 +72,8 @@ export const rotoscopeApi = {
   openInFlipbook: (id: string, options: { readonly sound: boolean }) => call(`/api/rotoscope/runs/${id}/flipbook`, post(options), (value) => RotoscopeFlipbookSchema.parse(value)),
   remove: (id: string) => call(`/api/rotoscope/runs/${id}`, { method: "DELETE" }, () => undefined),
   mapping: (id: string, frame: number, attempt: number) => call(rotoscopeUrls.mapping(id, frame, attempt), undefined, (value) => MappingViewSchema.parse(value)),
+  /** A frame's pipeline: every attempt's steps and the environment's guardrails (no AI call). */
+  trace: (id: string, frame: number) => call(rotoscopeUrls.trace(id, frame), undefined, (value) => FrameTraceSchema.parse(value)),
   /** Measures the frame's attempts drawn before the mapping engine (local pose estimation, no AI call). */
   diagnoseMapping: (id: string, frame: number, attempt: number) => call(rotoscopeUrls.mapping(id, frame, attempt), post(), (value) => MappingViewSchema.parse(value)),
   /** Moved target joints for a frame's next drawing; an empty set clears them. */
@@ -104,6 +107,7 @@ function upload<T>(url: string, form: FormData, parse: (value: unknown) => T | n
   const xhr = new XMLHttpRequest();
   const promise = new Promise<T>((resolve, reject) => {
     xhr.open("POST", url);
+    for (const [name, value] of Object.entries(rightsHeaders())) xhr.setRequestHeader(name, value);
     xhr.responseType = "json";
     xhr.upload.onprogress = (event) => { if (event.lengthComputable) onProgress(event.loaded / event.total); };
     xhr.onload = () => {

@@ -11,8 +11,8 @@ import { readDiagnostics, writeDiagnostics, type FrameDiagnostics } from "./diag
 import { mapFrame, openMapping, writeOverrides } from "./engine";
 import type { PoseEstimator } from "./pose-estimator";
 import { localMask, samSegmenter, type Segmenter } from "./segmenter";
-import { dist } from "./geometry";
-import { mapSkeleton, poseFromSkeleton, type Skeleton } from "./skeleton";
+import { angleOf, dist } from "./geometry";
+import { boneVector, mapSkeleton, poseFromSkeleton, type Skeleton } from "./skeleton";
 import { sha256 } from "./profile";
 
 const png = (image: Rgba) => sharp(image.data, { raw: { width: image.width, height: image.height, channels: 4 } }).png().toBuffer();
@@ -72,8 +72,10 @@ describe("character mapping engine on a run", () => {
     expect(frame.decision.mode).toBe("straight-ahead");
     expect(frame.decision.base?.id).toBe("frame 1");
     expect(frame.outcomes.filter((outcome) => outcome.kind === "constraint" && !outcome.passed)).toEqual([]);
-    // The deformed elbow lands where the target puts it.
-    expect(dist(frame.result.plan.generated.leftElbow!.p, frame.target.skeleton.leftElbow!.p)).toBeLessThan(3);
+    // The deformed elbow lands where the drawing's own target puts it (followDrawing), its upper arm pointing as the guide's does.
+    expect(dist(frame.result.plan.generated.leftElbow!.p, frame.deformedTo.skeleton.leftElbow!.p)).toBeLessThan(3);
+    const [drawn, wanted] = [boneVector(frame.deformedTo.skeleton, "leftUpperArm")!, boneVector(frame.target.skeleton, "leftUpperArm")!];
+    expect(Math.abs(angleOf(drawn) - angleOf(wanted)) * (180 / Math.PI)).toBeLessThan(2);
     const out = await sharp(frame.png).metadata();
     expect([out.width, out.height]).toEqual([CANVAS.width, CANVAS.height]);
   });

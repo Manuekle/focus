@@ -11,7 +11,7 @@ import { recordUsage } from "./usage";
 // cached next to the video. Optional by design: when AI is off or the call
 // fails, the editor keeps its static examples.
 
-const EMPTY: Suggestions = { subjects: [], ideas: { "reality-shift": [], "break-the-frame": [], "motion-echo": [], "time-freeze": [] } };
+const EMPTY: Suggestions = { subjects: [], ideas: { "reality-shift": [], "break-the-frame": [], "motion-echo": [], erase: [], "time-freeze": [] } };
 
 const ideaList = { type: "array", items: { type: "string" } } as const;
 
@@ -24,8 +24,8 @@ export const SUGGESTIONS_JSON_SCHEMA = {
     ideas: {
       type: "object",
       additionalProperties: false,
-      required: ["reality-shift", "break-the-frame", "motion-echo"],
-      properties: { "reality-shift": ideaList, "break-the-frame": ideaList, "motion-echo": ideaList },
+      required: ["reality-shift", "break-the-frame", "motion-echo", "erase"],
+      properties: { "reality-shift": ideaList, "break-the-frame": ideaList, "motion-echo": ideaList, erase: ideaList },
     },
   },
 } as const;
@@ -38,6 +38,7 @@ Return JSON:
   - "reality-shift": keep subjects in color with a black-and-white background, or keep them sharp with a blurred background. When several people are visible, include one idea that keeps all of them ("Keep both people sharp, blur the background").
   - "break-the-frame": the subject steps out of an inner frame.
   - "motion-echo": motion trails behind a moving subject.
+  - "erase": remove something from the clip. When the frame shows text, captions, a watermark or a logo, start with "Remove all the text" (or "Remove the logo"); otherwise suggest removing a distracting object or a person in the background. Empty list when there is nothing sensible to remove.
 Imperative voice, no quotes, no trailing period.`;
 
 /** Pure: raw model text to clean suggestions; anything malformed becomes empty. */
@@ -61,6 +62,7 @@ export function parseSuggestions(text: string): Suggestions {
       "reality-shift": clean(value?.ideas?.["reality-shift"], 4),
       "break-the-frame": clean(value?.ideas?.["break-the-frame"], 4),
       "motion-echo": clean(value?.ideas?.["motion-echo"], 4),
+      erase: clean(value?.ideas?.erase, 4),
     },
   });
   return parsed.success ? parsed.data : EMPTY;

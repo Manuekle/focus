@@ -183,3 +183,239 @@ export function spotlight(frame: Buffer, alpha: Uint8Array, width: number, darkn
   }
   return out;
 }
+
+/**
+ * Grows a 0–255 mask by `radius` pixels (square structuring element). Two
+ * separable passes with a running count, so the cost does not depend on the
+ * radius. Erase uses it to take text outlines and drop shadows with the text.
+ */
+export function dilate(alpha: Uint8Array, width: number, height: number, radius: number): Uint8Array {
+  const r = Math.round(radius);
+  if (r <= 0) return alpha;
+  const pass = (source: Uint8Array, horizontal: boolean) => {
+    const target = new Uint8Array(source.length);
+    const lines = horizontal ? height : width;
+    const length = horizontal ? width : height;
+    const step = horizontal ? 1 : width;
+    for (let line = 0; line < lines; line++) {
+      const base = horizontal ? line * width : line;
+      let count = 0;
+      for (let k = 0; k <= Math.min(r, length - 1); k++) if (source[base + k * step]) count++;
+      for (let i = 0; i < length; i++) {
+        if (count > 0) target[base + i * step] = 255;
+        const enter = i + r + 1;
+        const leave = i - r;
+        if (enter < length && source[base + enter * step]) count++;
+        if (leave >= 0 && source[base + leave * step]) count--;
+      }
+    }
+    return target;
+  };
+  return pass(pass(alpha, true), false);
+}
+
+/**
+ * Fills the pixels of `hole` (alpha > 0) inside `region` from the known pixels
+ * around them. Edges that cross the hole are continued along lines
+ * (directionalFill); pull-push interpolation covers what no line reaches: the
+ * region is averaged down a pyramid using only known pixels, then each level
+ * fills its gaps from the bilinear upsample of the next. Deterministic.
+ * Writes into `out`.
+ */
+export function inpaintRegion(out: Buffer, hole: Uint8Array, width: number, region: Box): void {
+  const w0 = region.right - region.left;
+  const h0 = region.bottom - region.top;
+  if (w0 <= 0 || h0 <= 0) return;
+  type Level = { w: number; h: number; color: Float32Array; weight: Float32Array };
+  const base: Level = { w: w0, h: h0, color: new Float32Array(w0 * h0 * 3), weight: new Float32Array(w0 * h0) };
+  let known = 0;
+  for (let y = 0; y < h0; y++) {
+    for (let x = 0; x < w0; x++) {
+      const i = (region.top + y) * width + region.left + x;
+      if (hole[i]) continue;
+      const j = y * w0 + x;
+      const p = i * 4;
+      base.weight[j] = 1;
+      base.color[j * 3] = out[p];
+      base.color[j * 3 + 1] = out[p + 1];
+      base.color[j * 3 + 2] = out[p + 2];
+      known++;
+    }
+  }
+  // Nothing to fill from: leave the pixels as they are rather than inventing a color.
+  if (known === 0) return;
+  const levels: Level[] = [base];
+  // Pull: weighted averages of 2×2 blocks; weights saturate at 1.
+  while (levels.at(-1)!.w > 1 || levels.at(-1)!.h > 1) {
+    const fine = levels.at(-1)!;
+    const w = Math.ceil(fine.w / 2);
+    const h = Math.ceil(fine.h / 2);
+    const coarse: Level = { w, h, color: new Float32Array(w * h * 3), weight: new Float32Array(w * h) };
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        let sum = 0;
+        let r = 0;
+        let g = 0;
+        let b = 0;
+        for (let dy = 0; dy < 2; dy++) {
+          const fy = y * 2 + dy;
+          if (fy >= fine.h) continue;
+          for (let dx = 0; dx < 2; dx++) {
+            const fx = x * 2 + dx;
+            if (fx >= fine.w) continue;
+            const f = fy * fine.w + fx;
+            const a = fine.weight[f];
+            if (a <= 0) continue;
+            sum += a;
+            r += fine.color[f * 3] * a;
+            g += fine.color[f * 3 + 1] * a;
+            b += fine.color[f * 3 + 2] * a;
+          }
+        }
+        const c = y * w + x;
+        if (sum > 0) {
+          coarse.color[c * 3] = r / sum;
+          coarse.color[c * 3 + 1] = g / sum;
+          coarse.color[c * 3 + 2] = b / sum;
+          coarse.weight[c] = Math.min(1, sum);
+        }
+      }
+    }
+    levels.push(coarse);
+  }
+  // Push: every level blends its own (partial) knowledge over the coarser estimate.
+  for (let l = levels.length - 2; l >= 0; l--) {
+    const fine = levels[l];
+    const coarse = levels[l + 1];
+    for (let y = 0; y < fine.h; y++) {
+      const cy = Math.min(coarse.h - 1, Math.max(0, (y + 0.5) / 2 - 0.5));
+      const y0 = Math.floor(cy);
+      const y1 = Math.min(coarse.h - 1, y0 + 1);
+      const ty = cy - y0;
+      for (let x = 0; x < fine.w; x++) {
+        const f = y * fine.w + x;
+        const a = fine.weight[f];
+        if (a >= 1) continue;
+        const cx = Math.min(coarse.w - 1, Math.max(0, (x + 0.5) / 2 - 0.5));
+        const x0 = Math.floor(cx);
+        const x1 = Math.min(coarse.w - 1, x0 + 1);
+        const tx = cx - x0;
+        for (let c = 0; c < 3; c++) {
+          const top = coarse.color[(y0 * coarse.w + x0) * 3 + c] * (1 - tx) + coarse.color[(y0 * coarse.w + x1) * 3 + c] * tx;
+          const bottom = coarse.color[(y1 * coarse.w + x0) * 3 + c] * (1 - tx) + coarse.color[(y1 * coarse.w + x1) * 3 + c] * tx;
+          const estimate = top * (1 - ty) + bottom * ty;
+          fine.color[f * 3 + c] = fine.color[f * 3 + c] * a + estimate * (1 - a);
+        }
+        fine.weight[f] = 1;
+      }
+    }
+  }
+  const lines = directionalFill(out, hole, width, region);
+  // Pull-push only speaks where no line crosses the hole, or every crossing is long and incoherent.
+  const reach = 2 * Math.max(w0, h0);
+  for (let y = 0; y < h0; y++) {
+    for (let x = 0; x < w0; x++) {
+      const i = (region.top + y) * width + region.left + x;
+      if (!hole[i]) continue;
+      const k = y * w0 + x;
+      const j = k * 3;
+      const p = i * 4;
+      const fallback = lines.weight[k] > 0 ? Math.min(1, lines.best[k] / reach) ** FILL_FALLOFF : 1;
+      const w = lines.weight[k] + fallback;
+      out[p] = Math.round((lines.color[j] + base.color[j] * fallback) / w);
+      out[p + 1] = Math.round((lines.color[j + 1] + base.color[j + 1] * fallback) / w);
+      out[p + 2] = Math.round((lines.color[j + 2] + base.color[j + 2] * fallback) / w);
+    }
+  }
+}
+
+/** How fast a crossing loses weight against the pixel's cheapest one: (best / cost) ** FILL_FALLOFF. */
+const FILL_FALLOFF = 16;
+
+/** The four line directions directional fill crosses a hole along. */
+const FILL_DIRECTIONS = [
+  [1, 0],
+  [0, 1],
+  [1, 1],
+  [-1, 1],
+] as const;
+
+/**
+ * Edge-aware part of the fill. Every horizontal, vertical and diagonal line
+ * through the region is walked; each run of hole pixels with known pixels at
+ * both ends is a crossing, interpolated between those ends. A crossing costs
+ * its length, more when its ends disagree. Each pixel weighs its crossings
+ * against its own cheapest one with a steep falloff, so an edge that runs
+ * through the hole (a stripe under a subtitle) is continued sharply, while
+ * longer lines that slip across other content barely count. Returns colors
+ * premultiplied by those relative weights; linear in the region size.
+ */
+function directionalFill(out: Buffer, hole: Uint8Array, width: number, region: Box): { color: Float32Array; weight: Float32Array; best: Float32Array } {
+  const w0 = region.right - region.left;
+  const h0 = region.bottom - region.top;
+  const color = new Float32Array(w0 * h0 * 3);
+  const weight = new Float32Array(w0 * h0);
+  const best = new Float32Array(w0 * h0).fill(Infinity);
+  const isHole = (x: number, y: number) => hole[(region.top + y) * width + region.left + x] > 0;
+  const rgbAt = (x: number, y: number) => {
+    const p = ((region.top + y) * width + region.left + x) * 4;
+    return [out[p], out[p + 1], out[p + 2]] as const;
+  };
+  // Positions of the current line, reused between lines.
+  const xs = new Int32Array(w0 + h0);
+  const ys = new Int32Array(w0 + h0);
+  const crossings = (visit: (start: number, end: number, cost: number, a: readonly number[], b: readonly number[]) => void) => {
+    for (const [dx, dy] of FILL_DIRECTIONS) {
+      const step = dx && dy ? Math.SQRT2 : 1;
+      const starts: [number, number][] = [];
+      if (dy === 0) for (let y = 0; y < h0; y++) starts.push([0, y]);
+      else {
+        for (let x = 0; x < w0; x++) starts.push([x, 0]);
+        if (dx === 1) for (let y = 1; y < h0; y++) starts.push([0, y]);
+        if (dx === -1) for (let y = 1; y < h0; y++) starts.push([w0 - 1, y]);
+      }
+      for (const [sx, sy] of starts) {
+        let n = 0;
+        for (let x = sx, y = sy; x >= 0 && x < w0 && y < h0; x += dx, y += dy, n++) {
+          xs[n] = x;
+          ys[n] = y;
+        }
+        let k = 0;
+        while (k < n) {
+          if (!isHole(xs[k], ys[k])) {
+            k++;
+            continue;
+          }
+          const start = k;
+          while (k < n && isHole(xs[k], ys[k])) k++;
+          // Both ends must be known pixels inside the region.
+          if (start === 0 || k === n) continue;
+          const a = rgbAt(xs[start - 1], ys[start - 1]);
+          const b = rgbAt(xs[k], ys[k]);
+          const disagreement = (Math.abs(a[0] - b[0]) + Math.abs(a[1] - b[1]) + Math.abs(a[2] - b[2])) / 3;
+          visit(start, k, (k - start + 1) * step * (1 + disagreement / 12), a, b);
+        }
+      }
+    }
+  };
+  crossings((start, end, cost) => {
+    for (let m = start; m < end; m++) {
+      const q = ys[m] * w0 + xs[m];
+      if (cost < best[q]) best[q] = cost;
+    }
+  });
+  crossings((start, end, cost, a, b) => {
+    const span = end - start + 1;
+    for (let m = start; m < end; m++) {
+      const q = ys[m] * w0 + xs[m];
+      const w = (best[q] / cost) ** FILL_FALLOFF;
+      if (w < 1e-4) continue;
+      const t = (m - start + 1) / span;
+      color[q * 3] += (a[0] + (b[0] - a[0]) * t) * w;
+      color[q * 3 + 1] += (a[1] + (b[1] - a[1]) * t) * w;
+      color[q * 3 + 2] += (a[2] + (b[2] - a[2]) * t) * w;
+      weight[q] += w;
+    }
+  });
+  return { color, weight, best };
+}

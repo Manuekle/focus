@@ -440,6 +440,15 @@ flowchart LR
 
 Drag the before/after slider, change a setting (re-render without AI calls) and download the MP4.
 
+## Content rights confirmation
+
+Focus asks people to acknowledge their rights to the videos, images and other reference material they send for AI processing. Every action that starts processing (a video edit, a Rotoscope run or test batch, a reference-motion animation, a Flipbook or multi-character scene) needs an unchecked-by-default checkbox to be ticked first, and the server refuses the request with a `rights_confirmation_required` error (HTTP 422) when the `X-Focus-Rights-Ack` header is missing or out of date. The box clears when the source file or the set of reference assets changes. For each accepted request Focus stores only the status, a timestamp, the acknowledgement version and the related job or asset ids (`.focus-data/rights/`), with no identity data.
+
+- **Attribution alone does not establish permission.** Crediting the original creator does not grant the right to use their work.
+- **The acknowledgement does not verify ownership or guarantee legal compliance.** It records a statement; Focus does not check copyright, licenses or platform policies, and it makes no claim about meeting the Meta AI Developer Hackathon rules.
+- **Public demonstrations and repository assets must use appropriately licensed or authorized content.**
+- **Users remain responsible for obtaining the necessary permissions** for everything they upload.
+
 ## Rights and attribution
 
 No open-source license is granted at this time: **all rights reserved** unless stated otherwise.

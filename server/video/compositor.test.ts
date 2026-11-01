@@ -107,6 +107,21 @@ describe("compositor", () => {
     expect(near(rgb(first, W, 5, 5), [30, 60, 210])).toBe(true);
   });
 
+  it("Erase: the moving square disappears, the blue background fills where it was", async () => {
+    for (const fill of ["auto", "spatial"] as const) {
+      const out = await render(`erase-${fill}`, { effect: "erase", fill, expand: 4 });
+      await verifyOutput(out.file, { width: W, height: H, fps: FPS, frameCount: FRAMES, hasAudio: false });
+      for (const index of [0, 24, 47]) {
+        const frame = await frameAt(out.file, W, H, index);
+        expect(near(rgb(frame, W, xAt(index) + SIZE / 2, Y + SIZE / 2), [30, 60, 210], 30)).toBe(true);
+        // Its edges go too: the cover margin takes the anti-aliased border.
+        expect(near(rgb(frame, W, xAt(index) + 1, Y + 1), [30, 60, 210], 30)).toBe(true);
+      }
+      // Frames without the target are expected for erase: no missing-mask warning.
+      expect(out.warnings).toEqual([]);
+    }
+  });
+
   it("Spotlight: subject untouched, background darker away from the subject than beside it", async () => {
     const out = await render("spotlight", { effect: "spotlight", darkness: 0.9, feather: 0 });
     await verifyOutput(out.file, { width: W, height: H, fps: FPS, frameCount: FRAMES, hasAudio: false });
@@ -203,6 +218,27 @@ describe("compositor", () => {
         await verifyOutput(path.join(outputDir, "output.mp4"), { ...expected, fps: FPS, frameCount: FPS, hasAudio: false });
       }
     }
+  });
+
+  it("Delivery: 9:16 crop keeps the subject in view and a title shows only in its window", async () => {
+    const out = await render("delivery", {
+      effect: "selective_color",
+      feather: 0,
+      delivery: { aspect: "9:16", follow: true, titles: [{ id: "t1", text: "HELLO", start: 1, end: 1.8, position: "center", size: "large", color: "white", style: "plain" }] },
+    });
+    // 320×180 → the largest even 9:16 window: 100×180, same frame count and clock.
+    await verifyOutput(out.file, { width: 100, height: 180, fps: FPS, frameCount: FRAMES, hasAudio: false });
+    expect([out.width, out.height]).toEqual([100, 180]);
+    const isWhite = ([r, g, b]: number[]) => r > 200 && g > 200 && b > 200;
+    const whiteCount = (frame: Buffer) => { let n = 0; for (let p = 0; p < frame.length; p += 4) if (isWhite([frame[p], frame[p + 1], frame[p + 2]])) n++; return n; };
+    // The crop follows the red square to the end of the clip.
+    const last = await frameAt(out.file, 100, 180, FRAMES - 1);
+    let red = 0;
+    for (let p = 0; p < last.length; p += 4) if (near([last[p], last[p + 1], last[p + 2]], [220, 30, 40], 40)) red++;
+    expect(red).toBeGreaterThan(SIZE * SIZE * 0.5);
+    expect(whiteCount(await frameAt(out.file, 100, 180, 5))).toBe(0);
+    expect(whiteCount(await frameAt(out.file, 100, 180, 32))).toBeGreaterThan(40);
+    expect(whiteCount(await frameAt(out.file, 100, 180, 44))).toBe(0);
   });
 
   it("Reports frames where the subject has no mask instead of inventing one", async () => {

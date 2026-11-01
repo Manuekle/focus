@@ -6,6 +6,7 @@ import { SERVER_MAX_UPLOAD_BYTES } from "../../../../server/media-limits";
 import { declaredLength } from "../../../../server/animation/http";
 import { activeRuns, assertRotoscopeEnabled, createBatch } from "../../../../server/rotoscope/service";
 import { measuresFrom } from "../../../../server/rotoscope/measures";
+import { recordRights, requireRights } from "../../../../server/rights";
 
 /**
  * A test batch in one multipart request: the movement video once, then up to four characters as `character`,
@@ -16,6 +17,7 @@ import { measuresFrom } from "../../../../server/rotoscope/measures";
 export async function POST(request: Request) {
   try {
     assertRotoscopeEnabled();
+    requireRights(request);
     const user = await requireUser(request);
     const bytes = declaredLength(request);
     if (bytes !== undefined && bytes > SERVER_MAX_UPLOAD_BYTES + 64 * 1024 * 1024) throw new AppError("upload_too_large", 413, "These files are too large.");
@@ -44,6 +46,7 @@ export async function POST(request: Request) {
       dual: form?.get("dual") === "1",
       options: { name: String(form?.get("name") ?? "") || undefined, fps: String(form?.get("fps") ?? ""), start: String(form?.get("start") ?? "0"), seconds: String(form?.get("seconds") ?? "") },
     });
+    await Promise.all(batch.runs.map((run) => recordRights("rotoscope", run.id, [run.id])));
     return Response.json(batch, { status: 201 });
   } catch (error) {
     return errorResponse(error);

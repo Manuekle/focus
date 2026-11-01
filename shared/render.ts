@@ -9,6 +9,8 @@ import { EchoSchema, FreezeDurationSchema, TEMPORAL_BOUNDS, TriggerSchema } from
 export const RENDERER_VERSION = 2;
 /** Temporal audio/comparison changes invalidate only Time Freeze caches. */
 export const TEMPORAL_RENDERER_VERSION = 4;
+/** Erase fill changes invalidate only Erase caches. */
+export const ERASE_RENDERER_VERSION = 2;
 
 export const BlurLevelSchema = z.enum(["low", "medium", "high"]);
 export type BlurLevel = z.infer<typeof BlurLevelSchema>;
@@ -50,12 +52,53 @@ export type FinishPatch = z.infer<typeof FinishPatchSchema>;
 
 const finish = FinishSchema.prefault({});
 
+/** Output shapes the editor delivers. "original" keeps the source frame; the others crop it. */
+export const AspectSchema = z.enum(["original", "16:9", "9:16"]);
+export type Aspect = z.infer<typeof AspectSchema>;
+export const ASPECT_LABEL: Record<Aspect, string> = { original: "Original", "16:9": "16:9", "9:16": "9:16" };
+/** Width ÷ height of each cropped format. */
+export const ASPECT_RATIO: Record<Exclude<Aspect, "original">, number> = { "16:9": 16 / 9, "9:16": 9 / 16 };
+
+export const TITLE_MAX = 6;
+export const TITLE_TEXT_MAX = 80;
+export const TitlePositionSchema = z.enum(["top", "center", "bottom"]);
+export const TitleSizeSchema = z.enum(["small", "medium", "large"]);
+export const TitleStyleSchema = z.enum(["plain", "shadow", "box"]);
+
+/** One line of text drawn over the finished frames between `start` and `end` seconds of the output. */
+export const TitleSchema = z.object({
+  id: z.string().min(1).max(40),
+  text: z.string().trim().min(1).max(TITLE_TEXT_MAX),
+  start: z.number().min(0).max(3600),
+  end: z.number().min(0).max(3600),
+  position: TitlePositionSchema.default("bottom"),
+  size: TitleSizeSchema.default("medium"),
+  color: AccentColorSchema.default("white"),
+  style: TitleStyleSchema.default("shadow"),
+});
+export type Title = z.infer<typeof TitleSchema>;
+
+/**
+ * What the viewer receives on top of the effect, the same for every effect:
+ * the crop (16:9 or 9:16, following the subject when there is one) and the
+ * titles. The defaults change no pixel.
+ */
+export const DeliverySchema = z.object({
+  aspect: AspectSchema.default("original"),
+  /** Keep the subject in the crop instead of centering it. */
+  follow: z.boolean().default(true),
+  titles: z.array(TitleSchema).max(TITLE_MAX).default([]),
+});
+export type Delivery = z.infer<typeof DeliverySchema>;
+const delivery = DeliverySchema.prefault({});
+
 export const SelectiveColorParamsSchema = z.object({
   effect: z.literal("selective_color"),
   /** 1 = background fully grayscale. */
   intensity: z.number().min(0.2).max(1).default(1),
   feather: z.number().min(0).max(4).default(1.5),
   finish,
+  delivery,
 });
 
 export const BackgroundBlurParamsSchema = z.object({
@@ -63,6 +106,7 @@ export const BackgroundBlurParamsSchema = z.object({
   level: BlurLevelSchema.default("medium"),
   feather: z.number().min(0).max(4).default(1.5),
   finish,
+  delivery,
 });
 
 export const SpotlightParamsSchema = z.object({
@@ -71,6 +115,7 @@ export const SpotlightParamsSchema = z.object({
   darkness: z.number().min(0.2).max(0.95).default(0.7),
   feather: z.number().min(0).max(4).default(2),
   finish,
+  delivery,
 });
 
 export const BreakFrameParamsSchema = z.object({
@@ -80,6 +125,7 @@ export const BreakFrameParamsSchema = z.object({
   frameSize: z.enum(["compact", "balanced", "wide"]).default("balanced"),
   feather: z.number().min(0).max(4).default(1.2),
   finish,
+  delivery,
 });
 
 export const MotionEchoParamsSchema = z.object({
@@ -89,6 +135,23 @@ export const MotionEchoParamsSchema = z.object({
   intensity: z.number().min(0.2).max(1).default(0.6),
   feather: z.number().min(0).max(4).default(1.2),
   finish,
+  delivery,
+});
+
+/**
+ * Erase: the tracked target (on-screen text, a logo, an object) is removed and
+ * the hole is filled from the background. `expand` grows SAM's mask so text
+ * outlines and shadows go too; `fill` "auto" reuses the background seen in
+ * other frames when the camera holds still, "spatial" only paints from the
+ * pixels around the hole.
+ */
+export const EraseParamsSchema = z.object({
+  effect: z.literal("erase"),
+  expand: z.number().int().min(0).max(24).default(6),
+  fill: z.enum(["auto", "spatial"]).default("auto"),
+  feather: z.number().min(0).max(4).default(1.5),
+  finish,
+  delivery,
 });
 
 /** Time Freeze + Echo. The target is the job's selection, like every other effect. */
@@ -101,6 +164,7 @@ export const TimeFreezeEchoParamsSchema = z.object({
   resume: z.boolean().default(true),
   feather: z.number().min(0).max(4).default(1.2),
   finish,
+  delivery,
 });
 
 export const RenderParamsSchema = z.discriminatedUnion("effect", [
@@ -109,6 +173,7 @@ export const RenderParamsSchema = z.discriminatedUnion("effect", [
   SpotlightParamsSchema,
   BreakFrameParamsSchema,
   MotionEchoParamsSchema,
+  EraseParamsSchema,
   TimeFreezeEchoParamsSchema,
 ]);
 export type RenderParams = z.infer<typeof RenderParamsSchema>;
@@ -134,6 +199,8 @@ export function defaultParams(plan: EditPlan): RenderParams {
         return { effect: "spotlight", darkness: intensity === undefined ? 0.7 : clamp(intensity, 0.2, 0.95) };
       case "break_frame":
         return { effect: "break_frame" };
+      case "erase":
+        return { effect: "erase" };
       case "motion_echo":
         return {
           effect: "motion_echo",
@@ -168,6 +235,7 @@ export const PARAM_BOUNDS = {
   trailCount: [2, 6],
   trailSpacingMs: [60, 400],
   feather: [0, 4],
+  expand: [0, 24],
 } as const;
 const FINISH_BOUNDS = { accentStrength: [0.2, 1], vignette: [0, 1], grain: [0, 1] } as const;
 
@@ -183,8 +251,8 @@ export function clampFinish(patch: FinishPatch): FinishPatch {
 /** A requested change: any knob may be absent (keep it). */
 export type ParamsPatch = {
   readonly effect?: PlanEffect;
-  readonly settings?: Partial<Record<"intensity" | "darkness" | "trailCount" | "trailSpacingMs" | "feather" | "echoCount" | "echoSpacingMs" | "freezeDurationMs", number>> &
-    Partial<{ level: BlurLevel; background: "dark" | "light"; frameSize: "compact" | "balanced" | "wide" }>;
+  readonly settings?: Partial<Record<"intensity" | "darkness" | "trailCount" | "trailSpacingMs" | "feather" | "expand" | "echoCount" | "echoSpacingMs" | "freezeDurationMs", number>> &
+    Partial<{ level: BlurLevel; background: "dark" | "light"; frameSize: "compact" | "balanced" | "wide"; fill: "auto" | "spatial" }>;
   readonly finish?: FinishPatch;
 };
 
@@ -195,11 +263,11 @@ export type ParamsPatch = {
  */
 export function applyParamsPatch(current: RenderParams, patch: ParamsPatch): RenderParams {
   const effect = patch.effect ?? current.effect;
-  const base: RenderParams = effect === current.effect ? current : { ...effectDefaults(effect), feather: current.feather, finish: current.finish } as RenderParams;
+  const base: RenderParams = effect === current.effect ? current : { ...effectDefaults(effect), feather: current.feather, finish: current.finish, delivery: current.delivery } as RenderParams;
   const settings: Record<string, unknown> = { ...patch.settings };
   for (const [key, [min, max]] of Object.entries(PARAM_BOUNDS)) {
     const value = settings[key];
-    if (typeof value === "number") settings[key] = key === "trailCount" || key === "trailSpacingMs" ? Math.round(clamp(value, min, max)) : clamp(value, min, max);
+    if (typeof value === "number") settings[key] = key === "trailCount" || key === "trailSpacingMs" || key === "expand" ? Math.round(clamp(value, min, max)) : clamp(value, min, max);
   }
   if (base.effect === "time_freeze_echo") {
     // Flat chat knobs land in the nested temporal edit; the freeze point never changes here.
@@ -245,6 +313,7 @@ const EFFECT_LABEL: Record<PlanEffect, string> = {
   spotlight: "Spotlight",
   break_frame: "Break the Frame",
   motion_echo: "Motion Echo",
+  erase: "Erase",
   time_freeze_echo: "Time Freeze",
 };
 
@@ -269,6 +338,8 @@ export function describeParamChanges(before: RenderParams, after: RenderParams):
   knob("frameSize", "Frame", (value: string) => value);
   knob("trailCount", "Trails", String);
   knob("trailSpacingMs", "Spacing", (value: number) => `${value} ms`);
+  knob("expand", "Cover margin", (value: number) => `${value} px`);
+  knob("fill", "Fill", (value: string) => (value === "auto" ? "background from other frames" : "surrounding pixels"));
   if (after.effect === "time_freeze_echo") {
     const prev = before.effect === "time_freeze_echo" ? before : (effectDefaults("time_freeze_echo") as RenderParamsOf<"time_freeze_echo">);
     if (after.trigger.timestampMs !== undefined && prev.trigger.timestampMs !== after.trigger.timestampMs) {
@@ -291,6 +362,11 @@ export function describeParamChanges(before: RenderParams, after: RenderParams):
   if (a.vignette !== b.vignette) changes.push(b.vignette ? `Vignette: ${pct(b.vignette)}` : "Vignette: off");
   if (a.grain !== b.grain) changes.push(b.grain ? `Film grain: ${pct(b.grain)}` : "Film grain: off");
   if (a.letterbox !== b.letterbox) changes.push(b.letterbox ? "Letterbox: on" : "Letterbox: off");
+  if (before.delivery.aspect !== after.delivery.aspect) changes.push(`Format: ${ASPECT_LABEL[after.delivery.aspect]}`);
+  if (JSON.stringify(before.delivery.titles) !== JSON.stringify(after.delivery.titles)) {
+    const count = after.delivery.titles.length;
+    changes.push(count ? `Titles: ${count}` : "Titles: off");
+  }
   return changes;
 }
 

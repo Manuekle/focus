@@ -18,7 +18,7 @@ import { ingestVideo } from "./videos";
 
 let work: string;
 let video: VideoAsset;
-const calls = { interpret: 0, segment: 0 };
+const calls = { interpret: 0, segment: 0, locate: 0 };
 let nextPlan: Partial<EditPlan> = {};
 let objectCount = 1;
 let segmentDelayMs = 0;
@@ -98,8 +98,21 @@ beforeAll(async () => {
       return fakeTracking(input.id, BRIDGE.split("\n").filter(Boolean).slice(43).join("\n") + "\n");
     if (input.prompt.kind === "concept" && input.prompt.concept === "runner") return runnerTracking(input.id);
     if (input.prompt.kind === "concept" && input.prompt.concept === "jumper") return runnerTracking(input.id, true);
+    if (input.prompt.kind === "box" && input.prompt.objects[0]?.id === 200) {
+      const runner = await runnerTracking(input.id);
+      return {
+        ...runner,
+        frames: runner.frames.map((frame) => ({ ...frame, objects: frame.objects.map((object) => ({ ...object, objectId: "200", box: { left: 8, top: 8, right: 88, bottom: 128 } })) })),
+        objects: runner.objects.map((object) => ({ ...object, id: "200" })),
+      };
+    }
     if (input.prompt.kind === "point") return fakeTracking(input.id, ROCKS.split("\n")[0].replace(/^<0f>\d+/, "<0f>100").split(/,(?=\d+<\|box)/)[0] + "\n");
     return fakeTracking(input.id, objectCount === 0 ? "" : objectCount === 1 ? BRIDGE : ROCKS);
+  };
+
+  services.locateOverlays = async () => {
+    calls.locate++;
+    return [{ frameIndex: 9, box: { left: 10, top: 10, right: 80, bottom: 30 }, label: "handle" }];
   };
 });
 
@@ -110,6 +123,7 @@ afterAll(async () => {
 beforeEach(() => {
   calls.interpret = 0;
   calls.segment = 0;
+  calls.locate = 0;
   nextPlan = {};
   objectCount = 1;
   segmentDelayMs = 0;
@@ -313,7 +327,7 @@ describe("render reuse", () => {
       await writeFile(path.join(dir, `${requestKey(request)}.json`), JSON.stringify({ supported: true, target: { concept: "runner", selection: "single" }, effect: "time_freeze_echo", parameters: { triggerEvent: "peak_motion" }, needsClarification: false }));
       const job = await settle((await createJob(request)).id);
       expect(job).toMatchObject({ status: "failed", error: { code: "effect_disabled" }, render: null });
-      expect(calls).toEqual({ interpret: 0, segment: 0 });
+      expect(calls).toEqual({ interpret: 0, segment: 0, locate: 0 });
     } finally {
       vi.unstubAllEnvs();
     }
@@ -576,4 +590,20 @@ describe("cancellation and recovery", () => {
     const job = await getJob("00000000-0000-4000-8000-000000000000");
     expect(job).toMatchObject({ status: "failed", error: { code: "interrupted" }, temporalSuggestion: null });
   });
+
+  it("Erase of text: Muse Spark boxes the text SAM's concept pass missed, SAM tracks it, everything is erased", async () => {
+    nextPlan = { target: { concept: "caption", selection: "all" }, effect: "erase", parameters: {} };
+    const job = await settle((await createJob({ videoId: video.id, effect: "erase", prompt: prompt("remove all the text") })).id);
+    expect(job.status).toBe("completed");
+    expect(calls.locate).toBe(1);
+    expect(job.segmentationId).toMatch(/\+o-[0-9a-f]+$/);
+    expect(job.objects.map((object) => object.id)).toContain("200");
+    expect(job.selection).toContain("200");
+    expect(job.render?.params.effect).toBe("erase");
+    // The boxes are cached per video: a second text edit asks Muse Spark nothing new.
+    const again = await settle((await createJob({ videoId: video.id, effect: "erase", prompt: prompt("erase the captions") })).id);
+    expect(again.status).toBe("completed");
+    expect(calls.locate).toBe(1);
+  });
 });
+

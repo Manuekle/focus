@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 import { useEffect, useRef, useState } from "react";
 import { AiPaintbrushIcon, AiSearch02Icon, ArrowLeftRightIcon, ArrowRight01Icon, Cancel01Icon } from "@hugeicons/core-free-icons";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
@@ -15,8 +16,10 @@ import { FileUpload } from "../../components/motion/file-upload";
 import { Button } from "../../components/ui/button";
 import { Badge } from "../../components/ui/badge";
 import { Disclosure } from "../../components/ui/disclosure";
+import { RightsConfirmation, useRightsConfirmation } from "../../components/ui/rights-confirmation";
 import { Spinner } from "../../components/ui/spinner";
 import { formatBytes } from "../../shared/media";
+import { RIGHTS_COPY, fileRightsKey, rightsAssetKey } from "../../shared/rights";
 import type { CharacterSource } from "../../shared/characters";
 import { VIEW_OPTIONS, type ViewPreference } from "../../shared/animation-view";
 import {
@@ -38,6 +41,7 @@ import { CharacterPicker } from "./character-picker";
 import { handoffUrl } from "../characters/character-client";
 import { referenceMotionEnabled, rotoscopeEnabled } from "../../shared/features";
 import { SequenceFields } from "./sequence-controls";
+import { takeClip } from "../_editor/clip-handoff";
 import { MotionVideoInput, validMotionVideo, type MotionVideoSelection } from "./motion-video-input";
 import { descriptionAnimationPrompt, videoAnimationPrompt } from "../../shared/animation-prompt";
 import { DEFAULT_SEQUENCE, type SequenceSettings } from "../../shared/sequence";
@@ -184,6 +188,20 @@ export function FlipbookCreate({
 
   useEffect(() => () => handle.current?.abort(), []);
 
+  // Arriving from the editor (?clip=1): its video guides the movement.
+  const clipHandoff = useSearchParams().get("clip") === "1";
+  const clipTaken = useRef(false);
+  useEffect(() => {
+    if (!clipHandoff || clipTaken.current) return;
+    clipTaken.current = true;
+    const file = takeClip();
+    if (!file) return;
+    setGuided(false);
+    setMode("sequence");
+    setMotionSource("video");
+    setMotionVideo({ file, sourceSeconds: 0, start: 0, durationSeconds: 4, useAudio: false });
+  }, [clipHandoff]);
+
   // Once uploaded, Focus reads the drawing: what is in it, motions that suit
   // it, and its layers. Its first idea becomes the starting pick, unless the
   // person has already chosen.
@@ -253,7 +271,10 @@ export function FlipbookCreate({
   const sequenceSettings = { ...sequence, ...(fromVideo && motionVideo ? { durationSeconds: motionVideo.durationSeconds } : {}) };
   const motionInstruction = instruction(action, direction, detail, facing, cameraView, lateralView);
   const prompt = fromVideo ? videoAnimationPrompt({ settings: sequenceSettings, start: motionVideo?.start ?? 0, note: videoDetail }) : descriptionAnimationPrompt(motionInstruction, mode === "sequence" ? sequence : undefined);
-  const canSubmit = Boolean(image) && !creating && !blockedReason && (!fromVideo || validMotionVideo(motionVideo));
+  // Tied to the drawing (or saved character) and the motion video: replacing either clears the box.
+  const rights = useRightsConfirmation(image ? rightsAssetKey(["flipbook", fromCharacter ? `${initialCharacter!.source.characterId}:${initialCharacter!.source.versionId}` : image.id, fromVideo ? fileRightsKey(motionVideo?.file ?? { name: "", size: 0, lastModified: 0 }) : "none"]) : null);
+  const gate = blockedReason ?? (rights.confirmed ? undefined : RIGHTS_COPY.error);
+  const canSubmit = Boolean(image) && !creating && !gate && (!fromVideo || validMotionVideo(motionVideo));
   const submit = () => {
     if (!image || !canSubmit || mode === "living") return;
     // With a reading, the picked motion says which action it is, and its character facts are reused.
@@ -352,12 +373,13 @@ export function FlipbookCreate({
 
       <aside className={cn(view.controls, styles.createControls)}>
         <SlidingTabs className={composer.tabs} tabs={[{ id: "guided", label: "Guided" }, { id: "advanced", label: "Advanced" }]} value={guided ? "guided" : "advanced"} onValueChange={(id) => setGuided(id === "guided")} />
+        <RightsConfirmation confirmed={rights.confirmed} onConfirmedChange={rights.setConfirmed} disabled={creating} />
         {guided ? (
           <GuidedSetup
             picture={fromCharacter ? { characterSource: initialCharacter!.source } : { imageId: image.id }}
             look={look}
             creating={creating}
-            blockedReason={blockedReason ?? null}
+            blockedReason={gate ?? null}
             onCreate={(setup) => onCreate(image, guidedPrompt(setup), {
               action: setup.action,
               view: setup.view,
@@ -513,7 +535,7 @@ export function FlipbookCreate({
                 {creating ? <Spinner /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={16} strokeWidth={1.75} />}
                 {mode === "sequence" ? "Prepare continuous animation" : "Create animation"}
               </Button>
-              {blockedReason ? <p className={composer.blocked}>{blockedReason}</p> : null}
+              {gate ? <p className={composer.blocked}>{gate}</p> : null}
             </div>
           </div>
           </>}

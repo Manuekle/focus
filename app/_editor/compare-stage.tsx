@@ -4,6 +4,7 @@ import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, ty
 import { ArrowLeftRightIcon, PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
+import { useMediaKeys } from "../../components/ui/use-media-keys";
 import { VolumeControl, applySound, useSound } from "../../components/ui/volume-control";
 import { formatSeconds } from "../../shared/media";
 import type { RenderResult } from "../../shared/render";
@@ -129,6 +130,13 @@ export function CompareStage({
     setTime(value);
   };
 
+  const onKeyDown = useMediaKeys({
+    toggle,
+    seekBy: (seconds) => { const el = active(); if (el && Number.isFinite(el.duration)) seek(Math.min(Math.max(el.currentTime + seconds, 0), el.duration)); },
+    seekTo: (fraction) => { const el = active(); if (el && Number.isFinite(el.duration)) seek(fraction * el.duration); },
+    toggleMute: render.hasAudio ? toggleMute : undefined,
+  });
+
   const fromPointer = (event: PointerEvent<HTMLDivElement>) => {
     const rect = event.currentTarget.getBoundingClientRect();
     setSplit(Math.max(0, Math.min(100, ((event.clientX - rect.left) / rect.width) * 100)));
@@ -151,7 +159,7 @@ export function CompareStage({
   };
 
   return (
-    <figure className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-soft)]">
+    <figure className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-soft)]" onKeyDown={onKeyDown}>
       <div className="relative grid place-items-center bg-[var(--editor-stage)]">
         {updating ? (
           <div role="status" className="pointer-events-none absolute inset-x-0 bottom-3 z-10 flex justify-center">
@@ -180,7 +188,8 @@ export function CompareStage({
               width={width}
               height={height}
               aria-label="Before and after comparison"
-              className="block h-auto max-h-[var(--stage-max,min(68dvh,720px))] w-auto max-w-full"
+              tabIndex={0}
+              className="block h-auto max-h-[var(--stage-max,min(68dvh,720px))] w-auto max-w-full outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[color:var(--btn-focus-ring)]"
               style={{ aspectRatio: `${width} / ${height}` }}
             />
             <span className="pointer-events-none absolute top-2 left-2 rounded-md bg-[rgb(20_22_30/0.78)] px-2 py-1 text-xs text-white">Original</span>
@@ -208,8 +217,9 @@ export function CompareStage({
             playsInline
             loop
             preload="auto"
+            tabIndex={0}
             onClick={toggle}
-            className="block h-auto max-h-[var(--stage-max,min(68dvh,720px))] w-auto max-w-full cursor-pointer"
+            className="block h-auto max-h-[var(--stage-max,min(68dvh,720px))] w-auto max-w-full cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[color:var(--btn-focus-ring)]"
             aria-label="Edited video"
             {...mediaEvents}
           />

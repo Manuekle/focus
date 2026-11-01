@@ -23,6 +23,7 @@ export const PLAN_EFFECT_LABEL: Record<PlanEffect, string> = {
   spotlight: "Spotlight",
   break_frame: "Break the Frame",
   motion_echo: "Motion Echo",
+  erase: "Erase",
   time_freeze_echo: "Time Freeze",
 };
 
@@ -281,7 +282,7 @@ export function ResultPanel({
   const warnings = render.warnings.filter((warning) => !job.temporalSuggestion || !warning.startsWith(job.temporalSuggestion.reason)).map(englishRenderWarning);
   const adjustments = (
     <div className="flex flex-col gap-4">
-      <EffectControls family={job.request.effect} value={draft} onChange={onDraftChange} />
+      <EffectControls family={job.request.effect} value={draft} onChange={onDraftChange} duration={render.durationSeconds} />
       <Button variant="secondary" onClick={onApply} disabled={!dirty || busy} aria-busy={busy}>
         {busy ? <Spinner /> : null}
         Apply adjustments

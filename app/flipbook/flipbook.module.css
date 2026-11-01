@@ -79,14 +79,6 @@ fieldset.controlField > legend { margin-bottom: 8px; }
 .controlHeading { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
 .controlValue { flex-shrink: 0; color: var(--foreground); font-size: 12px; font-variant-numeric: tabular-nums; }
 .uploadName { overflow-wrap: anywhere; color: var(--foreground); font-size: 12px; }
-/* The system checkbox (radix uses role="checkbox" on a button): the native control is unthemed. */
-.checkbox { display: inline-flex; flex-shrink: 0; align-items: center; justify-content: center; width: 16px; height: 16px; padding: 0; border: 1px solid var(--border); border-radius: 5px; background: var(--muted); color: var(--primary-foreground, #fff); cursor: pointer; transition: background-color 150ms, border-color 150ms; }
-.checkbox:hover { border-color: color-mix(in srgb, var(--primary) 55%, var(--border)); }
-.checkbox:focus-visible { outline: 2px solid var(--primary); outline-offset: 2px; }
-.checkbox[data-state="checked"] { border-color: var(--primary); background: var(--primary); }
-.checkbox svg { opacity: 0; transition: opacity 120ms; }
-.checkbox[data-state="checked"] svg { opacity: 1; }
-.checkbox:disabled { opacity: 0.5; cursor: not-allowed; }
 
 /* ── Create ──────────────────────────────────────────────────────────── */
 /* The drop icon: the glass feather re-tinted with the app blue, like the home page steps. */

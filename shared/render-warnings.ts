@@ -1,5 +1,7 @@
 export const BREAK_FRAME_WARNING = "The subject barely extends beyond the frame. Try another frame size or a clip where the subject fills more of the image.";
 
+export const ERASE_MOVING_CAMERA_WARNING = "The camera moves, so erased areas were painted from their surroundings. Large areas may look soft.";
+
 export function missingSubjectMaskWarning(missing: number, total: number): string {
   return `${missing} of ${total} frames ${missing === 1 ? "has" : "have"} no subject mask. The effect treats ${missing === 1 ? "that frame" : "those frames"} entirely as background.`;
 }

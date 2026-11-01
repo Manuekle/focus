@@ -13,11 +13,13 @@ import { ScrollArea } from "../../components/ui/scroll-area";
 import { Select } from "../../components/ui/select";
 import { Slider } from "../../components/ui/slider";
 import { Spinner } from "../../components/ui/spinner";
+import { RightsConfirmation, useRightsConfirmation } from "../../components/ui/rights-confirmation";
 import { Switch } from "../../components/ui/switch";
 import { useToast } from "../../components/toast-provider";
 import { cn } from "../../lib/utils";
 import { flipbookEnabled } from "../../shared/features";
 import { characterUrls } from "../../shared/characters";
+import { RIGHTS_COPY, rightsAssetKey } from "../../shared/rights";
 import { characterFile, handoffImageUrl } from "../characters/character-client";
 import { CharacterPicker } from "../flipbook/character-picker";
 import {
@@ -154,7 +156,9 @@ export function ReferenceMotionStudio({ initialJobId }: { readonly initialJobId:
   const chosenResolution = zeroGpu ? "480p" : resolution;
   const lastStart = Math.max(0, Math.floor((videoSeconds - segment) * 10) / 10);
   const engineReady = Boolean(engines?.ready && engine && engines.engines.includes(engine));
-  const blocked = !user ? "Sign in to animate a character." : !character.asset ? "Upload a character image." : !driving.asset ? "Upload a movement video." : !engineReady ? "The animation engine isn’t available." : videoSeconds < minSegment ? `This engine needs a video of at least ${minSegment} s.` : null;
+  // Tied to both uploads: replacing either one clears the box.
+  const rights = useRightsConfirmation(rightsAssetKey(["animate", character.asset?.id, driving.asset?.id]));
+  const blocked = !user ? "Sign in to animate a character." : !character.asset ? "Upload a character image." : !driving.asset ? "Upload a movement video." : !engineReady ? "The animation engine isn’t available." : videoSeconds < minSegment ? `This engine needs a video of at least ${minSegment} s.` : !rights.confirmed ? RIGHTS_COPY.error : null;
 
   const generate = async () => {
     if (blocked || !character.asset || !driving.asset || !engine) return;
@@ -313,6 +317,7 @@ export function ReferenceMotionStudio({ initialJobId }: { readonly initialJobId:
               <section className={styles.section} aria-labelledby="rm-preflight">
                 <h2 id="rm-preflight" className={styles.label}>4 · Before generating</h2>
                 <Preflight engines={engines} engine={engine} />
+                <RightsConfirmation confirmed={rights.confirmed} onConfirmedChange={rights.setConfirmed} disabled={submitting} />
                 {blocked ? <p className={styles.hint}>{blocked}</p> : null}
                 <Button className="w-fit" disabled={Boolean(blocked) || submitting} onClick={() => void generate()}>
                   {submitting ? <Spinner /> : null}

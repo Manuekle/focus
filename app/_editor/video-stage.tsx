@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { PauseIcon, PlayIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
+import { useMediaKeys } from "../../components/ui/use-media-keys";
 import { VolumeControl, applySound, useSound } from "../../components/ui/volume-control";
 import { formatSeconds } from "../../shared/media";
 import type { VideoAsset } from "../../shared/schemas";
@@ -73,10 +74,17 @@ export function VideoStage({
     setTime(value);
   };
 
+  const onKeyDown = useMediaKeys({
+    toggle,
+    seekBy: (seconds) => { const el = ref.current; if (el && Number.isFinite(el.duration)) seek(Math.min(Math.max(el.currentTime + seconds, 0), el.duration)); },
+    seekTo: (fraction) => { const el = ref.current; if (el && Number.isFinite(el.duration)) seek(fraction * el.duration); },
+    toggleMute: hasAudio ? toggleMute : undefined,
+  });
+
   const progress = duration > 0 ? (time / duration) * 100 : 0;
 
   return (
-    <figure className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-soft)]">
+    <figure className="flex min-w-0 flex-col overflow-hidden rounded-2xl border border-border bg-card shadow-[var(--shadow-soft)]" onKeyDown={onKeyDown}>
       <div className="relative grid place-items-center bg-[var(--editor-stage)]">
         <div className="relative max-w-full">
         <video
@@ -88,6 +96,7 @@ export function VideoStage({
           playsInline
           loop
           preload="auto"
+          tabIndex={0}
           onClick={toggle}
           onPlay={() => setPlaying(true)}
           onPause={() => setPlaying(false)}
@@ -102,7 +111,7 @@ export function VideoStage({
           }}
           onTimeUpdate={(event) => setTime(event.currentTarget.currentTime)}
           onError={() => setFailed(true)}
-          className="block h-auto max-h-[var(--stage-max,min(68dvh,720px))] w-auto max-w-full cursor-pointer"
+          className="block h-auto max-h-[var(--stage-max,min(68dvh,720px))] w-auto max-w-full cursor-pointer outline-none focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-[color:var(--btn-focus-ring)]"
           aria-label={`Preview of ${video.originalName}`}
         />
         {overlay?.(ref)}

@@ -6,6 +6,7 @@ import { checkTemporalTracking, type TrackPoint } from "../../shared/temporal-tr
 import { AppError } from "../errors";
 import type { MaskSource, RenderOutput } from "./compositor";
 import { blendOver, cropGhost, drawGhost, padBox, type Ghost } from "./effects";
+import { createDeliverer } from "./delivery";
 import { createFinisher } from "./finish";
 import { readFrames, writeFrames } from "./frames";
 import { feather, featherRadius, type Alpha } from "./masks";
@@ -107,11 +108,12 @@ export async function renderTimeFreeze(input: {
   const radius = featherRadius(params.feather, width, height);
   const margin = radius * 2 + 1;
   const soft = (alpha: Alpha): Alpha => (alpha.box && radius > 0 ? { data: feather(alpha.data, width, height, radius), box: alpha.box } : alpha);
-  const finisher = createFinisher(width, height, params.finish);
+  const deliverer = await createDeliverer({ width, height, fps }, params.delivery);
+  const finisher = createFinisher(deliverer.width, deliverer.height, params.finish);
   const writer = writeFrames({
     output: path.join(input.outputDir, "output.mp4"),
-    width,
-    height,
+    width: deliverer.width,
+    height: deliverer.height,
     fps,
     frameCount: plan.outputFrameCount,
     audioFrom: media.hasAudio ? input.normalizedPath : undefined,
@@ -122,7 +124,9 @@ export async function renderTimeFreeze(input: {
   const ghosts: Ghost[] = [];
   let written = 0;
   const emit = async (rgba: Buffer, alpha: Uint8Array | null) => {
-    await writer.write(finisher ? await finisher.apply(written, rgba, alpha) : rgba);
+    const cropped = deliverer.crop(rgba, alpha);
+    const finished = finisher ? await finisher.apply(written, cropped.rgba, cropped.alpha) : cropped.rgba;
+    await writer.write(deliverer.titles(written, finished));
     written++;
     input.onProgress?.(written / plan.outputFrameCount);
   };
@@ -137,7 +141,7 @@ export async function renderTimeFreeze(input: {
         const alpha = soft(masks.alphaAt(index));
         ghosts.push(cropGhost(frame, alpha.data, padBox(alpha.box!, margin, width, height), width));
       }
-      const needsAlpha = finisher !== null || index === plan.triggerFrame;
+      const needsAlpha = finisher !== null || deliverer.follows || index === plan.triggerFrame;
       const alpha = needsAlpha ? soft(masks.alphaAt(index)) : null;
       await emit(frame, alpha?.box ? alpha.data : null);
 
@@ -173,8 +177,8 @@ export async function renderTimeFreeze(input: {
   }
 
   return {
-    width,
-    height,
+    width: deliverer.width,
+    height: deliverer.height,
     frameCount: plan.outputFrameCount,
     framesWithoutMask: 0,
     breakoutFrameRatio: null,

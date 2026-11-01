@@ -11,11 +11,13 @@ import { Button } from "../../components/ui/button";
 import { Disclosure } from "../../components/ui/disclosure";
 import { Slider } from "../../components/ui/slider";
 import { Spinner } from "../../components/ui/spinner";
+import { RightsConfirmation, useRightsConfirmation } from "../../components/ui/rights-confirmation";
 import { Switch } from "../../components/ui/switch";
 import { VideoPlayer } from "../../components/ui/video-player";
 import { useToast } from "../../components/toast-provider";
 import { cn } from "../../lib/utils";
 import { formatBytes } from "../../shared/media";
+import { RIGHTS_COPY, fileRightsKey, rightsAssetKey } from "../../shared/rights";
 import { Input } from "../../components/ui/input";
 import { MAX_BATCH_CHARACTERS, ROTOSCOPE_LIMITS, type RotoscopeBatch, type RotoscopeRun } from "../../shared/rotoscope";
 import { characterUrls, type CharacterBody } from "../../shared/characters";
@@ -24,6 +26,7 @@ import view from "../_editor/editor-view.module.css";
 import upload from "../_editor/studio-upload.module.css";
 import shell from "../editor/studio.module.css";
 import fb from "../flipbook/flipbook.module.css";
+import { takeClip } from "../_editor/clip-handoff";
 import { characterApi, characterFile, handoffImageUrl } from "../characters/character-client";
 import { CharacterPicker } from "../flipbook/character-picker";
 import { createBatch, createRun } from "./rotoscope-client";
@@ -70,6 +73,8 @@ export function RotoscopeCreate({ disabled, onCreated, onBatch }: { readonly dis
   const [seconds, setSeconds] = useState(1);
   const [whole, setWhole] = useState(false);
   const [progress, setProgress] = useState<number | null>(null);
+  // Tied to the video and every character picked: change one and the box clears.
+  const rights = useRightsConfirmation(video && characters.length ? rightsAssetKey(["rotoscope", fileRightsKey(video.file), ...characters.map((entry) => (entry.savedId ? `saved:${entry.savedId}` : fileRightsKey(entry.file)))]) : null);
   const handle = useRef<{ abort: () => void } | null>(null);
   const characterInput = useRef<HTMLInputElement>(null);
   useEffect(() => () => handle.current?.abort(), []);
@@ -120,6 +125,15 @@ export function RotoscopeCreate({ disabled, onCreated, onBatch }: { readonly dis
     setVideo({ file, url: URL.createObjectURL(file), duration: null, width: 0, height: 0 });
     setStart(0);
   };
+  // Arriving from the editor (?clip=1): its video comes along.
+  const clipHandoff = params.get("clip") === "1";
+  const clipTaken = useRef(false);
+  useEffect(() => {
+    if (!clipHandoff || clipTaken.current) return;
+    clipTaken.current = true;
+    const file = takeClip();
+    if (file) pickVideo(file);
+  }, [clipHandoff]);
 
   const duration = video?.duration ?? null;
   const lastStart = duration === null ? 0 : Math.max(0, Math.floor((duration - 1) * 10) / 10);
@@ -134,7 +148,8 @@ export function RotoscopeCreate({ disabled, onCreated, onBatch }: { readonly dis
       : invalid ? invalid.error
       : duration === null ? "Reading the video…"
         : covered !== null && covered > ROTOSCOPE_LIMITS.maxSeconds ? `One run covers at most ${ROTOSCOPE_LIMITS.maxSeconds} s. Choose a shorter part.`
-          : frames !== null && frames > ROTOSCOPE_LIMITS.maxFrames ? `One run holds at most ${ROTOSCOPE_LIMITS.maxFrames} frames. Lower the frame rate or the length.` : null;
+          : frames !== null && frames > ROTOSCOPE_LIMITS.maxFrames ? `One run holds at most ${ROTOSCOPE_LIMITS.maxFrames} frames. Lower the frame rate or the length.`
+            : !rights.confirmed ? RIGHTS_COPY.error : null;
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -360,6 +375,7 @@ export function RotoscopeCreate({ disabled, onCreated, onBatch }: { readonly dis
                 {CHECKS.map((check) => <li key={check.name} data-source="review"><strong className="font-medium text-foreground">{check.label}.</strong> {check.note}</li>)}
               </ul>
             </Disclosure>
+            <RightsConfirmation confirmed={rights.confirmed} onConfirmedChange={rights.setConfirmed} disabled={progress !== null} />
             <div className={fb.createSubmit}>
               {progress !== null ? (
                 <div className={styles.uploading}>

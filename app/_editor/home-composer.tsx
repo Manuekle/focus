@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import { ArrowLeftRightIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
+import { RightsConfirmation, useRightsConfirmation } from "../../components/ui/rights-confirmation";
+import { RIGHTS_COPY, rightsAssetKey } from "../../shared/rights";
 import { formatBytes } from "../../shared/media";
 import type { EffectId, Suggestions, VideoAsset } from "../../shared/schemas";
 import { SuggestionsSchema } from "../../shared/schemas";
@@ -40,6 +42,8 @@ export function HomeComposer({
   const { session } = useSession();
   const [leaving, setLeaving] = useState(false);
   const [loginOpen, setLoginOpen] = useState(false);
+  // Same key as the editor, so a box checked here is still checked when the editor opens.
+  const rights = useRightsConfirmation(rightsAssetKey(["edit", video.id]));
   const editorUrl = `/editor?v=${video.id}`;
   const outOfFreeEdits = session?.quota?.remaining === 0;
 
@@ -83,14 +87,15 @@ export function HomeComposer({
 
       <aside className={styles.controls}>
         <h2 className={styles.heading}>Make it your own.</h2>
+        <RightsConfirmation confirmed={rights.confirmed} onConfirmedChange={rights.setConfirmed} disabled={leaving} />
         <Composer
           effect={effect}
           onEffectChange={onEffectChange}
           prompt={prompt}
           onPromptChange={onPromptChange}
           onSubmit={() => handOff(true)}
-          canSubmit={!leaving}
-          blockedReason={outOfFreeEdits ? "You’ve used all your free generations." : undefined}
+          canSubmit={!leaving && rights.confirmed}
+          blockedReason={outOfFreeEdits ? "You’ve used all your free generations." : rights.confirmed ? undefined : RIGHTS_COPY.error}
           busy={leaving}
           suggestions={suggestions?.videoId === video.id ? suggestions.value : null}
           suggestionsLoading={suggestions?.videoId !== video.id}

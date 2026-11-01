@@ -8,6 +8,7 @@ import { formatSeconds } from "../../shared/media";
 import { Button } from "./button";
 import { Slider } from "./slider";
 import { Tooltip, TooltipContent, TooltipTrigger } from "./tooltip";
+import { useMediaKeys } from "./use-media-keys";
 import { VolumeControl, applySound, useSound } from "./volume-control";
 import styles from "./video-player.module.css";
 
@@ -96,18 +97,35 @@ function Player({ src, label, className, segment, hasAudio = true, onLoadedMetad
     } catch { setError("Fullscreen is unavailable. You can keep playing the preview here."); }
   };
 
+  const seek = (at: number) => {
+    const element = video.current;
+    if (!element || !ready || !length) return;
+    const next = Math.min(Math.max(at, start), end);
+    element.currentTime = next;
+    setTime(next);
+  };
+  const onKeyDown = useMediaKeys({
+    toggle: () => void toggle(),
+    seekBy: (seconds) => seek((video.current?.currentTime ?? start) + seconds),
+    seekTo: (fraction) => seek(start + fraction * length),
+    toggleMute: hasAudio ? toggleMute : undefined,
+    toggleFullscreen: canFullscreen ? () => void expand() : undefined,
+  });
+
   const control = (name: string, icon: typeof PlayIcon, onClick: () => void, disabled = false, pressed?: boolean) => (
     <Tooltip><TooltipTrigger asChild><Button type="button" variant="ghost" size="icon-sm" className={styles.control} aria-label={name} aria-pressed={pressed} disabled={disabled} onClick={onClick}><HugeiconsIcon icon={icon} size={16} strokeWidth={1.75} /></Button></TooltipTrigger><TooltipContent>{name}</TooltipContent></Tooltip>
   );
 
-  return <div ref={root} className={cn(styles.player, className)} role="group" aria-label={`${label} player`}>
-    <video ref={video} src={src} className={styles.video} playsInline preload="metadata" aria-label={label}
+  return <div ref={root} className={cn(styles.player, className)} role="group" aria-label={`${label} player`} aria-keyshortcuts="Space K ArrowLeft ArrowRight M F" onKeyDown={onKeyDown}>
+    {/* Click or Space plays, like any web player; double-click goes fullscreen. */}
+    <video ref={video} src={src} className={styles.video} playsInline preload="metadata" aria-label={label} tabIndex={0}
+      onClick={() => void toggle()} onDoubleClick={canFullscreen ? () => void expand() : undefined}
       onLoadedMetadata={(event) => { const value = event.currentTarget.duration; if (Number.isFinite(value) && value > 0) setDuration(value); onLoadedMetadata?.(event); }}
       onPlay={() => setPlaying(true)} onPause={(event) => { setPlaying(false); setTime(event.currentTarget.currentTime); }} onEnded={() => setPlaying(false)}
       onTimeUpdate={(event) => { const element = event.currentTarget; if (element.currentTime >= end && ready) { element.pause(); if (element.currentTime > end) element.currentTime = end; } setTime(element.currentTime); }}
       onError={(event) => { setPlaying(false); setError("This video could not be read. Replace it with an MP4 or MOV file."); onError?.(event); }} />
     <div className={styles.toolbar}>
-      <Slider aria-label="Video position" aria-valuetext={`${formatSeconds(position)} of ${formatSeconds(length)}`} min={0} max={length || 1} step={0.01} value={[position]} disabled={!ready || !length} onValueChange={([value]) => { if (video.current) { video.current.currentTime = start + value; setTime(start + value); } }} />
+      <Slider aria-label="Video position" aria-valuetext={`${formatSeconds(position)} of ${formatSeconds(length)}`} min={0} max={length || 1} step={0.01} value={[position]} disabled={!ready || !length} onValueChange={([value]) => seek(start + value)} />
       <div className={styles.row}>
         {control(playing ? "Pause reference video" : "Play reference video", playing ? PauseIcon : PlayIcon, () => void toggle(), !ready || !length)}
         <span className={styles.time}>{ready ? <>{formatSeconds(position)}<span className={styles.separator}>/</span>{formatSeconds(length)}</> : error ? "Video unavailable" : "Loading video…"}</span>

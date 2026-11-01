@@ -5,7 +5,7 @@ import { availableEffects } from "./pipeline";
 afterEach(() => vi.unstubAllEnvs());
 
 describe("temporal release flag", () => {
-  const stable = ["reality-shift", "break-the-frame", "motion-echo"] as const;
+  const stable = ["reality-shift", "break-the-frame", "motion-echo", "erase"] as const;
 
   it.each([undefined, "", "false", "FALSE", "TRUE", "1", "true ", " true"])("keeps the stable catalog for %j", (value) => {
     vi.stubEnv("NEXT_PUBLIC_ENABLE_TEMPORAL_EFFECTS", value);

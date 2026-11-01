@@ -5,6 +5,8 @@ import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 import { AiPaintbrushIcon, AiSearch02Icon, UserGroupIcon, UserIcon } from "@hugeicons/core-free-icons";
 import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
+import { RightsConfirmation, useRightsConfirmation } from "../../components/ui/rights-confirmation";
+import { RIGHTS_COPY, rightsAssetKey } from "../../shared/rights";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { Select } from "../../components/ui/select";
@@ -72,7 +74,9 @@ export function EnsembleCreate({
   const full = picked.length >= MAX_CAST;
   const drawings = ensembleDrawings(seconds);
   const prompt = detail.trim();
-  const canSubmit = signedIn && picked.length >= MIN_CAST && prompt.length >= 3 && !creating && !blockedReason;
+  const rights = useRightsConfirmation(picked.length >= MIN_CAST ? rightsAssetKey(["ensemble", ...picked.map((entry) => entry.id).sort()]) : null);
+  const gate = blockedReason ?? (rights.confirmed ? undefined : RIGHTS_COPY.error);
+  const canSubmit = signedIn && picked.length >= MIN_CAST && prompt.length >= 3 && !creating && !gate;
 
   const toggle = (id: string) => setPickedIds((current) => (current.includes(id) ? current.filter((entry) => entry !== id) : current.length >= MAX_CAST ? current : [...current, id]));
 
@@ -196,12 +200,14 @@ export function EnsembleCreate({
             <span>Longer scenes take longer to draw.</span>
           </div>
 
+          <RightsConfirmation confirmed={rights.confirmed} onConfirmedChange={rights.setConfirmed} disabled={creating || picked.length < MIN_CAST} />
+
           <div className={composer.submit}>
             <Button className={composer.generate} type="submit" variant="ai" size="lg" disabled={!canSubmit} aria-busy={creating || undefined}>
               {creating ? <Spinner /> : <HugeiconsIcon icon={AiPaintbrushIcon} size={16} strokeWidth={1.75} />}
               Create {seconds} s scene
             </Button>
-            {blockedReason ? <p className={composer.blocked}>{blockedReason}</p> : null}
+            {gate && picked.length >= MIN_CAST ? <p className={composer.blocked}>{gate}</p> : blockedReason ? <p className={composer.blocked}>{blockedReason}</p> : null}
           </div>
         </form>
       </aside>
