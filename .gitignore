@@ -2,16 +2,32 @@ node_modules/
 .next/
 *.tsbuildinfo
 .env*
+!.env.example
 .DS_Store
 *.tgz
+.pnpm-store/
+*.egg-info/
+__pycache__/
+services/animation-worker/.venv/
+services/animation-worker/.pytest_cache/
+
+# Local runtime data and test output
 .focus-data/
-!.env.example
 .focus-data-e2e/
 e2e/.fixtures/
 test-results/
 playwright-report/
-.claude/worktrees/
-services/animation-worker/.venv/
-services/animation-worker/.pytest_cache/
-__pycache__/
 debug_runs/
+
+# Local media: keep user footage and renders out of the repository
+*.mov
+*.mp4
+!public/demo/**/*.mp4
+
+# Editor / AI-assistant tooling is local-only
+.claude/
+.agents/
+.codex/
+.gstack/
+AGENTS.md
+CLAUDE.md

@@ -34,7 +34,7 @@ const HUE: Readonly<Record<BoneName, readonly [number, number, number]>> = {
  * the band just above them, counting only torso and thigh pixels so a hand resting there doesn't widen it. Arms
  * and the bust are covered by the arms on many sheets and keep the generic build.
  * The mannequin is the reference Muse Image follows most closely: with generic widths it drew every
- * character with the same straight, slim body (docs/focus-pipeline-repair/PHASE_07.md).
+ * character with the same straight, slim body.
  */
 export type MannequinBuild = { readonly widths: Partial<Record<BoneName, number>>; readonly torsoMargin: number | null };
 

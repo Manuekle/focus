@@ -311,7 +311,7 @@ export function checkProportions(spec: BodySpec | null, drawn: Pose, drawnMarks:
   const score = Math.round(Math.max(worst ? Math.abs(worst.ratio - 1) : 0, head !== null ? Math.abs(head - 1) : 0) * 1000) / 1000;
   // A measured defect: a limb longer than the character's own fully extended limb, or a wrong head. Too long
   // against an estimate, or too short (the drawing may simply show the limb more foreshortened than the
-  // guide: 4 of 9 approved drawings did, docs/focus-pipeline-repair/PHASE_07.md), stands as a finding for a
+  // guide: 4 of 9 approved drawings did), stands as a finding for a
   // person, not a reason to draw again.
   const measuredOff = found.some((entry) => !entry.bone.estimated && tooLong(entry)) || (head !== null && Math.abs(head - 1) > limits.head);
   const estimated = found.filter(({ bone }) => bone.estimated).map(({ bone }) => `${bone.screen.toLowerCase()}-of-image ${bone.name}`);

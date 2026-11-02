@@ -18,6 +18,8 @@ const config: NextConfig = {
   allowedDevOrigins: ["*.trycloudflare.com", ...(process.env.FOCUS_DEV_ORIGINS?.split(",").map((origin) => origin.trim()).filter(Boolean) ?? [])],
   // A self-contained server for the Docker image (see Dockerfile).
   output: "standalone",
+  // Do not advertise the framework in every response.
+  poweredByHeader: false,
   // Always compile an explicit boolean, even when the variable is absent.
   // Only this public release value is exposed; server credentials stay private.
   env: {
@@ -38,8 +40,17 @@ const config: NextConfig = {
     const cache = (source: string, maxAge: number) => ({ source, headers: [{ key: "Cache-Control", value: `public, max-age=${maxAge}, stale-while-revalidate=${maxAge * 7}` }] });
     const day = 86_400;
     return [
+      // Conservative hardening for every response; no CSP yet because the app relies on inline theme scripts.
+      {
+        source: "/:path*",
+        headers: [
+          { key: "X-Content-Type-Options", value: "nosniff" },
+          { key: "X-Frame-Options", value: "SAMEORIGIN" },
+          { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+        ],
+      },
       cache("/fonts/:path*", 30 * day),
-      ...["/backgrounds", "/demo", "/logos", "/characters", "/patterns", "/textures", "/brand"].map((dir) => cache(`${dir}/:path*`, day)),
+      ...["/backgrounds", "/demo", "/characters", "/patterns", "/textures", "/brand"].map((dir) => cache(`${dir}/:path*`, day)),
     ];
   },
 };

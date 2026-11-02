@@ -104,6 +104,8 @@ export const RotoscopeRunSummarySchema = z.object({
   phase: RotoscopePhaseSchema,
   total: z.number().int(),
   approved: z.number().int(),
+  /** A run kept for the demo and the landing page: it can't be deleted (a `.protected` file in its folder). */
+  protected: z.boolean().optional(),
 });
 export type RotoscopeRunSummary = z.infer<typeof RotoscopeRunSummarySchema>;
 

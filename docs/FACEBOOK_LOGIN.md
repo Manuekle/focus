@@ -1,66 +1,67 @@
-# Facebook Login de Focus
+# Facebook Login
 
-## App y credenciales
+Focus signs people in with Facebook. Locally the flow is simulated (`FOCUS_AUTH_SIMULATED=1`); in production it uses a real Meta app.
 
-Se utiliza la app Consumidor existente **focus**, ID **1106108992117051**. No se creó otra app ni se cambiaron sus propietarios o roles.
+## App and credentials
 
-- [Ajustes básicos](https://developers.facebook.com/apps/1106108992117051/settings/basic/)
-- [Facebook Login / OAuth](https://developers.facebook.com/apps/1106108992117051/fb-login/settings/)
-- [Permisos y funciones](https://developers.facebook.com/apps/1106108992117051/app-review/permissions/)
+Use a Meta app of type **Consumer**. In its dashboard you need three areas: *Settings → Basic*, *Facebook Login → Settings* (OAuth) and *App Review → Permissions and features*.
 
-`FACEBOOK_APP_ID` y `FACEBOOK_APP_SECRET` están configurados como variables del servicio `focus` en Railway, entorno `production`. La clave existente se transfirió sin incluirla en Git o en esta documentación. `FACEBOOK_GRAPH_VERSION=v26.0` coincide con la versión que la app muestra para todas sus llamadas y para sus roles. Mantener `FOCUS_AUTH_SIMULATED=0` y conservar el secreto de sesión preparado.
+Set these variables on the service (never in Git or in documentation):
 
-El servidor utiliza OAuth por código de autorización y solicita únicamente `public_profile,email`. El diálogo de acceso informa también del correo opcional. La contraseña de Facebook no pasa por Focus.
-
-En Meta se guardaron el contacto **elustondo129@gmail.com**, la categoría **Utilidad y productividad** y el icono de gato que ya utiliza Focus. Se comprobó su persistencia al volver a los ajustes; el correo se verificó visualmente porque el navegador lo oculta en las lecturas de campos.
-
-## URLs del servicio
-
-El dominio actual elegido por el usuario es `focusmeta.up.railway.app`. `FOCUS_PUBLIC_URL` y los campos de Meta deben usar ese mismo origen. Al cambiar de dominio, retirar de Meta los callbacks y dominios anteriores que ya no estén bajo el control del servicio.
-
-Cuando Railway asigne el dominio HTTPS real, usar ese mismo origen en `FOCUS_PUBLIC_URL` y en estos campos de Meta:
-
-| Campo | Valor |
+| Variable | Purpose |
 | --- | --- |
-| Dominios de la app | Solo el hostname, sin protocolo ni ruta |
-| Plataforma / Sitio web | `https://<dominio>/flipbook` |
-| URL de la política de privacidad | `https://<dominio>/privacy` |
-| Eliminación de datos / URL de instrucciones | `https://<dominio>/data-deletion` |
-| URI de redireccionamiento de OAuth válido | `https://<dominio>/api/auth/facebook/callback` |
+| `FACEBOOK_APP_ID` | The app id |
+| `FACEBOOK_APP_SECRET` | The app secret (server only) |
+| `FACEBOOK_GRAPH_VERSION` | The Graph API version the app shows for its calls and roles |
+| `FOCUS_SESSION_SECRET` | Random secret that signs session cookies |
+| `FOCUS_AUTH_SIMULATED` | Keep `0` in production |
 
-No guardar estos ejemplos como si fueran URLs reales ni usar comodines. Verificar primero que las páginas públicas respondan 200 sin iniciar sesión. La opción de eliminación es una **URL de instrucciones**, no un callback automático: esta versión atiende las solicitudes manualmente mediante **elustondo129@gmail.com**, correo público elegido por el responsable del servicio.
+The server uses the OAuth authorization-code flow and requests only `public_profile,email`. The sign-in dialog also tells people that the email is optional. The Facebook password never passes through Focus. Without credentials, the production sign-in returns 503 and does not turn on the simulation.
 
-Las páginas `/privacy` y `/data-deletion` describen el tratamiento actual de los datos y ese canal manual. No implementan un borrado automático de cuenta. Quitar la app de Facebook tampoco borra por sí solo los archivos de Focus. El responsable debe atender las solicitudes verificadas de eliminación y retirar los registros de cuenta, el índice del proveedor y los proyectos/medios asociados según corresponda.
+## Service URLs
 
-## Ajustes OAuth comprobados
+`FOCUS_PUBLIC_URL` and the Meta fields must use the same HTTPS origin. When you change domain, remove the old callbacks and domains from Meta that are no longer under your control.
 
-El 27 de octubre de 2026, Meta mostraba:
+| Meta field | Value |
+| --- | --- |
+| App domains | Hostname only, with no protocol or path |
+| Platform / Website | `https://<domain>/flipbook` |
+| Privacy policy URL | `https://<domain>/privacy` |
+| Data deletion / instructions URL | `https://<domain>/data-deletion` |
+| Valid OAuth redirect URI | `https://<domain>/api/auth/facebook/callback` |
 
-- Inicio de sesión del cliente de OAuth y OAuth web: activados.
-- HTTPS y coincidencia estricta del redirect: activados y bloqueados por Meta.
-- Navegador integrado, dispositivos, SDK de JavaScript y Messenger: desactivados.
-- Lista de redirects: registrar el callback exacto del dominio activo y comprobarlo con el validador de Meta.
+Do not save these examples as if they were real URLs and do not use wildcards. First check that the public pages answer 200 without signing in. The deletion option is an **instructions URL**, not an automatic callback: requests are handled manually through the contact email shown on the privacy page.
 
-Estos valores sirven para el flujo del servidor existente; no hace falta habilitar el SDK de JavaScript ni agregar permisos de fotos, videos, publicaciones o amigos.
+The `/privacy` and `/data-deletion` pages describe how data is handled today and that manual channel. They do not implement automatic account deletion, and removing the app from Facebook does not delete Focus files by itself. Whoever runs the service must handle verified deletion requests and remove the account records, the provider index and the linked projects and media.
 
-## Publicación y prueba
+## OAuth settings
 
-La app permanece en **Desarrollo**. Meta indica **acceso estándar** y **Verificación obligatoria** para `public_profile` y `email`; el panel de Login exige acceso avanzado a `public_profile` para uso público. Completar lo que pida el flujo de verificación de Meta antes de anunciar el acceso a usuarios sin rol en la app. No se solicitó acceso avanzado ni se publicó la app durante esta preparación.
+Recommended values in Meta:
 
-Después del deploy y de guardar el redirect exacto:
+- Client OAuth login and web OAuth login: on.
+- HTTPS enforcement and strict redirect matching: on (Meta locks them).
+- Embedded browser OAuth, device login, JavaScript SDK and Messenger: off.
+- Redirect list: register the exact callback of the active domain and check it with Meta's validator.
 
-1. Probar con una cuenta administradora o de prueba de esta app. Comprobar la ida a Facebook, el retorno a Focus y que `/api/auth/session` identifique la sesión.
-2. Comprobar cancelar el consentimiento y cerrar sesión. El correo puede no estar disponible: Focus lo admite como opcional.
-3. Completar los requisitos de Meta y verificar de nuevo con un usuario sin rol antes de considerar habilitado el acceso público.
+These values serve the existing server-side flow. You do not need to enable the JavaScript SDK or add permissions for photos, videos, posts or friends.
 
-El perfil de Railway para la demo usa el trial con 500 MB de volumen y 1 GiB de RAM. Registrar las URLs después de desplegar y obtener el dominio HTTPS. Tener credenciales configuradas no significa que la ida y vuelta real por Facebook esté verificada.
+## Publishing and testing
 
-## Comprobaciones locales
+An app in **Development** mode only admits people with a role on it. For public access Meta requires standard access with verification for `public_profile` and `email`, and the Login panel asks for advanced access to `public_profile` for public use. Complete whatever Meta's review flow asks before announcing access to users without a role.
 
-- Imagen de producción `focus:facebook-release`: build y TypeScript aprobados.
-- ESLint de las páginas nuevas y el diálogo de acceso aprobado.
-- `/privacy` y `/data-deletion`: HTML público con respuesta 200, correo y enlaces de contacto presentes, sin redirección a login.
-- Lectura y navegación verificadas en navegador; a 390 px no hay desbordamiento horizontal y el contenido declara idioma español.
-- Sin credenciales en el contenedor de prueba, el inicio de sesión de producción devuelve 503 y no habilita la simulación.
+After the deploy and after saving the exact redirect:
 
-Estas pruebas no utilizaron claves de proveedor ni consumieron créditos de Meta. La prueba de consentimiento y retorno real de una cuenta de Facebook se realiza aparte; las URLs configuradas y su validación no equivalen a esa prueba.
+1. Test with an administrator or test account of this app. Check the trip to Facebook, the return to Focus, and that `/api/auth/session` identifies the session.
+2. Check cancelling the consent and signing out. The email may be unavailable; Focus treats it as optional.
+3. Complete Meta's requirements and verify again with a user who has no role before considering public access enabled.
+
+Having credentials configured does not mean the real Facebook round trip has been verified.
+
+## Local checks
+
+- The production image builds and type-checks.
+- `/privacy` and `/data-deletion` return public HTML with 200, with the contact link present and no redirect to login.
+- At 390 px width there is no horizontal overflow.
+- With no credentials in the container, the production sign-in returns 503 and does not enable the simulation.
+
+None of these use provider keys or consume Meta credits.

@@ -1,11 +1,13 @@
 .demo { width: min(620px, 100%); margin: 0 auto; scroll-margin-top: calc(var(--landing-header-height, 0px) + 16px); }
-.scene { position: relative; display: grid; grid-template-columns: 170px 76px 230px; justify-content: center; align-items: center; gap: 8px; padding: 6px 0 20px; }
+.scene { position: relative; display: grid; grid-template-columns: 150px 150px 64px 210px; justify-content: center; align-items: center; gap: 8px; padding: 6px 0 20px; }
 .reference { position: relative; padding-top: 34px; }
 .photo { padding: 6px; border-radius: 16px; background: linear-gradient(180deg, color-mix(in srgb, var(--foreground) 5.1%, transparent), color-mix(in srgb, var(--foreground) 1.2%, transparent)); box-shadow: inset 0 1px 0 color-mix(in srgb, var(--foreground) 7.8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--foreground) 3.9%, transparent), 0 18px 40px -20px #0009; transform: rotate(-5deg); }
 /* The reference art ships on opaque white; multiplying it onto warm paper keeps
    the card from glaring against the dark page. */
 .paper { display: block; isolation: isolate; overflow: hidden; border-radius: 8px; background: #f1ebe1; }
 .photo img { display: block; width: 100%; height: auto; mix-blend-mode: multiply; }
+.clip { overflow: hidden; padding: 6px; border-radius: 16px; background: linear-gradient(180deg, color-mix(in srgb, var(--foreground) 5.1%, transparent), color-mix(in srgb, var(--foreground) 1.2%, transparent)); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--foreground) 3.9%, transparent), 0 18px 40px -20px #0009; transform: rotate(3deg); }
+.clip video { display: block; width: 100%; aspect-ratio: 9 / 16; object-fit: cover; border-radius: 10px; }
 .referenceLabel { display: block; margin: 20px -10px 0; color: var(--muted-foreground); font-size: 13px; text-align: center; }
 .doodle { display: flex; flex-direction: column; align-items: center; align-self: start; gap: 3px; margin-top: 90px; color: var(--accent-foreground); }
 .doodle > span { white-space: nowrap; font-family: var(--font-porkys), sans-serif; font-size: 16px; font-weight: 400; transform: rotate(-8deg); }
@@ -20,19 +22,19 @@
 .videoControl:focus-visible { outline: 2px solid #b6c9ff; outline-offset: 3px; }
 .videoControl:disabled { opacity: .4; cursor: default; }
 @media (max-width: 560px) {
-  .scene { grid-template-columns: minmax(0, .76fr) 44px minmax(0, 1fr); gap: 5px; padding-inline: 8px; }
+  .scene { grid-template-columns: minmax(0, .8fr) minmax(0, .8fr) 30px minmax(0, 1fr); gap: 5px; padding-inline: 8px; }
   .reference { padding-top: 20px; }
   .photo { padding: 5px; border-radius: 12px; }
   .referenceLabel { margin-inline: -6px; font-size: 11px; }
   .doodle { margin-top: 62px; }
+  .doodle svg { display: none; }
   .doodle > span { font-size: 12px; }
-  .doodle svg { width: 44px; height: 35px; }
-}
+  }
 @media (hover: none) {
   .videoControl { width: 36px; height: 36px; opacity: 1; }
 }
 @media (forced-colors: active) {
-  .photo, .player { border: 1px solid CanvasText; }
+  .photo, .player, .clip { border: 1px solid CanvasText; }
 }
 
 :global(:root:not(.dark)) .photo { box-shadow: inset 0 1px 0 color-mix(in srgb, var(--foreground) 8%, transparent), inset 0 0 0 1px color-mix(in srgb, var(--foreground) 6%, transparent), 0 18px 40px -22px rgb(35 39 53 / 0.4); }

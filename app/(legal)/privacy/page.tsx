@@ -2,36 +2,36 @@ import type { Metadata } from "next";
 import Link from "next/link";
 
 export const metadata: Metadata = {
-  title: "Privacidad · Focus",
-  description: "Cómo utiliza Focus los datos de tu cuenta, tus archivos y tus instrucciones.",
+  title: "Privacy · Focus",
+  description: "How Focus uses your account data, your files and your instructions.",
 };
 
 export default function PrivacyPage() {
   return (
     <>
-      <h1>Privacidad de Focus</h1>
-      <p className="text-sm text-muted-foreground">Última actualización: 27 de octubre de 2026.</p>
-      <p>Focus permite editar clips y crear animaciones a partir de imágenes e instrucciones. Para consultar cómo se tratan tus datos, escribe a <a href="mailto:elustondo129@gmail.com">elustondo129@gmail.com</a>, el contacto del responsable de este servicio.</p>
+      <h1>Focus privacy policy</h1>
+      <p className="text-sm text-muted-foreground">Last updated: November 1, 2026.</p>
+      <p>Focus lets you edit clips and create animations from images and instructions. To ask how your data is handled, write to <a href="mailto:elustondo129@gmail.com">elustondo129@gmail.com</a>, the contact for the person who runs this service.</p>
 
-      <h2>Datos que utilizamos</h2>
+      <h2>Data we use</h2>
       <ul>
-        <li><strong>Cuenta de Facebook:</strong> al iniciar sesión recibimos tu identificador de Facebook, nombre, foto de perfil y correo electrónico, si Facebook lo facilita. Los utilizamos para identificar tu cuenta y asociar tus proyectos. No solicitamos acceso a tus publicaciones, lista de amigos ni biblioteca de fotos o videos de Facebook.</li>
-        <li><strong>Contenido que proporcionas:</strong> imágenes, clips, instrucciones, proyectos y resultados generados para realizar las funciones que solicitas.</li>
-        <li><strong>Datos técnicos:</strong> identificadores de sesión y de visitante, estado de los trabajos y datos de uso necesarios para aplicar límites, mantener el servicio y resolver errores.</li>
+        <li><strong>Facebook account:</strong> when you sign in we receive your Facebook ID, name, profile picture and email address, if Facebook provides it. We use them to identify your account and link your projects to it. We do not ask for access to your posts, friends list or Facebook photo and video library.</li>
+        <li><strong>Content you provide:</strong> images, clips, instructions, projects and generated results, used to carry out the features you request.</li>
+        <li><strong>Technical data:</strong> session and visitor identifiers, job status and usage data needed to apply limits, keep the service running and fix errors.</li>
       </ul>
 
-      <h2>Procesamiento y proveedores</h2>
-      <p>Focus utiliza Railway para alojar el servicio y almacenar sus archivos. Cuando solicitas una función de inteligencia artificial, las instrucciones y las imágenes o fragmentos necesarios se envían a Meta Model API para su análisis, generación o segmentación. Esos proveedores procesan la información según sus propias condiciones y políticas.</p>
-      <p>Los datos de tu cuenta de Facebook no se incluyen automáticamente en las solicitudes a los modelos de IA. Evita incluir información sensible en los archivos o instrucciones que envías para procesar.</p>
+      <h2>Processing and providers</h2>
+      <p>Focus uses Railway to host the service and store its files. When you request an artificial-intelligence feature, the instructions and the images or clips it needs are sent to the Meta Model API for analysis, generation or segmentation. Those providers process the information under their own terms and policies.</p>
+      <p>Your Facebook account data is not automatically included in requests to the AI models. Avoid putting sensitive information in the files or instructions you send for processing.</p>
 
-      <h2>Conservación</h2>
-      <p>Los medios temporales que no pertenecen a un proyecto guardado pueden eliminarse mediante la limpieza automática a partir de las 24 horas. Los datos de cuenta y los proyectos guardados se conservan para que puedas volver a acceder a ellos, o hasta que solicites su eliminación. Guarda una copia de los archivos que quieras conservar.</p>
+      <h2>Retention</h2>
+      <p>Temporary media that does not belong to a saved project may be removed by the automatic cleanup after 24 hours. Account data and saved projects are kept so you can come back to them, or until you ask for them to be deleted. Keep a copy of any file you want to hold on to.</p>
 
-      <h2>Cookies y almacenamiento del navegador</h2>
-      <p>Utilizamos cookies para mantener tu sesión, verificar el retorno de Facebook y contar las ediciones gratuitas. La sesión puede durar hasta 30 días y el identificador de visitante hasta un año. El navegador también puede conservar instrucciones y estado del editor localmente. Puedes cerrar sesión y borrar los datos del sitio desde tu navegador; estas acciones no eliminan por sí solas la cuenta ni los archivos guardados en el servidor.</p>
+      <h2>Cookies and browser storage</h2>
+      <p>We use cookies to keep you signed in, to verify the return from Facebook and to count free edits. A session can last up to 30 days and the visitor identifier up to one year. Your browser may also keep instructions and editor state locally. You can sign out and clear the site&apos;s data from your browser; neither action deletes your account or the files saved on the server by itself.</p>
 
-      <h2>Consultar, corregir o eliminar tus datos</h2>
-      <p>Puedes solicitar información, correcciones o la eliminación de tus datos escribiendo a <a href="mailto:elustondo129@gmail.com">elustondo129@gmail.com</a>. Podemos pedirte información que permita verificar que la cuenta te pertenece, pero nunca tu contraseña de Facebook. Consulta las <Link href="/data-deletion">instrucciones de eliminación de datos</Link>.</p>
+      <h2>Access, correct or delete your data</h2>
+      <p>You can request information, corrections or deletion of your data by writing to <a href="mailto:elustondo129@gmail.com">elustondo129@gmail.com</a>. We may ask for information that lets us verify the account is yours, but never your Facebook password. See the <Link href="/data-deletion">data deletion instructions</Link>.</p>
     </>
   );
 }

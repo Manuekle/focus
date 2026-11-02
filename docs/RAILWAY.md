@@ -1,118 +1,118 @@
-# Deploy de Focus en Railway
+# Deploying Focus on Railway
 
-## Decisión
+## Why Railway
 
-Railway permite conservar la arquitectura actual: un contenedor con Next.js, FFmpeg/FFprobe, Sharp, trabajos de IA en segundo plano y archivos en un volumen. El contador de generaciones usa SQLite en ese volumen; no necesita un servicio de base de datos externo.
+Railway keeps the current architecture intact: one container with Next.js, FFmpeg/FFprobe, Sharp, background AI jobs and files on a volume. The generation counter uses SQLite on that volume, so no external database service is needed.
 
-| Plataforma | Encaje con esta versión |
+| Platform | Fit for this version |
 | --- | --- |
-| **Railway — recomendada** | Docker, proceso continuo, volumen persistente y dominio HTTPS. Configuración preparada en este repositorio. |
-| Render | Alternativa válida con un servicio Docker de pago y disco persistente. El disco también obliga a usar una instancia. |
-| Vercel | Requiere separar almacenamiento y procesamiento: los uploads de Focus admiten 150 MB y Vercel Functions limita el cuerpo de una petición a 4,5 MB. Los trabajos en memoria y archivos locales tampoco se comparten entre funciones. Puede alojar el frontend si se cambia la arquitectura. |
+| **Railway (recommended)** | Docker, a long-running process, a persistent volume and an HTTPS domain. The configuration is in this repository. |
+| Render | A valid alternative with a paid Docker service and a persistent disk. The disk also forces a single instance. |
+| Vercel | Needs storage and processing to be split out: Focus accepts 150 MB uploads while Vercel Functions limit a request body to 4.5 MB, and in-memory jobs and local files are not shared between functions. It can host the frontend if the architecture changes. |
 
-Fuentes oficiales consultadas el 27 de octubre de 2026: [Vercel Functions](https://vercel.com/docs/functions/limitations), [volúmenes Railway](https://docs.railway.com/volumes), [discos Render](https://render.com/docs/disks).
+Official sources: [Vercel Functions limits](https://vercel.com/docs/functions/limitations), [Railway volumes](https://docs.railway.com/volumes), [Render disks](https://render.com/docs/disks).
 
-## Configuración de demo en el trial
+## Demo profile on the trial plan
 
-El perfil elegido es una demo para pruebas: **500 MB en `/data`, 1 vCPU, hasta 1 GiB de RAM y un trabajo activo a la vez**. Los videos admiten **15 segundos y 10 MB**; las imágenes, **5 MB**. Los 5 GB de Hobby son una opción posterior con mayor margen, no un mínimo demostrado para Flipbook.
+The demo profile is **a 500 MB volume at `/data`, 1 vCPU, up to 1 GiB of RAM and one active job at a time**. Videos accept **15 seconds and 10 MB**; images accept **5 MB**. The 5 GB of the Hobby plan is a later option with more headroom, not a demonstrated minimum for Flipbook.
 
-La demo configura `FOCUS_MAX_DATA_MB=350` y `FOCUS_MIN_FREE_MB=100`. Se comprueba el volumen antes de aceptar uploads y trabajo de IA, y antes de escribir imágenes, fotogramas y archivos de exportación. Las escrituras binarias se serializan y los encoders se interrumpen si alcanzan el umbral. El margen protege los archivos temporales entre comprobaciones; es un control de la aplicación, no una cuota del sistema de archivos. Al alcanzarlo, la API responde `storage_full` (507) y mantiene los archivos existentes. No se borran automáticamente personajes ni proyectos guardados. La limpieza normal de temporales expirados sigue vigente. `/api/health` muestra uso, límite y espacio disponible para nuevos medios.
+The demo sets `FOCUS_MAX_DATA_MB=350` and `FOCUS_MIN_FREE_MB=100`. The volume is checked before accepting uploads and AI work, and before writing images, frames and export files. Binary writes are serialized and encoders are interrupted if they reach the threshold. The margin protects temporary files between checks; it is an application control, not a filesystem quota. When it is reached the API answers `storage_full` (507) and keeps existing files. Saved characters and projects are never deleted automatically. The normal cleanup of expired temporary files still runs. `/api/health` shows usage, the limit and the space left for new media.
 
-`FOCUS_PUBLIC_URL=https://focusmeta.up.railway.app` define también el origen permitido para modificar personajes. La comparación usa la URL pública HTTPS aunque Next reciba una URL HTTP interna. Esto no requiere habilitar `FOCUS_TRUST_PROXY` ni confiar en cabeceras de IP arbitrarias.
+`FOCUS_PUBLIC_URL=https://<your-domain>` also defines the allowed origin for changing characters. The comparison uses the public HTTPS URL even when Next receives an internal HTTP one. This does not require enabling `FOCUS_TRUST_PROXY` or trusting arbitrary IP headers.
 
-El conteo de archivos omite `lost+found` en la raíz del volumen: es una carpeta de recuperación del sistema de archivos que Railway mantiene protegida. La reserva se calcula con el espacio libre real del volumen completo, incluido el que ocupe esa carpeta; no se cambian sus permisos.
+The file count skips `lost+found` at the volume root: it is a filesystem recovery folder that Railway keeps protected. The reserve is computed from the real free space of the whole volume, including what that folder occupies; its permissions are not changed.
 
-`railway.json` define:
+`railway.json` defines:
 
-- Build con el `Dockerfile` existente; Next.js standalone + FFmpeg/FFprobe.
-- Una instancia, sin suspensión por inactividad. Los trabajos y bloqueos viven en un solo proceso.
-- Volumen obligatorio en `/data`. El archivo exige el montaje; el volumen se crea en Railway.
-- Salud en `/api/health`, con 120 segundos para iniciar.
-- Reinicio ante fallo, hasta cinco intentos; sin solapamiento entre versiones.
-- Límites máximos de 1 vCPU y 1 GiB de RAM. Son límites de consumo, no reservas ni un límite monetario.
+- A build with the existing `Dockerfile` (Next.js standalone + FFmpeg/FFprobe).
+- One instance, with no sleep on inactivity. Jobs and locks live in a single process.
+- A required volume at `/data`. The file demands the mount; the volume itself is created in Railway.
+- Health checks on `/api/health` with 120 seconds to start.
+- Restart on failure, up to five attempts; no overlap between releases.
+- Resource ceilings of 1 vCPU and 1 GiB of RAM. They are consumption limits, not reservations or a spending cap.
 
-`deploy/railway.env.example` contiene las variables para el servicio, sin secretos. Habilita Flipbook y mantiene Time Freeze deshabilitado. Los dos flags y los límites de upload se compilan: definirlos **antes** del primer deploy y reconstruir para cambiarlos. Railway transmite al Docker build las variables declaradas como `ARG`; el Dockerfile no declara argumentos para secretos.
+`deploy/railway.env.example` holds the service variables, without secrets. It enables Flipbook and keeps Time Freeze disabled. The two feature flags and the upload limits are compiled in: set them **before** the first deploy and rebuild to change them. Railway passes variables declared as `ARG` to the Docker build; the Dockerfile declares no arguments for secrets.
 
-Railway monta el volumen como root. `RAILWAY_RUN_UID=0` permite que `deploy/docker-entrypoint.sh` cambie el dueño de `/data`; después ejecuta Next.js como `node` (UID 1000). El servidor y FFmpeg no permanecen como root. En Docker normal, la imagen sigue usando `USER node`.
+Railway mounts the volume as root. `RAILWAY_RUN_UID=0` lets `deploy/docker-entrypoint.sh` change the owner of `/data`; it then runs Next.js as `node` (UID 1000). The server and FFmpeg do not stay root. With plain Docker the image still uses `USER node`.
 
-El healthcheck de Docker usa `PORT`, incluido cuando Railway lo asigna dinámicamente. No sobrescribir el Start Command: usar el `ENTRYPOINT` y `CMD` de la imagen.
+The Docker healthcheck uses `PORT`, including when Railway assigns it dynamically. Do not override the Start Command: use the image's `ENTRYPOINT` and `CMD`.
 
-`FOCUS_PROVIDER_CONNECTIVITY_CHECK=1` consulta al arrancar, como usuario `node`, el catálogo de Meta Model API con la clave configurada y Graph API sin credenciales. Registra el estado HTTP, los modelos disponibles, un identificador hash de la clave y los errores de acceso; nunca registra la clave, envía prompts ni ejecuta modelos. El catálogo debe responder 200 con una clave válida; Graph puede responder 400 por no llevar un token. La prueba no bloquea el arranque si la red está restringida. Puede desactivarse después de verificarla.
+`FOCUS_PROVIDER_CONNECTIVITY_CHECK=1` queries, at startup and as the `node` user, the Meta Model API catalog with the configured key and the Graph API without credentials. It logs the HTTP status, the available models, a hashed key identifier and access errors; it never logs the key, sends prompts or runs models. The catalog must answer 200 with a valid key; Graph may answer 400 because it carries no token. The check does not block startup if the network is restricted. It can be turned off once verified.
 
-Un HTTP 200 con `models: []` no confirma que la cuenta pueda generar. El diagnóstico muestra `missingModels` y `ready`; comprobar `ready: true`. Antes de cada nueva generación en producción, el servidor verifica los modelos requeridos con el catálogo autenticado (éxitos en caché durante 60 segundos). Si falta acceso, rechaza el inicio sin descontar una generación. Los errores de solicitudes al proveedor registran paso, estado HTTP, código e identificador de solicitud, sin prompts ni claves.
+An HTTP 200 with `models: []` does not confirm that the account can generate. The diagnostic shows `missingModels` and `ready`; check for `ready: true`. Before each new generation in production the server verifies the required models against the authenticated catalog (successes are cached for 60 seconds). If access is missing it refuses the start without spending a generation. Provider request errors log the step, HTTP status, code and request id, never prompts or keys.
 
-## Límite de generaciones
+## Generation limit
 
-`FOCUS_FREE_EDITS=3` fija un límite total por usuario, también después de iniciar sesión. Una solicitud explícita de animación, versión de personaje, edición de video o redibujo usa un turno; los fotogramas iniciales pendientes de una animación ya iniciada y el reintento de su preparación forman parte de ese mismo turno. Las vistas previas automáticas no descuentan turnos. Los límites de dibujos por animación, de concurrencia, de almacenamiento y de solicitudes por hora siguen aplicándose.
+`FOCUS_FREE_EDITS=3` sets a total limit per user, also after signing in. An explicit request for an animation, character version, video edit or redraw uses one turn; the initial frames still pending in an animation that has already started, and the retry of its preparation, are part of that same turn. Automatic previews do not use turns. The limits on drawings per animation, concurrency, storage and requests per hour still apply.
 
-El desarrollo local con `pnpm dev` (`NODE_ENV=development`) no aplica ni descuenta el límite de generaciones; la sesión devuelve `quota: null` y no muestra el aviso de agotamiento. Los contadores guardados permanecen intactos. La excepción depende del entorno del servidor, nunca del host ni de cabeceras enviadas por el cliente: producción mantiene su límite incluso si una solicitud declara `localhost`.
+Local development with `pnpm dev` (`NODE_ENV=development`) neither applies nor deducts the generation limit; the session returns `quota: null` and shows no exhaustion notice. Stored counters stay intact. The exception depends on the server environment, never on the host or on client-sent headers: production keeps its limit even if a request claims `localhost`.
 
-El contador se guarda en `/data/quota/generations.sqlite`, con transacciones que impiden usar el último turno dos veces. Las cuentas se identifican por su ID autenticado, independientemente de la IP; los visitantes conservan el control por cookie e IP. El primer acceso de una cuenta incorpora el uso anónimo de ese navegador y cerrar sesión no devuelve sus turnos. Los contadores JSON anteriores se importan sin reiniciar su uso. El uso histórico de cuentas que antes eran ilimitadas no se reconstruye: reciben la asignación al primer acceso tras esta actualización.
+The counter is stored at `/data/quota/generations.sqlite`, with transactions that prevent spending the last turn twice. Accounts are identified by their authenticated id regardless of IP; visitors keep cookie-plus-IP control. An account's first visit absorbs that browser's anonymous usage, and signing out does not give turns back. Earlier JSON counters are imported without resetting their usage. Historical usage of accounts that used to be unlimited is not reconstructed: they receive the allowance on their first visit after the update.
 
-Al intentar otra generación con saldo cero aparece “No generations left”, sin prometer que iniciar sesión aumentará el límite. Ver proyectos, restaurar versiones y exportar siguen disponibles. La tercera animación puede terminar sus dibujos iniciales aunque su inicio haya consumido el último turno. No se descuentan rechazos de las comprobaciones previas (incluido el acceso a modelos); una operación aceptada consume el turno aunque falle después de empezar. No restaurar automáticamente turnos cuyo consumo en el proveedor sea incierto.
+When someone tries another generation with a zero balance, "No generations left" appears, without promising that signing in raises the limit. Viewing projects, restoring versions and exporting remain available. The third animation may finish its initial drawings even if starting it used the last turn. Rejections from preliminary checks (including model access) are not deducted; an accepted operation spends the turn even if it fails after starting. Turns whose consumption at the provider is uncertain are not restored automatically.
 
-Respaldar el volumen completo o usar la API de backup de SQLite para el contador; copiar solo el archivo SQLite mientras hay escrituras no es una copia consistente. Mantener una sola réplica y el runtime Node 24 del Dockerfile. Al ampliar a varias instancias con almacenamiento separado, migrar estos contadores a una base compartida antes del despliegue.
+Back up the whole volume or use SQLite's backup API for the counter; copying only the SQLite file while writes happen is not a consistent copy. Keep a single replica and the Node 24 runtime from the Dockerfile. When scaling to several instances with separate storage, migrate these counters to a shared database before deploying.
 
-## Configurar la cuenta y el servicio
+## Setting up the account and service
 
-1. Conectar la integración de Railway o iniciar sesión con `pnpm dlx @railway/cli login`.
-2. Crear un proyecto `focus` y un servicio vacío `focus` en el workspace elegido. Para un proyecto nuevo por CLI:
+1. Connect the Railway integration or sign in with `pnpm dlx @railway/cli login`.
+2. Create a `focus` project and an empty `focus` service in the chosen workspace. For a new project through the CLI:
 
    ```sh
    pnpm dlx @railway/cli init --name focus
    pnpm dlx @railway/cli add --service focus
    ```
 
-   Si ya existe el proyecto, usar `pnpm dlx @railway/cli link` y seleccionar el proyecto y servicio correspondientes.
+   If the project already exists, use `pnpm dlx @railway/cli link` and select the project and service.
 
-3. Adjuntar un volumen persistente al servicio, con montaje `/data`; configurar **500 MB** para esta demo. El volumen y su tamaño se configuran en Railway, no dentro de `railway.json`.
+3. Attach a persistent volume to the service, mounted at `/data`; set it to **500 MB** for this demo. The volume and its size are configured in Railway, not in `railway.json`.
 
    ```sh
    pnpm dlx @railway/cli volume add --service focus --mount-path /data
    ```
 
-   Revisar el tamaño en los ajustes del volumen. Las copias de seguridad se habilitan aparte en esos ajustes.
+   Check the size in the volume settings. Backups are enabled separately there.
 
-4. En **Variables / Raw Editor**, pegar `deploy/railway.env.example` y completar:
+4. In **Variables / Raw Editor**, paste `deploy/railway.env.example` and fill in:
 
-   - `MODEL_API_KEY`: una clave de producción de Meta Model API.
-   - `FOCUS_SESSION_SECRET`: valor aleatorio de 32+ caracteres. Se puede generar con `openssl rand -base64 48`; guardarlo únicamente como secreto.
-   - `FOCUS_ADMIN_TOKEN`: otro secreto aleatorio para consultar `/api/usage`.
-   - `FACEBOOK_APP_ID` y `FACEBOOK_APP_SECRET`: necesarios para iniciar sesión y guardar proyectos. Iniciar sesión no reinicia el límite de generaciones. Mantener `FOCUS_AUTH_SIMULATED=0`.
+   - `MODEL_API_KEY`: a production Meta Model API key.
+   - `FOCUS_SESSION_SECRET`: a random value of 32+ characters. Generate one with `openssl rand -base64 48` and store it only as a secret.
+   - `FOCUS_ADMIN_TOKEN`: another random secret, used to query `/api/usage` and to unlock `/settings`.
+   - `FACEBOOK_APP_ID` and `FACEBOOK_APP_SECRET`: needed to sign in and save projects. Signing in does not reset the generation limit. Keep `FOCUS_AUTH_SIMULATED=0`.
 
-   No pegar secretos en Git, archivos de configuración versionados, argumentos del build ni capturas. No hace falta usar las claves locales de desarrollo.
+   Do not paste secrets into Git, versioned configuration files, build arguments or screenshots. The local development keys are not needed.
 
-5. Hacer el primer deploy desde el checkout actual:
+5. Make the first deploy from the current checkout:
 
    ```sh
    pnpm dlx @railway/cli up --service focus --detach
    ```
 
-   `.railwayignore` excluye secretos, cachés y medios locales. Este método incluye los archivos nuevos de Flipbook que todavía no están en Git. Antes de activar autodeploy desde GitHub, esos cambios deben estar revisados y publicados en la rama seleccionada.
+   `.railwayignore` excludes secrets, caches and local media. This method includes files that are not in Git yet, so review and publish your changes to the selected branch before turning on GitHub autodeploy.
 
-6. Generar un dominio público HTTPS del servicio:
+6. Generate a public HTTPS domain for the service:
 
    ```sh
    pnpm dlx @railway/cli domain --service focus
    ```
 
-   Verificar que `FOCUS_PUBLIC_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}` se resuelva al dominio asignado. Con un dominio propio, sustituirlo por ese origen HTTPS y actualizar Facebook.
+   Check that `FOCUS_PUBLIC_URL=https://${{RAILWAY_PUBLIC_DOMAIN}}` resolves to the assigned domain. With a custom domain, replace it with that HTTPS origin and update Facebook.
 
-7. En la app de Meta, registrar `https://<dominio-del-servicio>/api/auth/facebook/callback` como **Valid OAuth Redirect URI**. Registrar también las páginas `/privacy` y `/data-deletion`. Ver los campos y el estado de acceso en [Facebook Login](FACEBOOK_LOGIN.md). Esta configuración de Facebook no se crea automáticamente al publicar en Railway.
+7. In the Meta app, register `https://<service-domain>/api/auth/facebook/callback` as a **Valid OAuth Redirect URI**, and register the `/privacy` and `/data-deletion` pages. See [FACEBOOK_LOGIN.md](FACEBOOK_LOGIN.md) for the fields and the access status. This Facebook configuration is not created automatically when you publish to Railway.
 
-8. Comprobar `/api/health`, `/editor` y `/flipbook`. La salud debe indicar `storageWritable: true`, `metaConfigured: true` y `aiEnabled: true`. Una respuesta 200 por sí sola no certifica que las claves o Facebook estén configurados: `/api/health` comprueba principalmente FFmpeg y almacenamiento.
+8. Check `/api/health`, `/editor` and `/flipbook`. Health should report `storageWritable: true`, `metaConfigured: true` and `aiEnabled: true`. A 200 alone does not certify that keys or Facebook are configured: `/api/health` mainly checks FFmpeg and storage.
 
-No crear réplicas, regiones adicionales ni habilitar suspensión. Un deploy/reinicio interrumpe el trabajo que esté corriendo; los archivos completados se conservan. Publicar entre generaciones para reducir interrupciones.
+Do not create replicas or extra regions, and do not enable sleep. A deploy or restart interrupts any running job; completed files are kept. Publish between generations to reduce interruptions.
 
-## Costos
+## Costs
 
-El trial consume su crédito disponible hasta agotarlo o vencer el plazo mostrado en la cuenta. Admite un volumen de 500 MB y hasta 1 GB de RAM. **Limited Trial restringe conexiones salientes**: comprobar desde el servicio el acceso HTTPS a Meta Model API y Graph API; conectar/verificar GitHub puede habilitar Full Trial. El perfil no activa una suscripción Hobby.
+The trial spends its available credit until it runs out or the deadline shown on the account passes. It supports a 500 MB volume and up to 1 GB of RAM. **The limited trial restricts outbound connections**: check from the service that HTTPS access to the Meta Model API and Graph API works; connecting and verifying GitHub can enable the full trial. The profile does not start a Hobby subscription.
 
-[Railway Hobby](https://railway.com/pricing) queda como alternativa posterior: mínimo de **US$5/mes**, con US$5 de uso incluidos y consumo adicional aparte. El plan Free posterior al trial reduce la RAM disponible a 0,5 GB y tiene crédito mensual menor: no equivale al trial que se está probando. El costo de Meta es independiente de Railway; los límites `FOCUS_*` controlan solicitudes/trabajos, no garantizan un importe mensual.
+[Railway Hobby](https://railway.com/pricing) is a later alternative: a minimum of **US$5/month**, with US$5 of usage included and additional usage billed separately. The free plan after the trial reduces the available RAM to 0.5 GB and has a smaller monthly credit, so it is not equivalent to the trial profile. Meta's cost is independent of Railway; the `FOCUS_*` limits control requests and jobs but do not guarantee a monthly amount.
 
-Fuentes: [trial y restricciones de red](https://docs.railway.com/pricing/free-trial), [recursos por plan](https://docs.railway.com/pricing/plans).
+Sources: [trial and network restrictions](https://docs.railway.com/pricing/free-trial), [resources per plan](https://docs.railway.com/pricing/plans).
 
-## Prueba de producción local, sin créditos de IA
+## Local production test, no AI credits
 
 ```sh
 docker build \
@@ -125,25 +125,13 @@ docker build \
 pnpm test:deployment
 ```
 
-La prueba usa un volumen nuevo y aislado, limita el contenedor a **1 CPU / 1 GiB**, reproduce los permisos de Railway, inicia en `PORT=8080`, comprueba que PID 1 sea `node`, prueba salud/sesiones/Flipbook, valida un upload real con FFmpeg y comprueba que los medios sobrevivan al reinicio. Registra el pico de memoria cuando cgroup lo permite. Deshabilita la IA y deja vacías las claves de proveedor. Elimina únicamente sus propios contenedores/volúmenes y escribe `.focus-data/deployment/report.json`. El volumen local no impone una cuota de disco; los 500 MB se configuran en Railway.
+The test uses a new, isolated volume, limits the container to **1 CPU / 1 GiB**, reproduces Railway's permissions, starts on `PORT=8080`, checks that PID 1 is `node`, exercises health, sessions and Flipbook, validates a real upload through FFmpeg and checks that media survives a restart. It records peak memory when cgroups allow it. It disables AI and leaves provider keys empty. It removes only its own containers and volumes and writes `.focus-data/deployment/report.json`. The local volume imposes no disk quota; the 500 MB is configured in Railway.
 
-## Estado
+## Operating notes
 
-Configuración preparada en el repositorio. Verificado localmente el 27 de octubre de 2026:
+- The publication branch is `main`. The service should follow it without pinning a `commitSha`, so the next pushes deploy.
+- Keep the privacy pages, the trial configuration and the existing volume across deploys.
+- Use the public domain for `FOCUS_PUBLIC_URL` and for the URLs registered with Facebook.
+- Verify a release by checking `/api/health` (FFmpeg, FFprobe, writable volume, `metaConfigured`, `aiEnabled`). That confirms configuration, not a real generation or the Facebook sign-in round trip, which should be tested separately.
 
-- `railway.json` válido contra el esquema oficial vigente.
-- Imagen Docker `focus:railway` compilada con Flipbook habilitado.
-- `pnpm test:deployment`: **8 comprobaciones aprobadas**, incluidas escritura en el volumen de Railway, ejecución sin privilegios, puerto dinámico, FFmpeg y persistencia de imagen/video después de reiniciar.
-- ESLint, sintaxis del entrypoint/script y `git diff --check` sin errores.
-
-El perfil de demo también pasó las ocho comprobaciones con **1 CPU / 1 GiB**. El pico observado durante esas pruebas básicas de uploads/normalización fue de **265.936.896 bytes (unos 254 MiB)**; no es una medición de todas las generaciones de IA ni una prueba de carga. El diagnóstico opcional también se probó sin red: registra el fallo y permite ejecutar la aplicación como UID 1000.
-
-La prueba de contenedor corrió en Docker Linux/arm64 local. El servicio también tiene un despliegue activo en Railway; `/api/health` verifica FFmpeg, FFprobe y escritura en el volumen.
-
-La cuenta de Railway está conectada y existe el proyecto privado [focus](https://railway.com/project/f7e84859-2207-487c-b6f1-9dfc6a6d1e26) en el workspace `Manus projects`, con el entorno `production`. Se prepararon el servicio, el volumen de 500 MB y 25 variables, incluidas las dos credenciales y la versión de Graph API de Facebook Login. Los secretos se guardan en Railway y no forman parte de Git. La salud del servicio confirma `metaConfigured: true` y `aiEnabled: true`; esto comprueba la configuración, pero no sustituye una generación real ni la validación de Facebook Login.
-
-El usuario eligió probar primero la demo en el trial. El volumen solicitado coincide con el límite de 500 MB de la cuenta. Los límites de CPU/RAM y demás ajustes del servicio se aplican desde `railway.json` al desplegar el código. Consultar el panel de Railway para el estado y el dominio vigentes.
-
-La rama de publicación es `main`, que integra el trabajo de `codex/railway-deploy` y `feat/animate-as-is`, incluido el estudio de personajes y las nuevas herramientas de animación. El servicio debe seguir `Manuekle/focus@main` sin fijar un `commitSha`, para desplegar los próximos pushes a esa rama. Se conservan las páginas de privacidad, la configuración del trial y el volumen existente. El dominio activo es [focusmeta.up.railway.app](https://focusmeta.up.railway.app); usarlo también en `FOCUS_PUBLIC_URL` y las URLs de Facebook.
-
-Referencias adicionales: [configuración como código](https://docs.railway.com/config-as-code/reference), [esquema vigente](https://railway.com/railway.schema.json), [Docker y build args](https://docs.railway.com/builds/dockerfiles), [red y timeouts](https://docs.railway.com/networking/public-networking/specs-and-limits).
+Further references: [config as code](https://docs.railway.com/config-as-code/reference), [current schema](https://railway.com/railway.schema.json), [Dockerfiles and build args](https://docs.railway.com/builds/dockerfiles), [networking and timeouts](https://docs.railway.com/networking/public-networking/specs-and-limits).

@@ -14,3 +14,9 @@ Updated on 2026-10-29 from the user-supplied `270507.mp4`. These files replace t
 | `motion-echo.mp4` | Motion Echo | Six trails, 400 ms spacing, intensity 0.85, feather 1.2; visible in the flying birds and moving tail |
 
 Each demo keeps the existing player format: original above, edited below in one synchronized 960×1080 stream. Each matching JPG is taken at 6 seconds, with the birds in view, from that same stream. All MP4s were verified with FFprobe for codec, dimensions, frame rate, duration, frame count and absence of audio. The original 4K upload and tracking files are kept locally outside the public assets.
+
+## Rotoscope (landing hero)
+
+`rotoscope/` comes from the real Rotoscope run `79c62e4a-2152-4487-ab71-7de1f412e801` ("reze dance", 148/148 frames approved): `character.jpg` (reference image), `reference.mp4` (reference video, 540×960, silent), `result.mp4` (approved drawings on white, 720×1280, 27 fps, with the clip's sound). Shown by `app/_editor/flipbook-demo.tsx`; the result leads and the reference follows it. The run is protected (`.protected` in its folder under the gitignored `.focus-data/rotoscope/`): never delete it.
+
+> **Rights notice.** The media in `rotoscope/` (a dance video and the character Reze from *Chainsaw Man*, © MAPPA / Shueisha) is used with the owner's permission for non-profit demonstration only. It is not licensed for redistribution or commercial use; remove this folder before either. See the main README, "Rights and attribution".

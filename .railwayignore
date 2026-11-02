@@ -14,13 +14,16 @@ node_modules/
 .agents/
 .gstack/
 .codex/
+AGENTS.md
+CLAUDE.md
+.pnpm-store/
 *.tsbuildinfo
 .DS_Store
 e2e/.fixtures/
 test-results/
 playwright-report/
 *.mp4
-!public/demo/*.mp4
+!public/demo/**/*.mp4
 *.mov
 
 # The GPU worker is deployed separately (Hugging Face Space or GPU host).

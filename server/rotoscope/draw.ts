@@ -341,7 +341,7 @@ export function framePrompt(input: FrameInput): { prompt: string; references: Im
 /**
  * The same references as framePrompt with a short structured prompt: one labelled line per concern,
  * the measured pose and arm angles, the design, the colours and the framing — no frame reading, no
- * body map, no repeated warnings. Strategy B of the prompt comparison (docs/focus-pipeline-repair/PHASE_04.md).
+ * body map, no repeated warnings. Strategy B of the prompt comparison.
  */
 export function structuredFramePrompt(input: FrameInput): { prompt: string; references: ImageReference[] } {
   const { references } = framePrompt(input);
@@ -507,8 +507,8 @@ export function outfitItems(description: string): string {
 
 /**
  * The prompt, short, with one job per image: Image 1 (the video frame) is the pose, Image 2 (the character) the
- * authority on identity and style, and the only long part is the character's items, one by one. A run of Reze's first
- * nine frames drew the pose right on all nine with it, where the 700-word prompt (style sheet, pose sheet, continuity
+ * authority on identity and style, and the only long part is the character's items, one by one. A run of a test
+ * character's first nine frames drew the pose right on all nine with it, where the 700-word prompt (style sheet, pose sheet, continuity
  * frame, priorities) lost small items (a hair bun, a collar) on two of three: every extra rule pulled attention from
  * the sheet. The background stays magenta: on white, the cut-out ate a white shirt and the skin.
  */

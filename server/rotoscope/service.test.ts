@@ -4,6 +4,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { listZip } from "../animation/zip";
 import { frameName } from "./extract";
+import { runsRoot } from "./pipeline";
 import { writeManifest, type Manifest } from "./run-state";
 import { approveAttempt, deleteRun, exportZip, getMapping, getRun, importConsoleRun, listRuns, mediaFile, startGeneration } from "./service";
 
@@ -92,5 +93,13 @@ describe("rotoscope service", () => {
     await expect(startGeneration(run.id, "owner-a", async () => {})).rejects.toThrow(/already approved/);
     await deleteRun(run.id, "owner-a");
     expect(await listRuns("owner-a")).toEqual([]);
+  });
+
+  it("never deletes a protected run", async () => {
+    const run = await importConsoleRun(await consoleRun(), "owner-a");
+    await writeFile(path.join(runsRoot(), run.id, ".protected"), "");
+    expect((await listRuns("owner-a"))[0]).toMatchObject({ id: run.id, protected: true });
+    await expect(deleteRun(run.id, "owner-a")).rejects.toMatchObject({ code: "run_protected" });
+    expect(await listRuns("owner-a")).toHaveLength(1);
   });
 });

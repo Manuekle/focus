@@ -366,8 +366,8 @@ export function holdColours(image: Rgba, palette: Palette, previous: readonly nu
   }
   const sum = (shares: readonly number[], members: readonly number[]) => members.reduce((total, role) => total + (shares[role] ?? 0), 0);
   // Against the previous frame only. A first frame against the sheet's own shares was tried and can't be
-  // calibrated: the sheet's pose changes the areas as much as a part painted the wrong colour does
-  // (docs/focus-pipeline-repair/PHASE_05.md); that error is left to the review.
+  // calibrated: the sheet's pose changes the areas as much as a part painted the wrong colour does,
+  // so that error is left to the review.
   const moves = previous ? groups.map((members) => ({ name: members.map((role) => palette.colours[role].name).join(" + "), from: sum(previous, members), to: sum(roleShares, members) })) : [];
   // A change back toward the sheet's own areas corrects the previous frame (dark stockings of the video drawn
   // on as shading, then dropped): holding a drawing to a wrong previous frame would pass the mistake on.
@@ -384,8 +384,8 @@ export function holdColours(image: Rgba, palette: Palette, previous: readonly nu
   const feedback = `Paint every part with exactly its colour from the colour palette, flat, as on the character sheet: ${paletteText(palette)}. Shadows use only the palette's shadow tones; no tint or gradient anywhere on the character. Accents the sheet has (trim and embroidery, closures, eyes) stay exactly as on the sheet.`;
   const passed = problems.length === 0;
   // A foreign colour or a colour on the wrong part is a real defect. A low similarity alone is not: it is
-  // measured after the drawing was held to the palette and doesn't separate right from wrong drawings
-  // (docs/focus-pipeline-repair/PHASE_05.md), so it is a minor finding, never a reason to redraw.
+  // measured after the drawing was held to the palette and doesn't separate right from wrong drawings,
+  // so it is a minor finding, never a reason to redraw.
   const severity = foreignShare > FOREIGN_SHARE || jumps.length ? "major" : "minor";
   return {
     image: { data: out, width, height },

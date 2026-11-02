@@ -81,6 +81,7 @@ export function RotoscopeStudio({ initialRunId, initialBatchId = null }: { reado
   useEffect(() => { if (user && settled) loadHistory(); }, [user, settled, loadHistory]);
 
   const remove = async (entry: RotoscopeRunSummary) => {
+    if (entry.protected) return;
     const confirmed = await confirmAction({
       title: `Delete “${entry.name}”?`,
       description: "The run and every drawing are deleted immediately. This can’t be undone.",
@@ -155,9 +156,11 @@ export function RotoscopeStudio({ initialRunId, initialBatchId = null }: { reado
                             <span className="block truncate text-[11px] text-muted-foreground">{entry.total ? `${entry.approved}/${entry.total} frames` : PHASE_LABELS[entry.phase]}{entry.phase === "generating" ? " · drawing" : ""} · {ago(entry.createdAt)}</span>
                           </span>
                         </button>
-                        <button type="button" className={shell.projectDelete} aria-label={`Delete ${entry.name}`} onClick={() => void remove(entry)}>
-                          <HugeiconsIcon icon={Delete02Icon} size={13} strokeWidth={1.75} />
-                        </button>
+                        {entry.protected ? null : (
+                          <button type="button" className={shell.projectDelete} aria-label={`Delete ${entry.name}`} onClick={() => void remove(entry)}>
+                            <HugeiconsIcon icon={Delete02Icon} size={13} strokeWidth={1.75} />
+                          </button>
+                        )}
                       </li>
                     ))}
                   </ul>

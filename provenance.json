@@ -19,19 +19,9 @@
       "adapted": false
     },
     {
-      "source": "lib/app-icon-assets.ts",
-      "target": "lib/app-icon-assets.ts",
-      "adapted": false
-    },
-    {
-      "source": "components/icons/app-icon.tsx",
-      "target": "components/icons/app-icon.tsx",
-      "adapted": false
-    },
-    {
       "source": "components/icons/icon.tsx",
       "target": "components/icons/icon.tsx",
-      "adapted": false
+      "adapted": true
     },
     {
       "source": "lib/celebration-sound.ts",
@@ -155,12 +145,12 @@
     "Identidad azul #325CFE/grafito en styles/focus-theme.css",
     "Inter como fuente de interfaz, tracking -0.02em",
     "Densidad de controles 28/32/36/40 px",
-    "Idioma independiente del router y vocabulario de UI extraído",
+    "Idioma independiente del router y vocabulario de UI extra\u00eddo",
     "Sonido desactivado inicialmente",
     "Solo tipos de dominio requeridos por UI, sin helpers de servidor",
-    "Patrones Field, Avatar, DataTable y EmptyState añadidos",
-    "Catálogo independiente con guía e inventario",
-    "OTP adaptado a móvil y medidor adaptado al acento del tema"
+    "Patrones Field, Avatar, DataTable y EmptyState a\u00f1adidos",
+    "Cat\u00e1logo independiente con gu\u00eda e inventario",
+    "OTP adaptado a m\u00f3vil y medidor adaptado al acento del tema"
   ],
   "font": {
     "source": "InterVariable WOFF2 proporcionado en oruka/public/fonts/inter",

@@ -101,6 +101,9 @@ function runDir(id: string): string {
   if (!parsed.success) throw new AppError("run_not_found", 404, "This rotoscope run doesn’t exist.");
   return path.join(runsRoot(), parsed.data);
 }
+/** A run with this file in its folder feeds the demo and the landing page: nothing deletes it. */
+const PROTECTED_MARK = ".protected";
+const isProtected = (id: string) => existsSync(path.join(runDir(id), PROTECTED_MARK));
 const statePath = (id: string) => path.join(runDir(id), "run.json");
 
 async function readState(id: string): Promise<State | null> {
@@ -243,7 +246,7 @@ export async function listRuns(ownerId: string): Promise<RotoscopeRunSummary[]> 
     const state = await readState(name);
     if (!state || state.ownerId !== ownerId) continue;
     const { id, createdAt, total, approved, phase } = await getRun(name, ownerId);
-    runs.push({ id, name: state.name, createdAt, total, approved, phase });
+    runs.push({ id, name: state.name, createdAt, total, approved, phase, protected: isProtected(name) });
   }
   return runs.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
 }
@@ -668,6 +671,7 @@ export async function rebuildGuides(id: string, ownerId: string): Promise<Rotosc
 
 export async function deleteRun(id: string, ownerId: string): Promise<void> {
   const state = await ownedState(id, ownerId);
+  if (isProtected(id)) throw new AppError("run_protected", 403, "This run feeds the demo and the landing page; it can’t be deleted.");
   if (runtime.running.has(id) || state.phase === "generating" || state.phase === "preparing") throw new AppError("run_busy", 409, "Stop this run before deleting it.");
   await rm(runDir(id), { recursive: true, force: true });
 }

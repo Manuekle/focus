@@ -399,7 +399,7 @@ flowchart LR
 
 - Railway: [docs/RAILWAY.md](docs/RAILWAY.md). `pnpm test:deployment` verifies the image with a persistent volume and AI disabled.
 - Resources, abuse protection and variables: [docs/DEPLOYMENT.md](docs/DEPLOYMENT.md).
-- In-depth design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Flipbook: [docs/FLIPBOOK.md](docs/FLIPBOOK.md) · Characters: [docs/MY_CHARACTERS.md](docs/MY_CHARACTERS.md).
+- In-depth design: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) · Flipbook: [docs/FLIPBOOK.md](docs/FLIPBOOK.md) · Characters: [docs/MY_CHARACTERS.md](docs/MY_CHARACTERS.md) · Rotoscope: [docs/ROTOSCOPE.md](docs/ROTOSCOPE.md) · Reference motion: [docs/REFERENCE_MOTION.md](docs/REFERENCE_MOTION.md) · Time Freeze: [docs/TIME_FREEZE.md](docs/TIME_FREEZE.md).
 
 ## Security model
 
@@ -434,11 +434,11 @@ flowchart LR
 
 **Demo.** Use a short clip (≤ 60 s) of a person moving against a mostly static background:
 
-1. *Reality Shift*: "Deja a la persona en color y todo lo demás en blanco y negro".
-2. *Break the Frame*: "Haz que la persona salga del marco".
-3. *Motion Echo* on a fixed-camera shot: "Añade estelas de movimiento a la persona".
+1. *Reality Shift*: "Keep the person in color and turn everything else black and white."
+2. *Break the Frame*: "Make the person step out of the frame."
+3. *Motion Echo* on a fixed-camera shot: "Add motion trails to the person."
 
-Drag the before/after slider, change a setting (re-render without AI calls) and download the MP4.
+Instructions work in any language. Drag the before/after slider, change a setting (re-render without AI calls) and download the MP4.
 
 ## Content rights confirmation
 
@@ -457,5 +457,9 @@ No open-source license is granted at this time: **all rights reserved** unless s
 - **Inter** (`public/fonts/inter/`) is © The Inter Project Authors, under the included SIL Open Font License 1.1.
 - Meta models are used through the Meta Model API under Meta's terms; `@meta-sam/parser` is distributed under the SAM License.
 - Dependencies keep their licenses: Next.js, React, Zod, Motion and Hugeicons free icons (MIT); OpenAI SDK and Sharp (Apache-2.0). FFmpeg (LGPL/GPL, including libx264) is invoked as an external program.
+- **Rotoscope demo media (non-commercial, demo only).** `public/demo/rotoscope/` shows a dance video and the character Reze from *Chainsaw Man* (© Tatsuki Fujimoto / Shueisha; anime © MAPPA). The repository owner has permission to use the dance video and the character artwork for **non-profit demonstration purposes only**. These assets are **not** covered by any license granted here, **must not be redistributed**, and the app **must not be distributed or operated commercially while they are included**. Remove `public/demo/rotoscope/` (and its use in `app/_editor/flipbook-demo.tsx`) before any commercial use or redistribution.
 - Character templates **Shion** and **Tomohito** were created and supplied by the user. See `public/demo/flipbook/README.md`.
-- The video-effect demos in `public/demo/` use the user-supplied `270507.mp4`, processed with actual SAM 3.1 masks and the Focus compositor. See `public/demo/README.md`.
+- The video-effect demos in `public/demo/` use `270507.mp4`, a royalty-free stock clip, processed with actual SAM 3.1 masks and the Focus compositor. See `public/demo/README.md`.
+- **Porkys** (`public/fonts/porkys/`, used for the wordmark and headings) is free for **non-commercial use only**. It is not covered by any license granted here. Replace it with a font licensed for commercial use before any commercial release.
+
+**Summary:** while the Porkys font and the Rotoscope demo media (Reze / *Chainsaw Man*) are included, this project is a **non-commercial demo**. Remove or replace both before distributing or operating it commercially.

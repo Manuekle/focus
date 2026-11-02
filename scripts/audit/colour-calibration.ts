@@ -10,7 +10,7 @@ import { readManifest } from "../../server/rotoscope/run-state";
 // drawings with one part's colour changed (the largest colour region's hue turned by 120° or 180°,
 // or its lightness inverted), which the check must fail. Prints and writes every score.
 //
-//   node --import ./scripts/ts-loader.mjs scripts/audit/colour-calibration.ts --out docs/focus-pipeline-repair/baseline/colour-calibration.json
+//   node --import ./scripts/ts-loader.mjs scripts/audit/colour-calibration.ts --out colour-calibration.json
 
 const { values } = parseArgs({ options: { out: { type: "string" } } });
 

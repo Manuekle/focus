@@ -5,15 +5,15 @@ import { usePathname } from "next/navigation";
 import { cn } from "../../lib/utils";
 
 const PAGES = [
-  { href: "/privacy", label: "Privacidad" },
-  { href: "/data-deletion", label: "Eliminar mis datos" },
+  { href: "/privacy", label: "Privacy" },
+  { href: "/data-deletion", label: "Delete my data" },
 ] as const;
 
 /** Switches between the legal pages, styled like the studios' mode switch. */
 export function LegalNav() {
   const here = usePathname();
   return (
-    <nav aria-label="Información de Focus" className="flex items-center gap-0.5 rounded-full bg-muted p-0.5">
+    <nav aria-label="About Focus" className="flex items-center gap-0.5 rounded-full bg-muted p-0.5">
       {PAGES.map((page) => {
         const active = here === page.href;
         return (

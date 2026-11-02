@@ -13,11 +13,14 @@ node_modules
 .agents
 .gstack
 .codex
+AGENTS.md
+CLAUDE.md
+.pnpm-store
 test-results
 playwright-report
 *.tsbuildinfo
 *.mp4
-!public/demo/*.mp4
+!public/demo/**/*.mp4
 *.mov
 PHASES
 

@@ -11,7 +11,7 @@ import type { Pose } from "./pose-match";
 // source track's flags — below the estimator's floor or outside the tracked subject's mask
 // (OCCLUDED), filled across a dropout (INFERRED); a figure mask the point falls outside of
 // (OCCLUDED). RTMW's scores are not probabilities and do not separate a joint hidden under
-// clothing from a visible one (docs/focus-pipeline-repair/PHASE_02.md), so they are carried as
+// clothing from a visible one, so they are carried as
 // `score` but never turned into a visibility on their own.
 
 export type Visibility = "VISIBLE" | "OCCLUDED" | "INFERRED" | "UNKNOWN";

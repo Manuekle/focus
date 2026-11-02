@@ -6686,20 +6686,3 @@ html.lenis body {
     var(--card) 85%
   );
 }
-
-/* ── Brand artwork alone in a container ───────────────────────────────
-   WhatsApp, Instagram and Meta are drawn in their own colours
-   (components/icons/icon.tsx) and bring their own shape. A tile, circle or
-   fill behind them is for line icons, so when one of them is the only thing
-   in a box, the box loses its fill, shadow and border and the artwork takes
-   its place. Buttons keep their surface: this is for icon holders. */
-:where(*:not(button, a, input, select, textarea, label)):has(> svg[data-brand-icon]:only-child) {
-  background: none;
-  box-shadow: none;
-  border-color: transparent;
-}
-
-:where(*:not(button, a, input, select, textarea, label)) > svg[data-brand-icon]:only-child {
-  width: 100%;
-  height: 100%;
-}

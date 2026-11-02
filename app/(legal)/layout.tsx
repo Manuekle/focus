@@ -5,7 +5,7 @@ import { LegalNav } from "./legal-nav";
 
 export default function LegalLayout({ children }: { readonly children: ReactNode }) {
   return (
-    <div lang="es" className={shell.studio}>
+    <div lang="en" className={shell.studio}>
       <SiteHeader label="Legal">
         <LegalNav />
       </SiteHeader>
