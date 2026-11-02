@@ -24,8 +24,12 @@ playwright-report
 *.mov
 PHASES
 
-# The GPU worker is its own image (services/animation-worker/Dockerfile).
-services/
+# Only the worker's Python (app, scripts, pyproject) goes in: Rotoscope runs it. The GPU worker is its own image.
+services/animation-worker/.venv
+services/animation-worker/.pytest_cache
+services/animation-worker/tests
+services/animation-worker/Dockerfile
+**/__pycache__
 
 # Local debug and repair runs (single_frame_debug, rebuilt runs): never in an image.
 debug_runs

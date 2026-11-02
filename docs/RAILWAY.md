@@ -14,7 +14,7 @@ Official sources: [Vercel Functions limits](https://vercel.com/docs/functions/li
 
 ## Demo profile on the trial plan
 
-The demo profile is **a 500 MB volume at `/data`, 1 vCPU, up to 1 GiB of RAM and one active job at a time**. Videos accept **15 seconds and 10 MB**; images accept **5 MB**. The 5 GB of the Hobby plan is a later option with more headroom, not a demonstrated minimum for Flipbook.
+The demo profile is **a 500 MB volume at `/data`, 1 vCPU, up to 2 GiB of RAM and one active job at a time**. Videos accept **15 seconds and 10 MB**; images accept **5 MB**. The 5 GB of the Hobby plan is a later option with more headroom, not a demonstrated minimum for Flipbook.
 
 The demo sets `FOCUS_MAX_DATA_MB=350` and `FOCUS_MIN_FREE_MB=100`. The volume is checked before accepting uploads and AI work, and before writing images, frames and export files. Binary writes are serialized and encoders are interrupted if they reach the threshold. The margin protects temporary files between checks; it is an application control, not a filesystem quota. When it is reached the API answers `storage_full` (507) and keeps existing files. Saved characters and projects are never deleted automatically. The normal cleanup of expired temporary files still runs. `/api/health` shows usage, the limit and the space left for new media.
 
@@ -29,7 +29,7 @@ The file count skips `lost+found` at the volume root: it is a filesystem recover
 - A required volume at `/data`. The file demands the mount; the volume itself is created in Railway.
 - Health checks on `/api/health` with 120 seconds to start.
 - Restart on failure, up to five attempts; no overlap between releases.
-- Resource ceilings of 1 vCPU and 1 GiB of RAM. They are consumption limits, not reservations or a spending cap.
+- Resource ceilings of 1 vCPU and 2 GiB of RAM (Rotoscope's DWPose subprocess peaks near 700 MB on top of Next.js and FFmpeg). They are consumption limits, not reservations or a spending cap.
 
 `deploy/railway.env.example` holds the service variables, without secrets. It enables Flipbook and keeps Time Freeze disabled. The two feature flags and the upload limits are compiled in: set them **before** the first deploy and rebuild to change them. Railway passes variables declared as `ARG` to the Docker build; the Dockerfile declares no arguments for secrets.
 

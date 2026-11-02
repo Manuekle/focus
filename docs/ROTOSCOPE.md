@@ -32,6 +32,8 @@ Run data is stored under `FOCUS_DATA_DIR/rotoscope/{run}/` (`manifest.json`, `so
 
 ## Requirements
 
+The Docker image already carries all of this (Debian Python 3.11 venv at `/opt/rotoscope`, `ROTOSCOPE_PYTHON` preset, DWPose weights baked into `~/.cache/rtmlib`, CPU only). Locally:
+
 - The Python DWPose environment in `services/animation-worker/.venv` (see its README).
 - FFmpeg and FFprobe on `PATH`.
 - `MODEL_API_KEY` for the Meta Model API.
