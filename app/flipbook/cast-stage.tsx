@@ -4,6 +4,7 @@ import { AnimatePresence, motion } from "motion/react";
 import { useLayoutEffect, useRef, useState } from "react";
 import { useReducedMotion } from "../../lib/hooks/use-reduced-motion";
 import styles from "./flipbook.module.css";
+import { thumbUrl } from "../../shared/thumbs";
 
 type CastMember = { readonly id: string; readonly name: string; readonly coverUrl: string };
 type Tile = { readonly x: number; readonly y: number; readonly width: number; readonly height: number };
@@ -76,7 +77,7 @@ export function CastStage({ cast }: { readonly cast: readonly CastMember[] }) {
                   transition={transition}
                 >
                   {/* eslint-disable-next-line @next/next/no-img-element -- the character's cover, from the media route */}
-                  <img src={member.coverUrl} alt={member.name} draggable={false} />
+                  <img src={thumbUrl(member.coverUrl, 320)} alt={member.name} draggable={false} decoding="async" />
                   <figcaption>
                     <span className={styles.castOrder}>{index + 1}</span>
                     {member.name}

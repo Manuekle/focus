@@ -97,6 +97,13 @@ const FOREIGN_SHARE = 0.03;
  * How much of its own variation a pixel keeps around its palette colour: enough for the soft edge
  * between an outline and a fill, too little for a tone to drift (a greyer blouse, darker shadows).
  */
+/**
+ * One pixel against one palette colour: a plain neutral (chroma under PLAIN) and a coloured tone (over COLOURED) are
+ * different parts however near they are: pale skin is never the blouse's white. Between the two, shading moves chroma.
+ */
+const PLAIN = 5;
+const COLOURED = 8;
+const crosses = (pixel: Lab, colour: Lab) => (chroma(colour) < PLAIN && chroma(pixel) > COLOURED) || (chroma(pixel) < PLAIN && chroma(colour) > COLOURED);
 const KEEP = 0.25;
 /**
  * The drawing's colours must sit this close to the palette (100 − mean ΔE, after holding them). Below it
@@ -322,6 +329,21 @@ export function holdColours(image: Rgba, palette: Palette, previous: readonly nu
     // A colour off the palette is left as drawn, not forced onto the nearest one: that would paint it wrong.
     // One the sheet has (a shading tone, an accent) costs its distance to the sheet; a foreign one the most.
     if (role < 0 || off > MAX_SHIFT) { residual += Math.min(100, onSheet[c]); continue; }
+    // A cluster can hold two parts (pale skin beside a white blouse): a tinted pixel in a neutral cluster, or the
+    // reverse, goes to the nearest palette colour of its own kind (the skin, not the blouse's white),
+    // and is left as drawn when there is none near.
+    if (crosses(labs[i], roles[role])) {
+      const own = roles.map((lab, r) => ({ lab, r })).filter(({ lab }) => sameKind(labs[i], lab) && !crosses(labs[i], lab))
+        .reduce<{ lab: Lab; r: number } | null>((best, option) => (!best || distance(labs[i], option.lab) < distance(labs[i], best.lab) ? option : best), null);
+      if (!own || distance(labs[i], own.lab) > MAX_SHIFT) { residual += Math.min(100, own ? distance(labs[i], own.lab) : onSheet[c]); continue; }
+      roleCounts[own.r]++;
+      const held: Lab = [0, 1, 2].map((k) => own.lab[k] + KEEP * (labs[i][k] - own.lab[k])) as Lab;
+      residual += distance(held, own.lab);
+      const rgb = fromLab(held);
+      const p = figure[i] * 4;
+      out[p] = rgb[0]; out[p + 1] = rgb[1]; out[p + 2] = rgb[2];
+      continue;
+    }
     roleCounts[role]++;
     const target = roles[role];
     const held: Lab = [0, 1, 2].map((k) => target[k] + KEEP * (labs[i][k] - centres[c][k])) as Lab;

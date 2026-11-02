@@ -8,6 +8,7 @@ import { flipbookApi } from "../flipbook/flipbook-client";
 import { rotoscopeApi } from "../rotoscope/rotoscope-client";
 import { rotoscopeEnabled } from "../../shared/features";
 import { activityConnectionError, activityRequestPending, getActivities, getActivityVersion, setActivityScope } from "./activity-store";
+import { pollAfter } from "../../lib/poll";
 
 /** Lives above route changes; follows only known resources through their existing read APIs. */
 export function ActivityProvider({ children }: { readonly children: ReactNode }) {
@@ -22,7 +23,7 @@ export function ActivityProvider({ children }: { readonly children: ReactNode })
     setActivityScope(scope, storage);
     if (userId) void Promise.allSettled([flipbookApi.list(), characterApi.list(), ...(rotoscopeEnabled() ? [rotoscopeApi.list()] : [])]);
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
+    let cancel = () => {};
     const tick = async () => {
       const version = getActivityVersion();
       // Foreground editors already poll. Only follow tasks whose snapshots went quiet.
@@ -40,10 +41,10 @@ export function ActivityProvider({ children }: { readonly children: ReactNode })
           activityConnectionError(entry.id, typeof code === "string" && (code === "not_found" || code.endsWith("_not_found") || code === "http_404" || code === "expired"));
         }
       }));
-      if (!stopped) timer = setTimeout(() => void tick(), 1800);
+      if (!stopped) cancel = pollAfter(() => void tick(), 1800);
     };
-    timer = setTimeout(() => void tick(), 500);
-    return () => { stopped = true; clearTimeout(timer); };
+    cancel = pollAfter(() => void tick(), 500);
+    return () => { stopped = true; cancel(); };
   }, [loading, scope, userId]);
 
   return children;

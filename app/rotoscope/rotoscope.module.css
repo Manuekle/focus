@@ -69,6 +69,28 @@
 .stagePane[data-background="dark"] { background: #111214; }
 .speedRow { display: flex; width: 100%; flex-direction: column; gap: 8px; }
 
+/* The comparison clip's controls under the player: flat, set off by a hairline like the Run tab's panels. */
+.compareExport { display: flex; min-width: 0; flex-direction: column; gap: 12px; padding-top: 20px; border-top: 1px solid var(--border); }
+.layoutSketch { display: flex; gap: 6px; }
+.layoutSketch[data-layout="stack"] { width: 64px; flex-direction: column; }
+.layoutSketch span { display: grid; place-items: center; border: 1px solid var(--border); border-radius: 8px; color: var(--muted-foreground); font-size: 10px; }
+.layoutSketch[data-layout="side"] span { width: 52px; height: 68px; }
+.layoutSketch[data-layout="stack"] span { height: 38px; }
+.layoutSketch span[data-kind="drawing"] { background: color-mix(in srgb, var(--primary) 12%, transparent); border-color: color-mix(in srgb, var(--primary) 45%, transparent); color: var(--foreground); }
+.compareResult { display: flex; flex-direction: column; gap: 2px; }
+.compareActions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+
+/* Slider view: the video frame over the drawing, cut at a divider the pointer (or the arrow keys) moves. */
+.slider { cursor: ew-resize; touch-action: none; user-select: none; }
+.slider img { pointer-events: none; -webkit-user-drag: none; }
+.sliderVideo { position: absolute; inset: 0; background: #111214; }
+.sliderLine { position: absolute; top: 0; bottom: 0; width: 1px; background: #ffffffe6; transform: translateX(-0.5px); pointer-events: none; }
+.sliderHandle { position: absolute; top: 50%; display: grid; width: 36px; height: 36px; place-items: center; border: 1px solid #ffffffcc; border-radius: 999px; background: #14161eb8; color: #fff; box-shadow: 0 4px 14px #00000066; transform: translate(-50%, -50%); outline: none; }
+.sliderHandle:focus-visible { box-shadow: 0 0 0 2px var(--primary), 0 4px 14px #00000066; }
+.sliderTag { position: absolute; top: 8px; padding: 4px 8px; border-radius: 8px; background: #14161ec7; color: #fff; font-size: 12px; line-height: 1.2; pointer-events: none; }
+.sliderTag[data-side="left"] { left: 8px; }
+.sliderTag[data-side="right"] { right: 8px; background: var(--primary); color: var(--primary-foreground); }
+
 /* Frames not drawn yet show their video frame, dimmed: the strip reads as the clip from the start. */
 .ghost { opacity: 0.28; filter: grayscale(1); }
 

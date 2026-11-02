@@ -2,6 +2,7 @@ import { GENERATORS, WORK_PICTURES, type GeneratorName, type RotoscopeMedia, typ
 import { AppError, errorResponse } from "../../../../../../server/errors";
 import { requireUser } from "../../../../../../server/auth/require";
 import { serveFile } from "../../../../../../server/serve-file";
+import { thumbWidth } from "../../../../../../shared/thumbs";
 import { assertRotoscopeEnabled, mediaFile } from "../../../../../../server/rotoscope/service";
 
 type Context = { params: Promise<{ id: string }> };
@@ -20,7 +21,7 @@ export async function GET(request: Request, { params }: Context) {
     const by = query.get("by");
     const name = query.get("name");
     const file = await mediaFile((await params).id, user.id, kind, positive(query.get("frame")), positive(query.get("attempt")), GENERATORS.includes(by as GeneratorName) ? by as GeneratorName : undefined, WORK_PICTURES.includes(name as WorkPicture) ? name as WorkPicture : undefined);
-    return await serveFile(request, file, kind === "audio" ? "audio/mp4" : "image/png", undefined, { revalidate: CHANGING.has(kind) });
+    return await serveFile(request, file, kind === "audio" ? "audio/mp4" : "image/png", undefined, { revalidate: CHANGING.has(kind), width: thumbWidth(query.get("w")) });
   } catch (error) {
     return errorResponse(error);
   }

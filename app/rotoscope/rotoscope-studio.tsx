@@ -28,6 +28,7 @@ import { RotoscopeCreate } from "./rotoscope-create";
 import { RotoscopeEditor, RotoscopeEditorSkeleton } from "./rotoscope-editor";
 import { BatchView } from "./batch-view";
 import { AnimateNav } from "../_editor/animate-nav";
+import { thumbUrl } from "../../shared/thumbs";
 
 export const PHASE_LABELS: Record<RotoscopePhase, string> = {
   preparing: "Preparing",
@@ -147,7 +148,7 @@ export function RotoscopeStudio({ initialRunId, initialBatchId = null }: { reado
                       <li key={entry.id} className={cn(shell.project, entry.id === runId && shell.projectActive)}>
                         <button type="button" className={cn(shell.projectLink, "text-left")} aria-current={entry.id === runId ? "page" : undefined} onClick={() => setRunId(entry.id)}>
                           <span className={cn(shell.poster, "relative overflow-hidden")}>
-                            <MediaImage src={rotoscopeUrls.media(entry.id, "character")} className="absolute inset-0 size-full object-contain" iconSize={14} />
+                            <MediaImage src={thumbUrl(rotoscopeUrls.media(entry.id, "character"), 48)} className="absolute inset-0 size-full object-contain" iconSize={14} />
                           </span>
                           <span className="min-w-0 flex-1">
                             <span className="block truncate text-xs text-foreground" title={entry.name}>{entry.name}</span>

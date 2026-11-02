@@ -132,7 +132,7 @@ export function continuityGuardrail(manifest: Manifest, index: number): { readon
 export const PROMPT_CLAUSES = [
   {
     name: "anatomy",
-    present: /\b(exactly|only)\s+two\s+arms\b|\bno\s+(extra|additional|duplicated?)\s+(limbs?|arms?|hands?)\b/i,
+    present: /\b(exactly|only)\s+two\s+arms\b|\bno\s+(extra|additional|duplicated?)(\s+or\s+missing)?\s+(limbs?|arms?|hands?)\b/i,
     text: "Anatomy: exactly two arms, two hands, two legs and two feet, every one attached to the body; five fingers on every visible hand; no extra, missing, fused, duplicated or broken limbs, no third hand, no limb bending the wrong way.",
   },
   {

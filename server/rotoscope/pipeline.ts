@@ -19,7 +19,7 @@ import { decodeImage } from "../animation/image-input";
 import { checkAlpha, closeCuts, fromRgba, KEY_COLOR, keyBackground, toRgba } from "./alpha";
 import { checkStyle, outlineDensity } from "./style";
 import { bodySpec, checkProportions, describeFace, fullLengths, onCanvas, sheetEstimates, sheetLengths, type BodySpec } from "./body-map";
-import { analyzePrompt, CANVAS, redrawRigFrame, describeCharacter, describeStyle, writeFramePrompt, describeFrame, describeMotion, drawPoseSheet, drawSwap, swapFramePrompt, type PromptAnalysis, buildPair, buildText, ghostOverlay, profileCharacter, validBuild, reconcileBuild, type BuildProfile, fitCanvas, framePrompt, isFrameSpec, isIdentityLine, namePalette, onColour, reviewCheck, reviewFrame, sideBySide, toCanvas, type Correction, type FrameInput } from "./draw";
+import { analyzePrompt, CANVAS, diagnoseAttempt, type AttemptDiagnosis, redrawRigFrame, describeCharacter, describeStyle, writeFramePrompt, describeFrame, describeMotion, drawPoseSheet, drawSwap, swapFramePrompt, type PromptAnalysis, buildPair, buildText, ghostOverlay, profileCharacter, validBuild, reconcileBuild, type BuildProfile, fitCanvas, framePrompt, identityCheck, isFrameSpec, isIdentityLine, namePalette, onColour, reviewCheck, reviewFrame, reviewIdentity, sideBySide, toCanvas, type Correction, type FrameInput } from "./draw";
 import { holdColours, PALETTE_VERSION, paletteImage, paletteShares, paletteText, profiledPalette, sheetColours, type Palette } from "./colour";
 import { mannequin, sheetBuild } from "./mannequin";
 import { generateHiggsfield } from "./higgsfield";
@@ -28,7 +28,7 @@ import { keepMemory, noteKitOrigin, recallMemory } from "./prompt-memory";
 import { detectCrop, extractFrames, frameName } from "./extract";
 import { armLengths, comparePoses, describeLegs, describePose, measureArms, type Pose } from "./pose-match";
 import { checkScale, figureBox, GRID, hairTop, REGISTER_SCALE, proportions, sheetHairTop, targets, toLine, withGrid, type Marks } from "./grid";
-import { acquireLock, attemptFile, copyInto, readManifest, runFrames, writeManifest, type Check, type DrawContext, type Manifest, type RunOutcome } from "./run-state";
+import { acquireLock, attemptFile, copyInto, readManifest, runFrames, writeManifest, type Check, type DrawContext, type FrameState, type Manifest, type RunOutcome } from "./run-state";
 import { canonicalJoints, unconfirmed } from "./joints";
 import { decide } from "./decision";
 import { scanOverlay, scanPose } from "./scan";
@@ -589,15 +589,14 @@ export async function layoutRun(dir: string, options: { readonly keep?: boolean 
 
 /**
  * What Muse Image gets for a frame's next drawing, built as generateRun builds it but with no model call: the kept
- * pose note (none when the frame was never drawn), the identity line, the measures and the pose sheet when kept.
+ * pose note (none when the frame was never drawn) and the character's items.
  */
 async function nextSwap(dir: string, index: number) {
   const { character, characterAtVideoScale, sourcePlaced } = await layoutRun(dir);
   const note = await readFile(path.join(dir, "notes", `frame_${String(index).padStart(4, "0")}.txt`), "utf8").then((text) => text.trim(), () => "");
   return swapFramePrompt({
     frame: await sourcePlaced(index), character: (await characterAtVideoScale()).png, characterSheet: character,
-    description: (await readFile(path.join(dir, "character.txt"), "utf8")).trim(), style: (await readFile(path.join(dir, STYLE_FILE), "utf8").catch(() => "")).trim() || null, note, correction: null, feedback: [],
-    body: measuresText(await readMeasures(dir)), poseSheet: await readFile(path.join(dir, POSE_SHEET)).catch(() => null),
+    description: (await readFile(path.join(dir, "character.txt"), "utf8")).trim(), note, correction: null, feedback: [],
   });
 }
 
@@ -670,7 +669,7 @@ export async function keptReading(dir: string, index: number): Promise<string | 
 
 /** Draws and validates every open frame in order, behind the firewall (run-state.ts). */
 export type LiveStage = "drawing" | "measuring" | "checking" | "reviewing" | "approved" | "rejected";
-export type LiveEvent = { readonly frame: number; readonly attempt: number; readonly tries: number; readonly stage: LiveStage };
+export type LiveEvent = { readonly frame: number; readonly attempt: number; readonly tries: number; readonly of: number | null; readonly stage: LiveStage };
 
 export type Generator = "muse" | "higgsfield" | "rig";
 const GENERATOR_NAME: Record<Generator, string> = { muse: "Muse Image", higgsfield: "Higgsfield", rig: "Character rig" };
@@ -872,6 +871,8 @@ function rank(candidate: Candidate): [number, number] {
   const score = (name: string) => candidate.checks.find((check) => check.name === name)?.score ?? 0;
   return [candidate.checks.filter((check) => !check.passed).length, score("pose") / 12 + score("scale") / 0.08 + score("proportions") / 0.18];
 }
+/** What an attempt's alpha detail says when its drawing came out mirrored, or was drawn from the mirrored video frame. */
+const MIRRORED_DRAWING = /drawn mirrored|mirrored video frame/;
 const better = (a: Candidate, b: Candidate) => {
   const [x, y] = [rank(a), rank(b)];
   return x[0] !== y[0] ? x[0] < y[0] : x[1] <= y[1];
@@ -911,10 +912,15 @@ async function scoreDrawing(keyed: Buffer, drawn: Pose, colour: Check, scoring: 
   const { reference, sheet, source, clip, hidden, marks, spec, anchorDensity } = scoring;
   const measured = await drawnMarks(keyed, drawn, reference, sheet);
   const placed = await register(keyed, measured, marks);
+  // The size is judged on the frame that is kept, the registered one: register() scales and moves every drawing onto
+  // the lines, so a drawing Muse Image drew 15 % small ends right. Only what registration can't reach fails (a size
+  // past its scale limits, a figure off centre). Judged before registration, crossed or lifted legs failed most.
+  const { scale, x, y } = placed.transform;
+  const registered: Marks | null = measured ? { ...measured, head: measured.head * scale + y, feet: measured.feet * scale + y, center: measured.center * scale + x } : null;
   const poseCheck = comparePoses(source, drawn, undefined, clip, hidden);
   const checks: Check[] = [
     { name: poseCheck.name, passed: poseCheck.passed, detail: poseCheck.detail, ...(poseCheck.status ? { status: poseCheck.status } : {}), ...(poseCheck.feedback ? { feedback: poseCheck.feedback } : {}), ...(poseCheck.score !== undefined ? { score: poseCheck.score } : {}) },
-    checkScale(measured, marks),
+    checkScale(registered, marks),
     colour,
     checkProportions(spec, drawn, measured, marks),
     checkAlpha(await toRgba(placed.png)),
@@ -980,7 +986,7 @@ export async function generateRun(dir: string, options: {
   writer?: "template" | "spark";
 } = {}): Promise<RunOutcome> {
   const log = options.log ?? (() => undefined);
-  const live = (frame: number, attempt: number, tries: number, stage: LiveStage) => options.onLive?.({ frame, attempt, tries, stage });
+  const live = (frame: number, attempt: number, tries: number, stage: LiveStage) => options.onLive?.({ frame, attempt, tries, of: options.attempts ?? null, stage });
   // Guardrail 1, before anything is drawn: the Python tools start, the Meta Model API is there and every model is a Muse
   // model. A broken environment stops here with its fix, never halfway through a frame (guardrails.ts).
   const ready = await assertReady();
@@ -988,7 +994,9 @@ export async function generateRun(dir: string, options: {
   // Muse models only: Muse Spark writes and reviews, SAM segments, Muse Image draws. Higgsfield is never called.
   if (options.dual) log("two drawings per attempt are off: this pipeline draws with Muse Image only");
   const generators: Generator[] = ["muse"];
-  const writer = options.writer ?? "spark";
+  // The template is the prompt: Muse Spark rewriting it into 700 words lost small items of the character. It still reads
+  // every rejected drawing and note (diagnosisFor); `writer: "spark"` brings its rewrite back for a comparison.
+  const writer = options.writer ?? "template";
   const meta = readMetaConfig()!;
   const bar = fidelityThresholds();
   const sourcePoses = JSON.parse(await readFile(path.join(dir, "source-poses.json"), "utf8")) as PoseFile;
@@ -1046,6 +1054,51 @@ export async function generateRun(dir: string, options: {
     const correction = { comment: frame.correction.comment, marked: await withGrid(await readFile(path.join(dir, frame.correction.marked))) };
     corrections.set(frame.correction.marked, correction);
     return correction;
+  };
+  /**
+   * Muse Spark's reading of this frame's last rejected drawing and of the person's note (diagnoseAttempt), before it
+   * is drawn again: in this run's retries and in a later redraw alike, since it is read from the manifest. Kept in
+   * work/ per attempt and note; null on a first drawing, or when Muse Spark can't answer (the plain feedback then goes).
+   */
+  const diagnosisFor = async (frame: FrameState, trace: Trace, mirror = false): Promise<{ reading: AttemptDiagnosis; prompt: string | null } | null> => {
+    const last = frame.attempts.at(-1);
+    // Drawn from the mirrored video frame, the reading is of the mirrored pictures, in the sides Muse Image sees; the
+    // note speaks of the unmirrored ones and was read before.
+    const note = mirror ? null : frame.correction ?? null;
+    const turn = async (png: Buffer) => (mirror ? sharp(png).flop().png().toBuffer() : png);
+    const subject = last && !last.passed ? last : note ? frame.attempts.find((attempt) => attempt.attempt === note.attempt) : undefined;
+    if (!subject) return null;
+    const stem = `${stemOf(frame.index)}_a${subject.attempt}`;
+    const file = `${stem}_diagnosis${mirror ? "_mirror" : note ? `_${note.at.replace(/\D/g, "")}` : ""}.json`;
+    const prompt = await readFile(`${stem}_prompt.txt`, "utf8").catch(() => null);
+    const cached = await readFile(file, "utf8").then((text) => JSON.parse(text) as AttemptDiagnosis, () => null);
+    if (cached) return { reading: cached, prompt };
+    await trace.start("diagnosis", { model: meta.plannerModel, summary: `reading why attempt ${subject.attempt} was rejected${note ? " and your note" : ""}` });
+    try {
+      const reading = await diagnoseAttempt({
+        target: await turn(await sourcePlaced(frame.index)),
+        character,
+        drawing: await turn(await onColour(await readFile(path.join(dir, subject.file)), "#d8d8d8")),
+        prompt,
+        failures: [
+          ...subject.checks.filter((check) => !check.passed).map((check) => `${check.name}: ${check.detail}`),
+          ...(mirror ? ["Images 1 and 3 are shown mirrored, as Muse Image will draw this frame; the checks above name the sides of the unmirrored picture: trust the images for sides"]
+            : MIRRORED_DRAWING.test(subject.checks.find((check) => check.name === "alpha")?.detail ?? "") ? ["Muse Image drew this pose mirrored; Image 3 is its drawing turned back by the studio, so its sides are right but its arms were drawn for the other side"] : []),
+        ],
+        note: note ? { comment: note.comment, marked: await readFile(path.join(dir, note.marked)) } : null,
+        signal: options.signal,
+      });
+      await writeFile(file, `${JSON.stringify(reading, null, 2)}\n`);
+      log(`  Muse Spark on attempt ${subject.attempt}${note ? ` and your note “${note.comment.slice(0, 60)}”` : ""}: ${reading.problem} → ${reading.fix}`);
+      await trace.end("diagnosis", { summary: reading.fix.slice(0, 160), detail: `Wrong: ${reading.problem}\n\nWhy: ${reading.cause}\n\nFix: ${reading.fix}` });
+      return { reading, prompt };
+    } catch (error) {
+      options.signal?.throwIfAborted();
+      const why = error instanceof Error ? error.message.slice(0, 160) : String(error);
+      log(`  Muse Spark couldn’t read attempt ${subject.attempt} (${why}): the checks' feedback goes instead`);
+      await trace.end("diagnosis", { status: "warn", summary: `not read: ${why}` });
+      return null;
+    }
   };
   await mkdir(path.join(dir, "work"), { recursive: true });
 
@@ -1180,7 +1233,30 @@ export async function generateRun(dir: string, options: {
     await writeFile(`${stem}_${generator}_keyed.png`, keyed);
     await pose(["detect", "--image", `${stem}_${generator}_keyed.png`, "--out", `${stem}_${generator}_pose.json`]);
     const drawn = (JSON.parse(await readFile(`${stem}_${generator}_pose.json`, "utf8")) as PoseFile).frames[0];
-    const scored = await scoreDrawing(keyed, drawn, held.check, { reference, sheet, source: sourcePoses.frames[index - 1], clip: sourcePoses.frames, hidden: await hiddenIn(index), marks, spec, anchorDensity });
+    const scoring: Scoring = { reference, sheet, source: sourcePoses.frames[index - 1], clip: sourcePoses.frames, hidden: await hiddenIn(index), marks, spec, anchorDensity };
+    const scored = await scoreDrawing(keyed, drawn, held.check, scoring);
+    // Muse Image's most stubborn mistake is the whole pose drawn mirrored, the same way on every retry whatever the
+    // prompt says (it reaches for the character's right arm). The mirror of such a drawing is measured again and kept
+    // when it measures better, passing or not: a retry then corrects what is left (an elbow) instead of the mirror.
+    // The identity checks that follow still compare it with the sheet, so a design that isn't symmetric can't slip through.
+    const posed = scored.checks.find((check) => check.name === "pose");
+    if (generator !== "rig" && posed && !posed.passed && posed.detail.startsWith("MIRRORED")) {
+      const flopped = await sharp(keyed).flop().png().toBuffer();
+      await writeFile(`${stem}_${generator}_keyed_mirrored.png`, keyed);
+      await writeFile(`${stem}_${generator}_keyed.png`, flopped);
+      await pose(["detect", "--image", `${stem}_${generator}_keyed.png`, "--out", `${stem}_${generator}_pose.json`]);
+      const back = (JSON.parse(await readFile(`${stem}_${generator}_pose.json`, "utf8")) as PoseFile).frames[0];
+      const turned = await scoreDrawing(flopped, back, held.check, scoring);
+      const candidate: Candidate = { generator, png: turned.png, drawn: back, placed: turned.placed, checks: turned.checks, note: `${turned.note}; drawn mirrored, turned back` };
+      const original: Candidate = { generator, png: scored.png, drawn, placed: scored.placed, checks: scored.checks, note: scored.note };
+      if (better(candidate, original)) {
+        const left = turned.checks.find((check) => check.name === "pose");
+        log(`  ${GENERATOR_NAME[generator]} drew the pose mirrored: turned back${left?.passed ? ", its pose now matches" : ` (pose still off: ${left?.detail ?? "not measured"})`}`);
+        return candidate;
+      }
+      await writeFile(`${stem}_${generator}_keyed.png`, keyed);
+      await pose(["detect", "--image", `${stem}_${generator}_keyed.png`, "--out", `${stem}_${generator}_pose.json`]);
+    }
     return { generator, png: scored.png, drawn, placed: scored.placed, checks: scored.checks, note: scored.note };
   };
 
@@ -1377,6 +1453,11 @@ export async function generateRun(dir: string, options: {
         ],
       });
       if (stop) throw new Error(`guardrail ${stop.name}: ${stop.detail}`);
+      // A frame drawn before, or with a note on it: Muse Spark reads what went wrong before anything is drawn again.
+      // A frame drawn mirrored before is drawn from the mirrored video frame (below), and read in its sides.
+      const mirrorInput = !options.prompt && MIRRORED_DRAWING.test(frame.attempts.at(-1)?.checks.find((check) => check.name === "alpha")?.detail ?? "");
+      const diagnosis = options.prompt ? null : await diagnosisFor(frame, trace, mirrorInput);
+      if (!diagnosis) await trace.end("diagnosis", { status: "skipped", summary: options.prompt ? "your prompt is drawn as written" : "first drawing of this frame: nothing to correct" });
       const input: FrameInput = {
         character,
         description,
@@ -1408,9 +1489,10 @@ export async function generateRun(dir: string, options: {
       const anchorDensity = anchor ? await approvedDensity() : null;
       // A prompt under test is Muse Image's: the rig draws nothing from words. Rig + heal first: an approved drawing
       // deformed onto this frame's pose (exact by construction, the character's own shape), redrawn whole by Muse Image.
-      if (!options.prompt && (renderer === "rig" || (renderer === "auto" && tries === 1))) {
+      // A note is words the rig can't read: with one, Muse Image draws from the first try.
+      if (!options.prompt && (renderer === "rig" || (renderer === "auto" && tries === 1 && !frame.correction))) {
         await trace.start("generate", { model: repairs ? `Character rig → ${meta.imageModel}` : "Character rig", summary: "deforming the approved drawing before onto this pose" });
-        const rigged = await drawByMapping(frame.index, attempt, stem, marks, spec, anchorDensity, repairs ? { continuity, problem: feedback.at(-1) } : null);
+        const rigged = await drawByMapping(frame.index, attempt, stem, marks, spec, anchorDensity, repairs ? { continuity, problem: diagnosis?.reading.fix ?? feedback.at(-1) } : null);
         if (!rigged) await trace.update("generate", { summary: `rig not used (${rigRefused.get(frame.index) ?? "no drawing to deform"}); Muse Image draws it` });
         if (rigged) {
           const repair = mapped.get(key(frame.index, attempt))?.repair ?? null;
@@ -1437,13 +1519,20 @@ export async function generateRun(dir: string, options: {
       await writeFile(`${stem}_mannequin.png`, posed.mannequin!);
       // Muse Image edits the colour video frame into the character with a short prompt; Higgsfield still gets the full one.
       await trace.start("prompt", { model: !options.prompt && writer === "spark" ? meta.plannerModel : "template", summary: "reading the pose and writing Muse Image's prompt" });
+      // A frame Muse Image drew mirrored is drawn next from the mirrored video frame and its drawing turned back: the
+      // model keeps reaching for the same arm, so it gets the pose it reaches for. The pose note and the marked
+      // drawing speak of the unmirrored frame and stay out; Muse Spark writes the pose from the mirrored picture, and
+      // the reading of the last drawing (diagnosisFor) was made on the mirrored pictures.
+      if (mirrorInput) log(`  Muse Image drew frame ${frame.index} mirrored before: it edits the mirrored video frame and its drawing is turned back`);
       const written = generators.includes("muse")
-        ? swapFramePrompt({ frame: await sourcePlaced(frame.index), character: (await characterAtVideoScale()).png, characterSheet: character, description, style, note: await noteFor(frame.index), correction: input.correction, feedback, body, poseSheet, continuity, signal: options.signal })
+        ? swapFramePrompt(mirrorInput
+          ? { frame: await sharp(await sourcePlaced(frame.index)).flop().png().toBuffer(), character: (await characterAtVideoScale()).png, characterSheet: character, description, note: "", correction: null, feedback: [], diagnosis: diagnosis?.reading ?? null, signal: options.signal }
+          : { frame: await sourcePlaced(frame.index), character: (await characterAtVideoScale()).png, characterSheet: character, description, note: await noteFor(frame.index), correction: input.correction, feedback, diagnosis: diagnosis?.reading ?? null, signal: options.signal })
         : null;
       // Muse Spark's own prompt, written from the template and the images; the template draws when it can't write one.
       const manifestNow = written && !options.prompt && writer === "spark" ? await readManifest(dir) : null;
       const spark = written && manifestNow
-        ? await writeFramePrompt({ template: written, lessons: lessonLines(manifestNow.frames, frame.index, feedback.length === 0, SPARK_LESSONS), memory: await recallMemory(dir, manifestNow, frame.index), signal: options.signal }).catch((error: unknown) => {
+        ? await writeFramePrompt({ template: written, lessons: lessonLines(manifestNow.frames, frame.index, feedback.length === 0 && !mirrorInput, SPARK_LESSONS), memory: await recallMemory(dir, manifestNow, frame.index), diagnosis, signal: options.signal }).catch((error: unknown) => {
           options.signal?.throwIfAborted();
           log(`  Muse Spark couldn't write the prompt (${error instanceof Error ? error.message.slice(0, 120) : String(error)}); drawing with the template`);
           return null;
@@ -1481,7 +1570,10 @@ export async function generateRun(dir: string, options: {
       await trace.start("generate", { model: meta.imageModel, summary: `editing video frame ${frame.index} with ${swap?.references.length ?? 0} labelled images` });
       // With two generators both draw the same prompt at once; one failing still leaves the other.
       const drawings = await Promise.allSettled(generators.map(async (generator) => {
-        if (generator === "muse") return { generator, raw: await drawSwap(swap!, options.signal) };
+        if (generator === "muse") {
+          const raw = await drawSwap(swap!, options.signal);
+          return { generator, raw: mirrorInput ? await sharp(raw).flop().png().toBuffer() : raw };
+        }
         const { prompt, references } = framePrompt(posed);
         return { generator, raw: await toCanvas(await generateHiggsfield({ prompt, references, aspectRatio: "2:3", signal: options.signal })) };
       }));
@@ -1500,7 +1592,7 @@ export async function generateRun(dir: string, options: {
         .map((candidate) => `${GENERATOR_NAME[candidate.generator]} ${candidate.checks.filter((check) => !check.passed).map((check) => check.name).join("+") || "passed"}`);
       const note = `${GENERATOR_NAME[best.generator]}${others.length ? ` kept over ${others.join(", ")}` : ""}; ${best.note}`;
       if (candidates.length > 1) log(`  ${note}`);
-      chosen.set(key(frame.index, attempt), { ...best, note, checks: [...best.checks, ...fallbackCheck(frame.index, best.generator)] });
+      chosen.set(key(frame.index, attempt), { ...best, note: mirrorInput && best.generator === "muse" ? `${note}; drawn from the mirrored video frame` : note, checks: [...best.checks, ...fallbackCheck(frame.index, best.generator)] });
       await writeFile(`${stem}_pose.json`, JSON.stringify({ width: CANVAS.width, height: CANVAS.height, frames: [best.drawn] }));
       const output: GeneratedFrame = { kind: "generated-frame", frame: frame.index, attempt, generator: best.generator, sha256: sha256(ready.find((drawing) => drawing.generator === best.generator)!.raw), target: sha256(Buffer.from(JSON.stringify(generation))) };
       await writeFile(`${stem}_generated.json`, `${JSON.stringify(output, null, 2)}\n`);
@@ -1603,28 +1695,48 @@ export async function generateRun(dir: string, options: {
     }
     // Muse Spark looks at every drawing the measurements don't already reject (a pose they couldn't measure
     // is exactly what it should see), and at every drawing in debug (`review: "always"`), whatever was measured.
+    // Identity is checked first, on its own, with just the sheet and the drawing: the full review juggles eight
+    // images and let a skirt drawn instead of shorts through. A different character is rejected before the rest.
     if (options.review === "always" || decide(checks).decision !== "REJECTED") {
       live(frame.index, attempt, tries, "reviewing");
-      await trace?.start("review", { model: meta.plannerModel, summary: "comparing every limb, the identity and the build" });
+      await trace?.start("review", { model: meta.plannerModel, summary: "comparing the design item by item, then every limb" });
+      const drawnForReview = await onColour(png, "#d8d8d8");
+      let identity: Check;
+      try {
+        identity = identityCheck(await reviewIdentity({ character, drawing: drawnForReview, description, signal: options.signal }));
+      } catch (error) {
+        options.signal?.throwIfAborted();
+        const why = error instanceof Error ? error.message.split("\n").at(-1)?.slice(0, 200) ?? error.message : String(error);
+        identity = { name: "identity", passed: false, status: "inconclusive", detail: `not measured: ${why}` };
+      }
+      checks.push(identity);
       const correction = await correctionFor(frame);
-      const review = reviewCheck(await reviewFrame({
-        overlay,
-        build: pair && build ? { pair, profile: buildText(build) } : undefined,
-        character,
-        pair: await sideBySide(await readFile(path.join(dir, frame.source)), png),
-        drawing: await onColour(png, "#d8d8d8"),
-        previous: previous ? await onColour(previous, "#d8d8d8") : null,
-        anchor: anchor ? await onColour(anchor, "#d8d8d8") : null,
-        correction,
-        legs: describeLegs(sourcePoses.frames[frame.index - 1]),
-        poseSheet,
-        signal: options.signal,
-      }), correction, closePose(sourcePoses.frames[frame.index - 1], winner.drawn, sourcePoses.frames));
-      checks.push(review);
+      // The full limb-by-limb review only for a drawing that is still this character.
+      const review = identity.passed || options.review === "always"
+        ? reviewCheck(await reviewFrame({
+          overlay,
+          build: pair && build ? { pair, profile: buildText(build) } : undefined,
+          character,
+          pair: await sideBySide(await readFile(path.join(dir, frame.source)), png),
+          drawing: drawnForReview,
+          previous: previous ? await onColour(previous, "#d8d8d8") : null,
+          anchor: anchor ? await onColour(anchor, "#d8d8d8") : null,
+          correction,
+          legs: describeLegs(sourcePoses.frames[frame.index - 1]),
+          poseSheet,
+          signal: options.signal,
+        }), correction, closePose(sourcePoses.frames[frame.index - 1], winner.drawn, sourcePoses.frames))
+        : null;
+      if (review) checks.push(review);
       await trace?.end("review", {
-        status: review.passed ? "done" : review.status === "inconclusive" ? "warn" : "failed",
-        summary: review.passed ? "same character, same pose, clean" : review.detail.slice(0, 160),
-        detail: review.detail,
+        status: !identity.passed ? (identity.status === "inconclusive" ? "warn" : "failed") : review && !review.passed ? (review.status === "inconclusive" ? "warn" : "failed") : "done",
+        summary: !identity.passed
+          ? `identity: ${identity.detail}`.slice(0, 160)
+          : review?.passed ? "same character, same pose, clean" : (review?.detail ?? "").slice(0, 160),
+        detail: [
+          `Identity, item by item: ${identity.detail}`,
+          review ? `Full review: ${review.detail}` : "Full review skipped: the identity check already rejects this drawing.",
+        ].join("\n\n"),
         images: [{ label: "Ghosted over the video", kind: "overlay", frame: frame.index, attempt }, ...(pair ? [{ label: "Build beside the sheet", kind: "build", frame: frame.index, attempt }] : [])],
       });
     } else {

@@ -183,7 +183,7 @@ async function anchorFor(dir: string, manifest: Manifest, frame: FrameState): Pr
  * Draws every open frame in order. With `only`, it draws just that frame: an approved one is reopened,
  * but its drawing is kept until a new attempt passes, so a redraw can never leave it worse off.
  */
-export async function runFrames(dir: string, steps: RunSteps, options: { limit?: number; signal?: AbortSignal; only?: number; /** Tries per frame in this run, when fewer than the manifest's (a single test drawing). */ attempts?: number } = {}): Promise<RunOutcome> {
+export async function runFrames(dir: string, steps: RunSteps, options: { limit?: number; signal?: AbortSignal; only?: number; /** Tries per frame in this run instead of the manifest's (a redraw's three, a single test drawing). */ attempts?: number } = {}): Promise<RunOutcome> {
   const log = steps.log ?? (() => undefined);
   const release = await acquireLock(dir);
   try {
@@ -228,7 +228,8 @@ export async function runFrames(dir: string, steps: RunSteps, options: { limit?:
       const feedback: string[] = [];
       /** The frame was set aside for a person: no more attempts, and the run goes on. */
       let settled = false;
-      const maxAttempts = Math.min(manifest.maxAttempts, options.attempts ?? manifest.maxAttempts);
+      // A call may ask for more tries than the run's default (a redraw: up to ROTOSCOPE_LIMITS.maxAttempts) or fewer (a test).
+      const maxAttempts = options.attempts ?? manifest.maxAttempts;
       for (let tries = 0; tries < maxAttempts; tries++) {
         // A stop asked between attempts leaves the frame open, not failed: the next run tries it fresh.
         if (options.signal?.aborted) {

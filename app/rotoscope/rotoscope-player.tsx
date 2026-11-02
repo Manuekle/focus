@@ -1,7 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from "react";
-import { NextIcon, PauseIcon, PlayIcon, PreviousIcon, Refresh01Icon, RepeatIcon } from "@hugeicons/core-free-icons";
+import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
+import { ArrowLeftRightIcon, NextIcon, PauseIcon, PlayIcon, PreviousIcon, Refresh01Icon, RepeatIcon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { AspectRatio, AspectRatioImage } from "../../components/motion/aspect-ratio";
 import { Button } from "../../components/ui/button";
@@ -19,7 +19,8 @@ export const SPEED_PRESETS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4] as const;
 export const SPEED_RANGE = { min: 0.1, max: 4, step: 0.05 } as const;
 
 export type PlayerBackground = "checker" | "white" | "dark";
-export type PlayerView = "compare" | "drawing";
+/** compare: the video and the drawing beside each other; slider: one over the other, cut at a draggable divider; drawing: alone. */
+export type PlayerView = "compare" | "slider" | "drawing";
 export type PlayerFrame = { readonly index: number; readonly drawing: string; readonly source: string };
 
 /** Smoother: how much of the outgoing drawing is mixed in at a cut, and over what share of the drawing's time it fades. */
@@ -56,6 +57,8 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
   const [speed, setSpeed] = useState(1);
   const [loop, setLoop] = useState(true);
   const [view, setView] = useState<PlayerView>("compare");
+  // Where the slider's divider sits, as a share of the width: the video is left of it, the drawing right.
+  const [split, setSplit] = useState(50);
   const [background, setBackground] = useState<PlayerBackground>("checker");
   // Off by default: playback shows the drawings exactly as approved.
   const [smoother, setSmoother] = useState(false);
@@ -138,6 +141,30 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
   const still = !showLive && !playing && focus !== null && !focusPlayable ? focus : null;
   const shown = showLive ? { source: live.source, drawing: live.drawing } : still ?? (frame ? { source: frame.source, drawing: frame.drawing } : null);
   const panes = view === "compare" ? 2 : 1;
+  const drawingContent = shown?.drawing && smoother && playing && !showLive && !still ? (
+    <SmoothDrawing src={shown.drawing} duration={1000 / rate} />
+  ) : shown?.drawing ? (
+    <AspectRatioImage src={shown.drawing} alt="Drawing" width={FRAME_SIZE.width} height={FRAME_SIZE.height} />
+  ) : showLive ? (
+    <>
+      <Skeleton className={fb.working} />
+      <span className={fb.workingLabel}>{live.label}</span>
+    </>
+  ) : <span className={fb.stageEmpty}>{still ? "Not drawn yet" : "No approved drawing yet"}</span>;
+
+  const dragTo = (event: PointerEvent<HTMLElement>) => {
+    const box = event.currentTarget.getBoundingClientRect();
+    setSplit(Math.max(0, Math.min(100, ((event.clientX - box.left) / box.width) * 100)));
+  };
+  const onDividerKey = (event: KeyboardEvent<HTMLElement>) => {
+    const by = event.shiftKey ? 10 : 2;
+    if (event.key === "ArrowLeft") setSplit((value) => Math.max(0, value - by));
+    else if (event.key === "ArrowRight") setSplit((value) => Math.min(100, value + by));
+    else if (event.key === "Home") setSplit(0);
+    else if (event.key === "End") setSplit(100);
+    else return;
+    event.preventDefault();
+  };
 
   return (
     <div className={fb.player}>
@@ -152,20 +179,48 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
               </AspectRatio>
             </div>
           ) : null}
-          <div className={fb.stage} data-transparent={background === "checker" ? "" : undefined} data-background={background}>
-            <AspectRatio ratio={FRAME_RATIO} animated={false} className={styles.stagePane} contentClassName={STAGE_CONTENT} data-background={background}>
-              {shown?.drawing && smoother && playing && !showLive && !still ? (
-                <SmoothDrawing src={shown.drawing} duration={1000 / rate} />
-              ) : shown?.drawing ? (
-                <AspectRatioImage src={shown.drawing} alt="Drawing" width={FRAME_SIZE.width} height={FRAME_SIZE.height} />
-              ) : showLive ? (
-                <>
-                  <Skeleton className={fb.working} />
-                  <span className={fb.workingLabel}>{live.label}</span>
-                </>
-              ) : <span className={fb.stageEmpty}>{still ? "Not drawn yet" : "No approved drawing yet"}</span>}
-            </AspectRatio>
-          </div>
+          {view === "slider" ? (
+            <div
+              className={`${fb.stage} ${styles.slider}`}
+              data-transparent={background === "checker" ? "" : undefined}
+              data-background={background}
+              onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); dragTo(event); }}
+              onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) dragTo(event); }}
+            >
+              <AspectRatio ratio={FRAME_RATIO} animated={false} className={styles.stagePane} contentClassName={STAGE_CONTENT} data-background={background}>
+                {drawingContent}
+                {shown ? (
+                  <div className={styles.sliderVideo} style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }}>
+                    <MediaImage src={shown.source} alt="Video frame" draggable={false} />
+                  </div>
+                ) : null}
+                <span className={styles.sliderTag} data-side="left" aria-hidden>Video</span>
+                <span className={styles.sliderTag} data-side="right" aria-hidden>Drawing</span>
+                <div className={styles.sliderLine} style={{ left: `${split}%` }} aria-hidden />
+                <div
+                  role="slider"
+                  tabIndex={0}
+                  aria-label="Video and drawing divider"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={Math.round(split)}
+                  aria-valuetext={`${Math.round(split)}% video`}
+                  className={styles.sliderHandle}
+                  style={{ left: `${split}%` }}
+                  onKeyDown={onDividerKey}
+                >
+                  <HugeiconsIcon icon={ArrowLeftRightIcon} size={14} strokeWidth={1.75} />
+                </div>
+              </AspectRatio>
+            </div>
+          ) : null}
+          {view !== "slider" ? (
+            <div className={fb.stage} data-transparent={background === "checker" ? "" : undefined} data-background={background}>
+              <AspectRatio ratio={FRAME_RATIO} animated={false} className={styles.stagePane} contentClassName={STAGE_CONTENT} data-background={background}>
+                {drawingContent}
+              </AspectRatio>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -202,6 +257,7 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
         <div className={fb.controlRow} role="group" aria-label="View">
           <span className={fb.controlLabel}>View</span>
           <ToggleChip size="xs" selected={view === "compare"} onClick={() => setView("compare")}>Video | drawing</ToggleChip>
+          <ToggleChip size="xs" selected={view === "slider"} onClick={() => setView("slider")} title="Both in one picture: drag the divider to wipe between the video and the drawing.">Slider</ToggleChip>
           <ToggleChip size="xs" selected={view === "drawing"} onClick={() => setView("drawing")}>Drawing</ToggleChip>
         </div>
         <div className={fb.controlRow} role="group" aria-label="Background">

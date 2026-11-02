@@ -30,6 +30,7 @@ import { AttemptTray, TRAY_RESERVE, trayItems } from "./attempt-tray";
 import { STATE_LABEL, frameState, time } from "./frame-state";
 import { ImageGeneration } from "./image-generation";
 import styles from "./rotoscope-canvas.module.css";
+import { thumbUrl } from "../../shared/thumbs";
 
 const CARD_W = 128;
 const CARD_H = 187;
@@ -638,16 +639,16 @@ export function RotoscopeCanvas({
                   <span className={styles.thumb} data-transparent="">
                     {detailed ? (
                       frame.status === "approved" ? (
-                        <MediaImage src={`${rotoscopeUrls.media(run.id, "frame", frame.index)}&v=${frame.approvedAttempt}`} alt="" draggable={false} loading="lazy" decoding="async" />
+                        <MediaImage src={thumbUrl(`${rotoscopeUrls.media(run.id, "frame", frame.index)}&v=${frame.approvedAttempt}`, CARD_W)} alt="" draggable={false} loading="lazy" decoding="async" />
                       ) : live?.image ? (
-                        <MediaImage src={rotoscopeUrls.media(run.id, "attempt", frame.index, live.attempt)} alt="" draggable={false} className={styles.checking} />
+                        <MediaImage src={thumbUrl(rotoscopeUrls.media(run.id, "attempt", frame.index, live.attempt), CARD_W)} alt="" draggable={false} className={styles.checking} />
                       ) : live ? (
                         <ImageGeneration className={styles.workingFx} preset="pixels-organic" pixelScale={0.6}>
                           {/* eslint-disable-next-line @next/next/no-img-element -- the video frame being drawn, dimmed under the work */}
-                          <img src={rotoscopeUrls.media(run.id, "source", frame.index)} alt="" draggable={false} className={styles.ghost} />
+                          <img src={thumbUrl(rotoscopeUrls.media(run.id, "source", frame.index), CARD_W)} alt="" draggable={false} decoding="async" className={styles.ghost} />
                         </ImageGeneration>
                       ) : (
-                        <MediaImage src={rotoscopeUrls.media(run.id, "source", frame.index)} alt="" draggable={false} loading="lazy" decoding="async" className={styles.ghost} />
+                        <MediaImage src={thumbUrl(rotoscopeUrls.media(run.id, "source", frame.index), CARD_W)} alt="" draggable={false} loading="lazy" decoding="async" className={styles.ghost} />
                       )
                     ) : (
                       <span className={styles.block} aria-hidden />

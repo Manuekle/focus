@@ -11,6 +11,7 @@ import { measuresText } from "../../shared/rotoscope";
 import { MeasuresFields, draftOf, parseMeasures, type MeasuresDraft } from "../rotoscope/measures-fields";
 import { characterApi } from "./character-client";
 import styles from "./characters.module.css";
+import { pageHidden } from "../../lib/poll";
 
 const POLL_MS = 3000;
 /** A version this young may still be starting its automatic preparation. */
@@ -64,6 +65,7 @@ export function CharacterKitSection({
     if (!preparing) return;
     let live = true;
     const timer = setInterval(() => {
+      if (pageHidden()) return;
       characterApi.kit(character.id, versionId).then((next) => live && setKit(next), () => undefined);
     }, POLL_MS);
     return () => {

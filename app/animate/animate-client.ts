@@ -12,6 +12,7 @@ import {
   type EngineAvailability,
   type ImportMethod,
 } from "../../shared/reference-motion";
+import { pollAfter } from "../../lib/poll";
 
 export class AnimateApiError extends Error {
   constructor(message: string, readonly code: string) {
@@ -84,22 +85,22 @@ export function useAnimationJob(id: string | null) {
   useEffect(() => {
     if (!id) return;
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancel = () => {};
     const tick = async () => {
       try {
         const next = await animateApi.get(id);
         if (stopped) return;
         setJob(next);
         setError(null);
-        if (isActiveStatus(next.status)) timer = setTimeout(tick, 1500);
+        if (isActiveStatus(next.status)) cancel = pollAfter(tick, 1500);
       } catch (cause) {
         if (stopped) return;
         setError(cause instanceof Error ? cause.message : "This animation couldn’t be loaded.");
-        timer = setTimeout(tick, 4000);
+        cancel = pollAfter(tick, 4000);
       }
     };
     void tick();
-    return () => { stopped = true; clearTimeout(timer); };
+    return () => { stopped = true; cancel(); };
     // Restart polling when a retry makes the job active again.
   }, [id, active]);
   return { job: job?.id === id ? job : null, setJob, error };

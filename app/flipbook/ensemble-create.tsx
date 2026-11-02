@@ -23,6 +23,7 @@ import { characterApi } from "../characters/character-client";
 import view from "../_editor/editor-view.module.css";
 import composer from "../_editor/composer.module.css";
 import styles from "./flipbook.module.css";
+import { thumbUrl } from "../../shared/thumbs";
 
 const DETAIL_MAX = 500;
 
@@ -127,7 +128,7 @@ export function EnsembleCreate({
                   return (
                     <li key={entry.id}>
                       <button type="button" className={cn(styles.pickerItem, styles.castItem)} aria-pressed={position >= 0} disabled={full && position < 0} onClick={() => toggle(entry.id)}>
-                        <MediaThumb src={entry.coverUrl} className={styles.pickerCover} />
+                        <MediaThumb src={thumbUrl(entry.coverUrl, 160)} className={styles.pickerCover} />
                         <span className="min-w-0">
                           <span className="block truncate text-xs text-foreground">{entry.name}</span>
                           <span className="block text-[11px] text-muted-foreground">{position >= 0 ? "In the scene" : `${entry.versions} ${entry.versions === 1 ? "version" : "versions"}`}</span>

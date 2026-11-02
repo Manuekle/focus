@@ -30,6 +30,18 @@ function picture(background: Colour, fill: Colour, gradient = 0): Rgba {
 const alphaAt = (image: Rgba, x: number, y: number) => image.data[(y * W + x) * 4 + 3];
 
 describe("keyBackground", () => {
+  it("paints over a band of the video frame left around a magenta picture before keying", () => {
+    const framed = picture([255, 0, 255], [60, 60, 70]);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      if (x > 4 && x < W - 5 && y > 4 && y < H - 5) continue;
+      const i = (y * W + x) * 4;
+      framed.data[i] = 214; framed.data[i + 1] = 206; framed.data[i + 2] = 196;
+    }
+    const { image, background } = keyBackground(framed);
+    expect(background).toBe(KEY_COLOR);
+    expect([alphaAt(image, 0, 0), alphaAt(image, 100, 150), alphaAt(image, 75, 200)]).toEqual([0, 0, 255]);
+  });
+
   it("keys a crimson background with a vignette, the hole between arm and body too, and keeps a red garment", () => {
     // Higgsfield's crimson, a red hakama inside the figure.
     const { image, background } = keyBackground(picture([204, 0, 85], [235, 67, 66], 0.05));

@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
 import { ApiErrorBodySchema } from "../../shared/schemas";
-import { BatchSchema, FramePromptSchema, FrameTraceSchema, MappingViewSchema, PromptAnalysisSchema, RotoscopeFlipbookSchema, RotoscopeRunSchema, RotoscopeRunSummarySchema, rotoscopeUrls, type CharacterMeasures, type MappingJoint, type Renderer, type RotoscopeBatch, type RotoscopeRun, type RotoscopeRunSummary } from "../../shared/rotoscope";
+import { BatchSchema, CompareResultSchema, FramePromptSchema, FrameTraceSchema, MappingViewSchema, PromptAnalysisSchema, RotoscopeFlipbookSchema, RotoscopeRunSchema, RotoscopeRunSummarySchema, rotoscopeUrls, type CharacterMeasures, type CompareOptions, type MappingJoint, type Renderer, type RotoscopeBatch, type RotoscopeRun, type RotoscopeRunSummary } from "../../shared/rotoscope";
 import { discoverRotoscopeRuns, observeRotoscope } from "../_activity/activity-adapters";
 import { getActivityVersion } from "../_activity/activity-store";
 import { rightsHeaders } from "../../shared/rights";
+import { pollAfter } from "../../lib/poll";
 
 export class RotoscopeApiError extends Error {
   constructor(message: string, readonly code: string) {
@@ -69,6 +70,8 @@ export const rotoscopeApi = {
   /** Adds the next seconds of the video as open frames (no drawing yet). */
   extend: (id: string, seconds: number) => call(`/api/rotoscope/runs/${id}/extend`, post({ seconds }), parseRun),
   rebuildGuides: (id: string) => call(`/api/rotoscope/runs/${id}/guides`, post(), parseRun),
+  /** The video and the approved drawings as one clip (side by side or stacked), rendered on the server. */
+  exportCompare: (id: string, options: CompareOptions) => call(`/api/rotoscope/runs/${id}/compare`, post(options), (value) => CompareResultSchema.parse(value)),
   openInFlipbook: (id: string, options: { readonly sound: boolean }) => call(`/api/rotoscope/runs/${id}/flipbook`, post(options), (value) => RotoscopeFlipbookSchema.parse(value)),
   remove: (id: string) => call(`/api/rotoscope/runs/${id}`, { method: "DELETE" }, () => undefined),
   mapping: (id: string, frame: number, attempt: number) => call(rotoscopeUrls.mapping(id, frame, attempt), undefined, (value) => MappingViewSchema.parse(value)),
@@ -164,22 +167,22 @@ export function useRotoscopeRun(id: string | null) {
   useEffect(() => {
     if (!id) return;
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancel = () => {};
     const tick = async () => {
       try {
         const next = await rotoscopeApi.get(id);
         if (stopped) return;
         setRun(next);
         setError(null);
-        if (busy(next)) timer = setTimeout(tick, 2000);
+        if (busy(next)) cancel = pollAfter(tick, 2000);
       } catch (cause) {
         if (stopped) return;
         setError(cause instanceof Error ? cause.message : "This run couldn’t be loaded.");
-        timer = setTimeout(tick, 5000);
+        cancel = pollAfter(tick, 5000);
       }
     };
     void tick();
-    return () => { stopped = true; clearTimeout(timer); };
+    return () => { stopped = true; cancel(); };
     // Restart polling when an action makes the run busy again.
   }, [id, active]);
   return { run: run?.id === id ? run : null, setRun, error };
@@ -195,22 +198,22 @@ export function useRotoscopeBatch(id: string | null) {
   useEffect(() => {
     if (!id) return;
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout> | undefined;
+    let cancel = () => {};
     const tick = async () => {
       try {
         const next = await rotoscopeApi.batch(id);
         if (stopped) return;
         setBatch(next);
         setError(null);
-        if (batchBusy(next)) timer = setTimeout(tick, 2500);
+        if (batchBusy(next)) cancel = pollAfter(tick, 2500);
       } catch (cause) {
         if (stopped) return;
         setError(cause instanceof Error ? cause.message : "This batch couldn’t be loaded.");
-        timer = setTimeout(tick, 5000);
+        cancel = pollAfter(tick, 5000);
       }
     };
     void tick();
-    return () => { stopped = true; clearTimeout(timer); };
+    return () => { stopped = true; cancel(); };
     // Restart polling when an action makes a run busy again.
   }, [id, active]);
   return { batch: batch?.id === id ? batch : null, setBatch, error };

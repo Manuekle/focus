@@ -24,6 +24,8 @@ import {
 import { STATE_LABEL, frameState } from "./frame-state";
 import { rotoscopeApi } from "./rotoscope-client";
 import styles from "./pipeline-canvas.module.css";
+import { thumbUrl } from "../../shared/thumbs";
+import { pageHidden } from "../../lib/poll";
 
 // The Pipeline view: how one frame's drawing is made, as a flow on the canvas. Each attempt is a
 // lane of nodes (inputs and guardrails → Muse Spark's prompt → Muse Image → cut-out and measures →
@@ -50,7 +52,8 @@ const POLL_MS = 1500;
 /** What each step does, shown before a frame has any trace. */
 const PLANNED: Record<TraceStepId, string> = {
   inputs: "Video frame, character sheet, pose guide and the previous approved frame; checks there is a body to follow.",
-  prompt: "Muse Spark writes Muse Image's prompt from the template; guardrails add back any clause it dropped.",
+  diagnosis: "On a retry or a note: Muse Spark compares the rejected drawing with the video and the sheet, reads your note and the prompt that drew it, and writes the correction the next drawing gets.",
+  prompt: "A short prompt: the video frame is the pose, the character's items one by one, Muse Spark's pose note and, on a retry or a note, its correction; guardrails add back any clause it lacks.",
   generate: "Muse Image edits the video frame into the character, with every reference labelled.",
   measure: "Background keyed out, colours held to the palette, DWPose finds the drawn pose, drawing registered on the grid.",
   fidelity: "fidelity.py (OpenCV, NumPy) and SAM 3.1: pose, limb angles, missing or extra limbs, proportions, motion and continuity.",
@@ -137,7 +140,7 @@ export function PipelineCanvas({ run, frame, onFrame, dockOpen, onToggleDock, ac
     });
     void load();
     // While this frame is being drawn its trace grows step by step.
-    const timer = drawing ? setInterval(load, POLL_MS) : undefined;
+    const timer = drawing ? setInterval(() => { if (!pageHidden()) void load(); }, POLL_MS) : undefined;
     return () => {
       cancelled = true;
       if (timer) clearInterval(timer);
@@ -597,7 +600,7 @@ function PipelineNode({ run, id, step, bar, at, queued, selected, onPick, onZoom
                 className={styles.thumb}
                 title={image.label}
               >
-                <MediaImage src={imageUrl(run, image)} alt={image.label} loading="lazy" />
+                <MediaImage src={thumbUrl(imageUrl(run, image), 120)} alt={image.label} loading="lazy" />
               </ZoomButton>
             ))}
           </span>

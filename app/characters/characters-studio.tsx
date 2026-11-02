@@ -34,6 +34,8 @@ import { CharacterEditor } from "./character-editor";
 import shell from "../editor/studio.module.css";
 import styles from "./characters.module.css";
 import { AnimateNav } from "../_editor/animate-nav";
+import { thumbUrl } from "../../shared/thumbs";
+import { pollAfter } from "../../lib/poll";
 
 export function CharactersStudio({
   initialId,
@@ -97,7 +99,7 @@ export function CharactersStudio({
   useEffect(() => {
     if (character?.status !== "generating" || !user) return;
     let stopped = false;
-    let timer: ReturnType<typeof setTimeout>;
+    let cancel = () => {};
     const poll = async () => {
       try {
         const next = await characterApi.get(character.id);
@@ -116,12 +118,12 @@ export function CharactersStudio({
               : "Reconnecting to your character…",
           );
       }
-      if (!stopped) timer = setTimeout(() => void poll(), 1800);
+      if (!stopped) cancel = pollAfter(() => void poll(), 1800);
     };
-    timer = setTimeout(() => void poll(), 1000);
+    cancel = pollAfter(() => void poll(), 1000);
     return () => {
       stopped = true;
-      clearTimeout(timer);
+      cancel();
     };
   }, [character?.id, character?.status, user, loadList]);
 
@@ -224,7 +226,7 @@ export function CharactersStudio({
                     className={styles.sideCharacter}
                     aria-current={entry.id === initialId ? "page" : undefined}
                   >
-                    <img src={entry.coverUrl} alt="" />
+                    <img src={thumbUrl(entry.coverUrl, 48)} alt="" loading="lazy" decoding="async" />
                     <span>
                       <strong>{entry.name}</strong>
                       <small>
@@ -328,7 +330,7 @@ export function CharactersStudio({
                       href={`/characters?c=${entry.id}`}
                     >
                       <div className={styles.cardArt}>
-                        <MediaImage src={entry.coverUrl} alt={entry.name} />
+                        <MediaImage src={thumbUrl(entry.coverUrl, 320)} alt={entry.name} />
                       </div>
                       <div className={styles.cardCaption}>
                         <span>

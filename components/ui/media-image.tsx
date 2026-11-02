@@ -20,8 +20,9 @@ export function MediaImageCover({ status, iconSize = 18 }: { readonly status: Im
  * An <img> that fills a positioned box: a skeleton while it loads, a fade when
  * it lands, a quiet mark if it cannot load. The parent must be `position:
  * relative` (every picture box here already is) and size the image itself.
+ * It loads lazily and decodes off the main thread unless told otherwise.
  */
-export function MediaImage({ className, onLoad, onError, alt = "", ...props }: ComponentProps<"img"> & { readonly iconSize?: number }) {
+export function MediaImage({ className, onLoad, onError, alt = "", loading: loadMode = "lazy", decoding = "async", ...props }: ComponentProps<"img"> & { readonly iconSize?: number }) {
   const { iconSize, ...img } = props;
   const loading = useImageStatus(typeof img.src === "string" ? img.src : undefined);
   return (
@@ -30,6 +31,8 @@ export function MediaImage({ className, onLoad, onError, alt = "", ...props }: C
         {...img}
         ref={loading.props.ref}
         alt={alt}
+        loading={loadMode}
+        decoding={decoding}
         data-status={loading.status}
         className={cn(styles.image, className)}
         onLoad={(event) => { loading.props.onLoad(event); onLoad?.(event); }}

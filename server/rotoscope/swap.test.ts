@@ -1,7 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { measuresText } from "../../shared/rotoscope";
-import { buildText, CONTINUITY_ROLE, POSE_SHEET_ROLE, reconcileBuild, swapFramePrompt, validBuild, type BuildProfile } from "./draw";
-import { assertIsolation, recordReferences, sha256 } from "./provenance";
+import { buildText, outfitItems, reconcileBuild, swapFramePrompt, validBuild, type BuildProfile } from "./draw";
+import { guardPrompt } from "./guardrails";
 
 const png = (n: number) => Buffer.from([n]);
 const base = { frame: png(1), character: png(2), description: "Keep the character exactly as drawn: navy bob, red cheongsam.", note: "The arm on the right of the image is raised.", correction: null, feedback: [] as string[] };
@@ -10,55 +9,44 @@ describe("swapFramePrompt", () => {
   it("edits the video frame into the character with this frame's own note and nothing else", () => {
     const { prompt, references } = swapFramePrompt(base);
     expect(references.map((reference) => reference.png)).toEqual([png(1), png(2)]);
-    expect(prompt).toContain("Edit Image 1 into one finished frame of a 2D anime animation: replace the person with the character of Image 2");
-    expect(prompt).toContain(`CHARACTER IDENTITY (Image 2)\n${base.description}`);
-    expect(prompt).toContain(`TARGET POSE (Image 1)\n${base.note}`);
-    expect(prompt).not.toMatch(/previous|rejected|correction|mannequin|skeleton|grid/i);
+    expect(references[0].role).toMatch(/^THE VIDEO FRAME to edit: the pose/);
+    expect(references[1].role).toMatch(/^THE CHARACTER: the authority on identity, outfit and style/);
+    expect(prompt).toMatch(/^Edit Image 1 into one frame of a 2D anime animation: replace the person with the character of Image 2\./);
+    expect(prompt).toContain(`POSE (as seen in Image 1, never mirrored): ${base.note}`);
+    expect(prompt).not.toMatch(/previous|rejected|correction|mannequin|skeleton|grid|CONTINUITY|PRIORITIES|ART STYLE/i);
   });
 
-  it("gives each image one job, the style sheet as rules, and what wins when they pull apart", () => {
-    const style = "Line work: thin dark-brown outlines, thicker at the silhouette.\nShading: two-tone cel shading with hard edges.";
-    const { prompt, references } = swapFramePrompt({ ...base, style });
-    expect(references[0].role).toMatch(/^REFERENCE C, THE TARGET POSE/);
-    expect(references[1].role).toMatch(/^REFERENCE A, THE CHARACTER/);
-    expect(prompt).toContain(`ART STYLE (as Image 2 is drawn)\n${style}\nThe frame must look drawn by the same artist`);
-    expect(prompt.indexOf("CHARACTER IDENTITY")).toBeLessThan(prompt.indexOf("ART STYLE"));
-    expect(prompt.indexOf("ART STYLE")).toBeLessThan(prompt.indexOf("TARGET POSE"));
-    expect(prompt).toMatch(/PRIORITIES when these pull apart\n1\. The character's identity and proportions, from Image 2\.\n2\. The pose, never mirrored, at Image 1's size and placement\.\n3\. The drawing style, from Image 2\./);
-    expect(prompt).toContain("Sides as seen in the picture, never mirrored");
-    // Without a style sheet the section still holds the sheet as the authority.
-    expect(swapFramePrompt(base).prompt).toContain("ART STYLE (as Image 2 is drawn)\nThe frame must look drawn by the same artist");
+  it("lists the character's items alone, without the identity line's opening, proportions or background", () => {
+    const description = "Keep the character exactly as drawn: navy bob with a low bun, white collared shirt, black loafers. Preserve the character's proportions (six heads tall), colours and line work. Show the whole body on a plain background.";
+    const { prompt } = swapFramePrompt({ ...base, description });
+    expect(prompt).toContain("CHARACTER (copy from Image 2, item by item): navy bob with a low bun, white collared shirt, black loafers. Keep the same face, proportions");
+    expect(prompt).not.toMatch(/exactly as drawn|six heads|plain background/);
+    expect(outfitItems("Keep Ichika exactly as drawn: long hair, red scarf.")).toBe("long hair, red scarf");
   });
 
-  it("shows the previous approved frame for continuity, after the character, never as its pose", () => {
-    const { prompt, references } = swapFramePrompt({ ...base, poseSheet: png(4), continuity: { png: png(5), frame: 6 } });
-    expect(references.map((reference) => reference.png)).toEqual([png(1), png(2), png(5), png(4)]);
-    expect(references[2].role).toBe(CONTINUITY_ROLE(6));
-    expect(references[2].role).toContain("never the pose to draw");
-    expect(prompt).toContain("CONTINUITY\nImage 3 is the frame just before this one.");
-    expect(prompt).toContain("Joints: Image 4 shows");
-    expect(prompt).toContain("3. The drawing style, from Image 2, drawn as in Image 3.");
-    expect(prompt).toContain("exactly two arms, two hands, two legs and two feet");
-    // An earlier output, shown as itself: provenance lets it through as C, never as the character.
-    const records = recordReferences(references);
-    expect(records[2].entity).toBe("C");
-    expect(() => assertIsolation({ kind: "generation-target", frame: 7, attempt: 1, pose: { kind: "pose-source", frame: 7, file: "f", sha256: "a", crop: null, layout: { scale: 1, x: 0, y: 0 } }, identity: { kind: "character-identity", file: "c", sha256: sha256(png(2)) }, references: records }, new Set([sha256(png(9))]))).not.toThrow();
-    expect(swapFramePrompt(base).prompt).not.toContain("CONTINUITY");
+  it("is short, keys out on magenta and keeps every clause the guardrails look for", () => {
+    const { prompt } = swapFramePrompt({ ...base, description: "Keep the character exactly as drawn: navy bob, red cheongsam." });
+    expect(prompt.split(/\s+/).length).toBeLessThan(160);
+    expect(prompt).toContain("perfectly flat solid #FF00FF magenta");
+    const guarded = guardPrompt(prompt, 2);
+    expect(guarded.prompt).toBe(prompt);
   });
 
-  it("says the character's height and weight, and shows the reference poses before the pencil marks", () => {
-    const body = measuresText({ heightCm: 160, weightKg: 54 });
-    expect(body).toBe("1.60 m tall, 54 kg (BMI 21.1)");
-    const { prompt, references } = swapFramePrompt({ ...base, body, poseSheet: png(4), correction: { marked: png(3), comment: "Raise the hand." } });
-    expect(prompt).toContain("Body: the character is 1.60 m tall, 54 kg (BMI 21.1).");
-    expect(references.map((reference) => reference.png)).toEqual([png(1), png(2), png(4), png(3)]);
-    expect(references[2].role).toBe(POSE_SHEET_ROLE);
-    expect(prompt).toContain("Joints: Image 3 shows how this character's arms, legs and torso bend");
-    expect(prompt).toContain("see the red marks in Image 4");
-    // Without measures or a pose sheet, neither line is there.
-    expect(swapFramePrompt(base).prompt).not.toMatch(/Body:|Joints:/);
-    expect(measuresText(null)).toBeNull();
-    expect(measuresText({ heightCm: 172, weightKg: null })).toBe("1.72 m tall");
+  it("gives Muse Image Muse Spark's reading of a note, not the note's own loose words", () => {
+    const diagnosis = { problem: "The pose is drawn mirrored: the hand in front of the face is on the right of the image.", cause: "The arm was named by its shoulder.", fix: "Put the open hand in front of the face on the LEFT of the image and the hand at the waist on the RIGHT." };
+    const correction = { marked: png(9), comment: "la pose debe estar invertida" };
+    const { prompt, references } = swapFramePrompt({ ...base, correction, feedback: ["The drawing is a mirror image."], diagnosis });
+    expect(references.at(-1)?.png).toEqual(png(9));
+    expect(prompt).toContain(`CORRECTIONS\nDirector's correction (see the red marks in Image 3): ${diagnosis.problem}\nFix: ${diagnosis.fix}`);
+    expect(prompt).not.toContain("invertida");
+    expect(prompt).not.toContain("The drawing is a mirror image.");
+    // A retry without a note: the reading of the rejected drawing.
+    expect(swapFramePrompt({ ...base, diagnosis }).prompt).toContain(`The previous drawing of this frame was rejected: ${diagnosis.problem}`);
+    // Muse Spark's own image numbers never reach a prompt that wasn't sent those images.
+    const numbered = { ...diagnosis, problem: "Image 3 is not a mirror image of Image 1.", fix: "Unlike Image 3, bend the elbow." };
+    const retry = swapFramePrompt({ ...base, diagnosis: numbered }).prompt;
+    expect(retry).toContain("The previous drawing of this frame was rejected: the rejected drawing is not a mirror image of Image 1.");
+    expect(retry).not.toContain("Image 3");
   });
 
   it("carries a frame's own note, never another's", () => {
@@ -82,10 +70,10 @@ describe("swapFramePrompt", () => {
     expect(prompt).not.toMatch(/cells|78 %/);
   });
 
-  it("leaves the pose line and the identity line out when there is nothing to say", () => {
+  it("leaves the pose note and the items out when there is nothing to say", () => {
     const { prompt } = swapFramePrompt({ ...base, description: "", note: "" });
-    expect(prompt).not.toContain("Pose:");
-    expect(prompt).not.toContain("exactly as drawn");
+    expect(prompt).toContain("POSE (as seen in Image 1, never mirrored).");
+    expect(prompt).toContain("CHARACTER (copy from Image 2, item by item). Keep");
   });
 });
 

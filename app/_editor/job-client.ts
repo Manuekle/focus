@@ -9,6 +9,7 @@ import { editorErrorMessage } from "./messages";
 import { generationFeedback } from "../_auth/generation-feedback";
 import { editActivity, observeEdit } from "../_activity/activity-adapters";
 import { getActivityVersion, trackActivity } from "../_activity/activity-store";
+import { pollAfter } from "../../lib/poll";
 
 export class ApiRequestError extends Error {
   constructor(message: string, readonly code: string) {
@@ -78,12 +79,12 @@ export function useJob(initial: EditJob | null) {
         failures++;
         if (failures >= 3) setPollError(error instanceof Error ? error.message : "We lost the connection to your edit. Reconnect to see its progress.");
       }
-      if (!stopped) timer = window.setTimeout(tick, 700);
+      if (!stopped) cancel = pollAfter(tick, 700);
     };
-    let timer = window.setTimeout(tick, 500);
+    let cancel = pollAfter(tick, 500);
     return () => {
       stopped = true;
-      window.clearTimeout(timer);
+      cancel();
     };
   }, [jobId, active]);
 

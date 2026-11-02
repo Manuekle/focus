@@ -2,7 +2,7 @@ import path from "node:path";
 import { parseArgs } from "node:util";
 import { buildReport, diagnoseFrame, generateRun, initRun, mapPreview, previewRun, reguideRun, runsRoot, type Renderer } from "./pipeline";
 import { approveManually, readManifest } from "./run-state";
-import { CharacterMeasuresSchema } from "../../shared/rotoscope";
+import { CharacterMeasuresSchema, ROTOSCOPE_LIMITS } from "../../shared/rotoscope";
 
 // Console rotoscope: video → frames at N fps → one validated drawing per frame.
 //
@@ -15,7 +15,7 @@ import { CharacterMeasuresSchema } from "../../shared/rotoscope";
 //                                                         resumes where it stopped; --dual adds Higgsfield's drawing;
 //                                                         --renderer picks the character rig and/or generators (default auto);
 //                                                         --review-always has Muse Spark review every attempt (debug), not only those the measurements don't reject
-//                                                         --writer template draws from the template prompt; by default Muse Spark writes each frame's prompt from it and the prompt memory
+//                                                         --writer spark has Muse Spark rewrite each frame's prompt from the template and the prompt memory; by default the template draws
 //   pnpm rotoscope map --run test-1s --frame 20           the character rig's drawing of one frame and its pose check, no model call
 //   pnpm rotoscope diagnose --run test-1s --frame 20      mapping diagnostics for attempts drawn before the engine (local)
 //   pnpm rotoscope lab --run test-1s --frames 1-9 [--settings pilot|name,name] [--repeats N]
@@ -40,7 +40,7 @@ const commands: Record<string, (values: Record<string, string | undefined>) => P
     const cm = (value: string | undefined) => (value ? Number(value) : null);
     await initRun(runDir(v.run!), {
       video: v.video!, character: v.character!, fps: Number(v.fps ?? 9), start: Number(v.start ?? 0),
-      seconds: v.seconds ? Number(v.seconds) : null, maxAttempts: Number(v["max-attempts"] ?? 3),
+      seconds: v.seconds ? Number(v.seconds) : null, maxAttempts: Number(v["max-attempts"] ?? ROTOSCOPE_LIMITS.defaultAttempts),
       measures: v.height || v.weight || v["person-height"] ? CharacterMeasuresSchema.parse({ heightCm: cm(v.height), weightKg: cm(v.weight), personHeightCm: cm(v["person-height"]) }) : null,
       poseSheet: v["pose-sheet"] === "true",
       kit: v.kit ? { dir: v.kit, body: !v.height && !v.weight } : null,
@@ -53,7 +53,7 @@ const commands: Record<string, (values: Record<string, string | undefined>) => P
     need(v, "run");
     const dir = runDir(v.run!);
     const renderer = (["auto", "rig", "muse"].includes(v.renderer ?? "") ? v.renderer : "auto") as Renderer;
-    const outcome = await generateRun(dir, { limit: v.limit ? Number(v.limit) : undefined, attempts: v.attempts ? Number(v.attempts) : undefined, dual: v.dual === "true", renderer, repair: v["no-repair"] !== "true", review: v["review-always"] === "true" ? "always" : "gated", writer: v.writer === "template" ? "template" : "spark", log });
+    const outcome = await generateRun(dir, { limit: v.limit ? Number(v.limit) : undefined, attempts: v.attempts ? Number(v.attempts) : undefined, dual: v.dual === "true", renderer, repair: v["no-repair"] !== "true", review: v["review-always"] === "true" ? "always" : "gated", writer: v.writer === "spark" ? "spark" : "template", log });
     if (outcome.kind === "complete") log(`\nall ${outcome.approved} frames approved. Next: pnpm rotoscope report --run ${v.run}`);
     if (outcome.kind === "partial") {
       log(`\n${outcome.approved} frames approved; frame${outcome.failed.length === 1 ? "" : "s"} ${outcome.failed.join(", ")} didn't pass and stay open.`);

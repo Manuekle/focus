@@ -13,6 +13,9 @@ const limits = mediaLimits({ duration: process.env.FOCUS_MAX_VIDEO_DURATION_SECO
 
 const config: NextConfig = {
   devIndicators: false,
+  // Phone testing goes through a Cloudflare tunnel (`cloudflared tunnel --url http://127.0.0.1:3200`);
+  // without its hostname the dev server blocks its own /_next assets and HMR socket. Named tunnels: FOCUS_DEV_ORIGINS=app.example.com,...
+  allowedDevOrigins: ["*.trycloudflare.com", ...(process.env.FOCUS_DEV_ORIGINS?.split(",").map((origin) => origin.trim()).filter(Boolean) ?? [])],
   // A self-contained server for the Docker image (see Dockerfile).
   output: "standalone",
   // Always compile an explicit boolean, even when the variable is absent.
@@ -29,5 +32,15 @@ const config: NextConfig = {
   // The animation-principles SKILL.md files are read at runtime (server/policies/loader.ts) and verified by hash.
   outputFileTracingIncludes: { "/api/rotoscope/**": ["./server/policies/skills/**/*"] },
   experimental: { optimizePackageImports: ["@hugeicons/core-free-icons", "radix-ui"] },
+  // public/ files have no hash in their names, so Next sends them with max-age=0 and every visit asks again.
+  // Fonts and pictures change rarely: keep them a while, and refresh in the background once stale.
+  async headers() {
+    const cache = (source: string, maxAge: number) => ({ source, headers: [{ key: "Cache-Control", value: `public, max-age=${maxAge}, stale-while-revalidate=${maxAge * 7}` }] });
+    const day = 86_400;
+    return [
+      cache("/fonts/:path*", 30 * day),
+      ...["/backgrounds", "/demo", "/logos", "/characters", "/patterns", "/textures", "/brand"].map((dir) => cache(`${dir}/:path*`, day)),
+    ];
+  },
 };
 export default config;

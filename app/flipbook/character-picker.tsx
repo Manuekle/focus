@@ -11,6 +11,7 @@ import type { CharacterSummary } from "../../shared/characters";
 import { useSession } from "../_auth/session-client";
 import { characterApi } from "../characters/character-client";
 import styles from "./flipbook.module.css";
+import { thumbUrl } from "../../shared/thumbs";
 
 /** Start from a saved character: its selected version, one click away. */
 /**
@@ -60,7 +61,7 @@ export function CharacterPicker({ onPick, selected, title = "My characters" }: {
           {ready.map((entry) => {
             const card = (
               <>
-                <MediaThumb src={entry.coverUrl} className={styles.pickerCover} />
+                <MediaThumb src={thumbUrl(entry.coverUrl, 160)} className={styles.pickerCover} />
                 <span className="min-w-0">
                   <span className="block truncate text-xs text-foreground">{entry.name}</span>
                   <span className="block text-[11px] text-muted-foreground">{entry.versions} {entry.versions === 1 ? "version" : "versions"}</span>

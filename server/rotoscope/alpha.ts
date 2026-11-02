@@ -163,10 +163,43 @@ function dropSpecks(image: Rgba): void {
  * The generator's background keyed out, whatever flat colour it came back on: the usual magenta by keyOut, any other
  * flat border colour (a pink or crimson the model chose instead) by keyFlat. Returns the colour it keyed.
  */
-export function keyBackground(image: Rgba): { readonly image: Rgba; readonly background: string } {
+export function keyBackground(input: Rgba): { readonly image: Rgba; readonly background: string } {
+  const image = paintFrame(input);
   const colour = borderColour(image);
   if (!colour || magenta(...colour) >= KEY_HIGH) return { image: keyOut(image), background: KEY_COLOR };
   return { image: keyFlat(image, colour), background: hex(colour) };
+}
+
+/**
+ * Muse Image sometimes leaves a band of the video frame it edited around a magenta picture (seen as a beige frame
+ * on all four sides). The border then isn't magenta, and the whole picture was keyed on beige: the figure came out
+ * as magenta. When most of the picture is a magenta rectangle and only thin bands lie outside it, the bands are
+ * painted magenta first. A picture whose border is magenta, or with no clear magenta rectangle, is left as it is.
+ */
+export function paintFrame(image: Rgba): Rgba {
+  const { width, height, data } = image;
+  const at = (x: number, y: number) => { const i = (y * width + x) * 4; return magenta(data[i], data[i + 1], data[i + 2]) >= KEY_HIGH; };
+  const share = (count: number, length: (i: number) => boolean) => { let n = 0; for (let i = 0; i < count; i++) if (length(i)) n++; return n / count; };
+  // Rows and columns from each side until one is mostly magenta: the bands' thickness.
+  const row = (y: number) => share(width, (x) => at(x, y)) > 0.6;
+  const column = (x: number) => share(height, (y) => at(x, y)) > 0.6;
+  const limit = (size: number) => Math.round(size * 0.15);
+  let top = 0; while (top < limit(height) && !row(top)) top++;
+  let bottom = height - 1; while (height - 1 - bottom < limit(height) && !row(bottom)) bottom--;
+  let left = 0; while (left < limit(width) && !column(left)) left++;
+  let right = width - 1; while (width - 1 - right < limit(width) && !column(right)) right--;
+  const bands = top + (height - 1 - bottom) + left + (width - 1 - right);
+  const found = top < limit(height) && height - 1 - bottom < limit(height) && left < limit(width) && width - 1 - right < limit(width);
+  if (!bands || !found) return image;
+  const out = Buffer.from(data);
+  for (let y = 0; y < height; y++) {
+    for (let x = 0; x < width; x++) {
+      if (y >= top && y <= bottom && x >= left && x <= right) continue;
+      const i = (y * width + x) * 4;
+      out[i] = 255; out[i + 1] = 0; out[i + 2] = 255; out[i + 3] = 255;
+    }
+  }
+  return { width, height, data: out };
 }
 
 /** 4-connected components of pixels with alpha ≥ 50 %. Labels start at 1. */

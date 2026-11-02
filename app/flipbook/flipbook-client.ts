@@ -31,6 +31,7 @@ import type { FlipbookAudio } from "../../shared/sequence";
 import { discoverAnimations, flipbookActivity, observeFlipbook } from "../_activity/activity-adapters";
 import { getActivityVersion, trackActivity } from "../_activity/activity-store";
 import { rightsHeaders } from "../../shared/rights";
+import { pollAfter } from "../../lib/poll";
 
 // The browser side of Flipbook: typed calls to /api/flipbooks and a poller
 // that follows a flipbook while it works. Codes the editor already words
@@ -273,7 +274,7 @@ export function useFlipbook(initialId: string | null) {
     if (!id || !active) return;
     let stopped = false;
     let failures = 0;
-    let timer = 0;
+    let cancel = () => {};
     const tick = async () => {
       try {
         const next = await flipbookApi.get(id);
@@ -285,12 +286,12 @@ export function useFlipbook(initialId: string | null) {
         failures++;
         if (failures >= 3) setPollError(error instanceof Error ? error.message : "We lost the connection to your animation.");
       }
-      if (!stopped) timer = window.setTimeout(tick, 900);
+      if (!stopped) cancel = pollAfter(tick, 900);
     };
-    timer = window.setTimeout(tick, 600);
+    cancel = pollAfter(tick, 600);
     return () => {
       stopped = true;
-      window.clearTimeout(timer);
+      cancel();
     };
   }, [id, active]);
 

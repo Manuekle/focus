@@ -17,6 +17,8 @@ export const ROTOSCOPE_LIMITS = {
   /** Longest stretch one run may cover, and most frames it may hold. */
   maxSeconds: 60,
   maxFrames: 600,
+  /** New runs draw each frame once; `attempts` on a generate call may raise it up to maxAttempts. */
+  defaultAttempts: 1,
   maxAttempts: 3,
   /** A pencil note: the comment's length and the marks image's size. */
   maxCommentLength: 600,
@@ -63,6 +65,8 @@ export const RotoscopeLiveSchema = z.object({
   attempt: z.number().int().min(1),
   /** This frame's try in the current run, 1 to maxAttempts. */
   tries: z.number().int().min(1),
+  /** Tries this run gives the frame when it isn't the run's maxAttempts (a redraw's). */
+  of: z.number().int().min(1).nullish(),
   stage: z.enum(LIVE_STAGES),
   /** The attempt's cut-out drawing can be fetched (stage checking onwards). */
   image: z.boolean(),
@@ -203,6 +207,43 @@ export const OpenFlipbookOptionsSchema = z.object({ sound: z.boolean().optional(
 /** The new Flipbook a finished run opens as. */
 export const RotoscopeFlipbookSchema = z.object({ flipbookId: z.uuid() });
 
+/**
+ * The comparison clip: the video and its drawings in one file, one beside the other (`side`) or one above the
+ * other (`stack`). `first` is the left or top one; `background` is what the drawings sit on (a clip has no
+ * transparency); `size` is the clip's longest side.
+ */
+export const COMPARE_LAYOUTS = ["side", "stack"] as const;
+export const COMPARE_ORDERS = ["video", "drawing"] as const;
+export const COMPARE_BACKGROUNDS = ["white", "dark"] as const;
+export const COMPARE_FORMATS = ["mp4", "mov", "webm", "gif"] as const;
+export const COMPARE_SIZES = { small: 640, medium: 1080, large: 1920 } as const;
+export type CompareSize = keyof typeof COMPARE_SIZES;
+export const CompareOptionsSchema = z.object({
+  layout: z.enum(COMPARE_LAYOUTS).default("side"),
+  first: z.enum(COMPARE_ORDERS).default("video"),
+  background: z.enum(COMPARE_BACKGROUNDS).default("white"),
+  format: z.enum(COMPARE_FORMATS).default("mp4"),
+  size: z.enum(["small", "medium", "large"]).default("medium"),
+  /** The reference video's sound (MP4, MOV and WebM only). */
+  sound: z.boolean().default(false),
+});
+export type CompareOptions = z.infer<typeof CompareOptionsSchema>;
+
+/** A rendered comparison clip: `file` is what `rotoscopeUrls.compare` serves. */
+export const CompareResultSchema = z.object({
+  file: z.string(),
+  name: z.string(),
+  format: z.enum(COMPARE_FORMATS),
+  bytes: z.number().int(),
+  width: z.number().int(),
+  height: z.number().int(),
+  frames: z.number().int(),
+  fps: z.number(),
+  seconds: z.number(),
+  sound: z.boolean(),
+});
+export type CompareResult = z.infer<typeof CompareResultSchema>;
+
 /** overlay: an attempt's drawing ghosted over its video frame on the grid, as Muse Spark reviewed it; build: the character and the drawing at one scale; scan: the pose error map (joints, vectors, bad cells); exposed: an attempt's repaint regions; labels: the body regions of the drawing it was deformed from; mask: the character's silhouette; scaled: the character sheet as tall as the video person; work: one of an attempt's pipeline pictures (WORK_PICTURES). */
 export type RotoscopeMedia = "source" | "guide" | "attempt" | "frame" | "character" | "scaled" | "posesheet" | "correction" | "audio" | "exposed" | "labels" | "mask" | "overlay" | "build" | "scan" | "drawn" | "work";
 
@@ -213,11 +254,12 @@ export type WorkPicture = (typeof WORK_PICTURES)[number];
 // ── Pipeline trace (server/rotoscope/trace.ts) ─────────────────────────────
 
 /** Every step a drawing goes through, in order: what the Pipeline view draws as nodes. */
-export const TRACE_STEPS = ["inputs", "prompt", "generate", "measure", "fidelity", "review", "decision"] as const;
+export const TRACE_STEPS = ["inputs", "diagnosis", "prompt", "generate", "measure", "fidelity", "review", "decision"] as const;
 export type TraceStepId = (typeof TRACE_STEPS)[number];
 export const TRACE_STEP_LABEL: Record<TraceStepId, string> = {
   inputs: "Inputs & guardrails",
-  prompt: "Prompt · Muse Spark",
+  diagnosis: "Why it failed · Muse Spark",
+  prompt: "Prompt",
   generate: "Drawing · Muse Image",
   measure: "Cut-out & measures",
   fidelity: "Fidelity · Python",
@@ -295,6 +337,8 @@ export const rotoscopeUrls = {
   /** The reference video's sound from the run's start, as AAC. */
   audio: (id: string) => `/api/rotoscope/runs/${id}/media?kind=audio`,
   zip: (id: string) => `/api/rotoscope/runs/${id}/export`,
+  /** A rendered comparison clip (`CompareResult.file`); a `download` name turns it into an attachment with that name. */
+  compare: (id: string, file: string, download?: string) => `/api/rotoscope/runs/${id}/compare?file=${file}${download ? `&download=${encodeURIComponent(download)}` : ""}`,
   /** A frame's Muse Image prompt (an attempt's, or the next drawing's); POST analyses an edited one. */
   prompt: (id: string, frame: number, attempt?: number | null) => `/api/rotoscope/runs/${id}/prompt?frame=${frame}${attempt ? `&attempt=${attempt}` : ""}`,
   batch: (id: string) => `/api/rotoscope/batches/${id}`,

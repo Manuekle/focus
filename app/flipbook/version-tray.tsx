@@ -3,6 +3,7 @@
 import { MediaImage } from "../../components/ui/media-image";
 import { flipbookUrls, type Flipbook, type FlipbookFrame } from "../../shared/flipbook";
 import styles from "./flipbook.module.css";
+import { thumbUrl } from "../../shared/thumbs";
 
 const SOURCE_LABEL: Record<FlipbookFrame["versions"][number]["source"], string> = {
   generated: "drawn",
@@ -43,7 +44,7 @@ export function VersionTray({ flipbook, frame, shown, onPick }: {
             onClick={() => onPick(version.id)}
           >
             <span className={styles.versionThumb}>
-              <MediaImage src={flipbookUrls.raw(flipbook.id, frame.id, version.id)} alt="" draggable={false} loading="lazy" decoding="async" />
+              <MediaImage src={thumbUrl(flipbookUrls.raw(flipbook.id, frame.id, version.id), 96)} alt="" draggable={false} loading="lazy" decoding="async" />
             </span>
             <span className={styles.versionNumber}>{number}</span>
           </button>

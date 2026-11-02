@@ -475,7 +475,7 @@ export async function buildPair(character: Buffer, drawing: Buffer): Promise<Buf
  * What Muse Image gets for one frame, written like /characters edits a design: the video frame is
  * Image 1 and the character Image 2, and the person is replaced by the character, so the pose comes
  * from the picture itself. The rest is this frame alone: Muse Spark's short note of its pose
- * (describeMotion), the character's identity line, and, only on a retry or a pencil note, what was
+ * (describeMotion), the character's outfit item by item, and, only on a retry or a pencil note, what was
  * wrong with the earlier attempt. Nothing from any other frame.
  */
 export type SwapInput = {
@@ -486,20 +486,11 @@ export type SwapInput = {
   readonly characterSheet?: Buffer;
   /** The character's identity line (describeCharacter); empty leaves it out. */
   readonly description: string;
-  /** The character sheet's art style sheet (describeStyle); absent leaves the style to the sheet alone. */
-  readonly style?: string | null;
   readonly note: string;
   readonly correction: Correction | null;
   readonly feedback: readonly string[];
-  /** The character's real height and weight in words (measuresText); absent when nobody gave them. */
-  readonly body?: string | null;
-  /** The character drawn in other poses before the run (drawPoseSheet): how its joints bend. */
-  readonly poseSheet?: Buffer | null;
-  /**
-   * The previous frame's approved drawing, when guardrails.ts continuityGuardrail trusts it: how the character was
-   * drawn a moment ago, so this frame follows it without a jump. Never its pose; the sheet stays the identity's authority.
-   */
-  readonly continuity?: { readonly png: Buffer; readonly frame: number } | null;
+  /** Muse Spark's reading of the last rejected drawing and of the note (diagnoseAttempt): its fix replaces both. */
+  readonly diagnosis?: AttemptDiagnosis | null;
   readonly signal?: AbortSignal;
 };
 
@@ -509,54 +500,127 @@ export const CONTINUITY_ROLE = (frame: number) => `REFERENCE D, CONTINUITY: fram
 /** How the model sheet is named to the generators and the reviewer. */
 export const POSE_SHEET_ROLE = "THE CHARACTER IN OTHER POSES, a model sheet drawn from the character before this animation: how its body bends and turns. Its joints, limb lengths and limb thickness stay exactly as there; elbows and knees never bend backwards or further than there. Its poses are not the pose to draw.";
 
+/** The identity line's list of items (hair, eyes, every garment), without its opening and its proportions and background sentences. */
+export function outfitItems(description: string): string {
+  return description.trim().replace(/^Keep\b[^:]{0,60}\bexactly as drawn:\s*/i, "").split(/\.\s+(?:Preserve|Show)\b/)[0].replace(/\.$/, "");
+}
+
 /**
- * The prompt in sections, each image with one job: Image 1 (the video frame) is the target pose, Image 2 (the
- * character) the authority on identity and on drawing style, the pose sheet how that body bends. The style sheet
- * turns "drawn like Image 2" into rules, and the priorities settle what wins when they pull apart.
+ * The prompt, short, with one job per image: Image 1 (the video frame) is the pose, Image 2 (the character) the
+ * authority on identity and style, and the only long part is the character's items, one by one. A run of Reze's first
+ * nine frames drew the pose right on all nine with it, where the 700-word prompt (style sheet, pose sheet, continuity
+ * frame, priorities) lost small items (a hair bun, a collar) on two of three: every extra rule pulled attention from
+ * the sheet. The background stays magenta: on white, the cut-out ate a white shirt and the skin.
  */
 export function swapFramePrompt(input: SwapInput): { prompt: string; references: ImageReference[] } {
   const references: ImageReference[] = [
-    { png: input.frame, role: "REFERENCE C, THE TARGET POSE: the video frame to edit. Take from it only the pose, the camera angle and framing, and the figure's size and place in the picture. Its person is replaced; nothing of their look stays." },
-    { png: input.character, role: `REFERENCE A, THE CHARACTER: the authority on the character's identity (face, eyes, hair, body proportions, outfit, colours, silhouette) and on the drawing style (line work, eyes, shading, hair rendering, finish).${input.characterSheet ? " It is drawn as tall as the person of Image 1." : ""} Its own pose is not the pose to draw.`, ...(input.characterSheet ? { derivedFrom: input.characterSheet } : {}) },
-    ...(input.continuity ? [{ png: input.continuity.png, role: CONTINUITY_ROLE(input.continuity.frame) }] : []),
-    ...(input.poseSheet ? [{ png: input.poseSheet, role: POSE_SHEET_ROLE }] : []),
+    { png: input.frame, role: "THE VIDEO FRAME to edit: the pose. Only its pose and framing are used; its person is replaced and nothing of their look stays." },
+    { png: input.character, role: `THE CHARACTER: the authority on identity, outfit and style.${input.characterSheet ? " It is drawn as tall as the person of Image 1." : ""} Its own pose is not the pose to draw.`, ...(input.characterSheet ? { derivedFrom: input.characterSheet } : {}) },
     ...(input.correction ? [{ png: input.correction.marked, role: "AN EARLIER DRAWING OF THIS SAME FRAME with the director's RED pencil marks over the parts that are wrong. The red marks are notes only: never draw them." }] : []),
   ];
-  const n = (role: string) => references.findIndex((reference) => reference.role.startsWith(role)) + 1;
   // The checks' measurements speak of grid cells and percentages of a picture this prompt doesn't have: only what is wrong, in words.
   const fixes = input.feedback.join(" ").split(/(?<=\.)\s+/).filter((sentence) => sentence && !/\bcells?\b|\d\s?%/.test(sentence));
-  const section = (title: string, lines: readonly string[]) => (lines.length ? [`${title}\n${lines.join("\n")}`] : []);
+  const items = input.description ? outfitItems(input.description) : "";
+  // The director's words go through Muse Spark's reading when there is one: loose words in another language were
+  // drawn as the opposite of what they meant.
+  // Muse Spark read the rejected drawing as its Image 3 and the marked one as its Image 4; Muse Image gets neither
+  // numbering (a prompt naming an image it wasn't sent is refused by the guardrails).
+  const reworded = (text: string) => text.replace(/\bImage 3\b/g, "the rejected drawing").replace(/\bImage 4\b/g, input.correction ? "Image 3" : "the marked drawing");
+  const corrections = input.diagnosis ? [
+    `${input.correction ? "Director's correction (see the red marks in Image 3)" : "The previous drawing of this frame was rejected"}: ${reworded(input.diagnosis.problem)}`,
+    `Fix: ${reworded(input.diagnosis.fix)}`,
+  ] : [
+    ...(input.correction ? [`Director's correction (see the red marks in Image 3): ${input.correction.comment}`] : []),
+    ...(fixes.length ? [`The previous attempt at this frame was rejected. Fix: ${fixes.join(" ")}`] : []),
+  ];
   const prompt = [
-    ...section("TASK", ["Edit Image 1 into one finished frame of a 2D anime animation: replace the person with the character of Image 2, keeping Image 1's pose exactly, at the same size and position in the picture."]),
-    ...section("CHARACTER IDENTITY (Image 2)", [
-      ...(input.description ? [identityLine(input.description)] : []),
-      "Preserve exactly: the face structure and proportions; eye size, shape and spacing; the hair silhouette, length, colour and arrangement; the body proportions (shoulder width, torso length, limb length and thickness); every garment, colour, accessory and detail; the overall silhouette. Do not redesign, beautify, exaggerate or reinterpret the character, and take nothing of the video person's clothes, colours or look.",
-      ...(input.body ? [bodyLine(input.body)] : []),
-      ...(input.poseSheet ? [`Joints: Image ${n("THE CHARACTER IN OTHER POSES")} shows how this character's arms, legs and torso bend: keep its limb lengths and thickness, and bend every elbow, knee and wrist only as far as a body can.`] : []),
-    ]),
-    ...section("ART STYLE (as Image 2 is drawn)", [
-      ...(input.style ? [input.style] : []),
-      "The frame must look drawn by the same artist, for the same production, as Image 2.",
-    ]),
-    ...section("TARGET POSE (Image 1)", [
-      ...(input.note ? [input.note] : []),
-      "Match the head turn and tilt, the shoulder and hip line, the torso lean and twist, every arm, elbow, wrist, hand and finger, every leg, knee, ankle and foot, the weight, the gaze and the expression, and the camera angle and framing.",
-      // Muse Image's most frequent failure is a mirrored pose (framePrompt guards the same way).
-      "Sides as seen in the picture, never mirrored: a limb on the left of Image 1 stays on the left of the frame, a raised arm stays the raised one, a lowered arm stays lowered.",
-      "Anatomy: exactly two arms, two hands, two legs and two feet, every one attached to the body; five fingers on every visible hand; no extra, missing, fused, duplicated or broken limbs.",
-    ]),
-    ...section("CONTINUITY", input.continuity ? [
-      `Image ${n("REFERENCE D, CONTINUITY")} is the frame just before this one. The character must look drawn by the same hand in the same session: identical face, hair, colours, outfit details and line weight. Only the pose changes, and only as Image 1 shows.`,
-    ] : []),
-    ...section("CORRECTIONS", [
-      ...(input.correction ? [`Director's correction (see the red marks in Image ${n("AN EARLIER DRAWING")}): ${input.correction.comment}`] : []),
-      ...(fixes.length ? [`The previous attempt at this frame was rejected. Fix: ${fixes.join(" ")}`] : []),
-    ]),
-    ...section("RENDERING", ["Clean hand-drawn 2D anime line art with the cel shading of Image 2. Avoid enlarged eyes, inflated faces, stretched or thickened limbs, glossy hair, artificial highlights, airbrushed gradients, plastic skin, 3D rendering and generic AI-illustration looks, unless Image 2 has them."]),
-    ...section("COMPOSITION", [`One character, whole body visible; no other characters, panels, text or watermark. Background: perfectly flat solid ${KEY_COLOR} magenta everywhere; no floor, no shadow. Never use magenta on the character.`]),
-    ...section("PRIORITIES when these pull apart", ["1. The character's identity and proportions, from Image 2.", "2. The pose, never mirrored, at Image 1's size and placement.", `3. The drawing style, from Image 2${input.continuity ? `, drawn as in Image ${n("REFERENCE D, CONTINUITY")}` : ""}.`, "4. Everything not asked to change stays as it is."]),
+    "Edit Image 1 into one frame of a 2D anime animation: replace the person with the character of Image 2. Keep Image 1's pose, framing, size and position exactly; take nothing of the person's look.",
+    `CHARACTER (copy from Image 2, item by item)${items ? `: ${items}.` : "."} Keep the same face, proportions, colours, line work and flat cel shading as Image 2. Do not redesign, simplify or beautify anything.`,
+    `POSE (as seen in Image 1, never mirrored)${input.note ? `: ${input.note}` : "."}`,
+    ...(corrections.length ? [`CORRECTIONS\n${corrections.join("\n")}`] : []),
+    "Clean, sharp line art: no motion blur, no extra or missing limbs, five fingers per visible hand.",
+    `Background: perfectly flat solid ${KEY_COLOR} magenta everywhere, no floor or shadow; never magenta on the character. One character, whole body visible.`,
   ].join("\n\n");
   return { prompt, references };
+}
+
+/** Muse Spark's reading of a rejected drawing (and of the director's note on it): what is wrong, why, and what to say instead. */
+export type AttemptDiagnosis = {
+  /** What the drawing gets wrong against the video frame and the sheet, in picture terms. */
+  readonly problem: string;
+  /** What in the prompt most likely led Muse Image there, or which clear instruction it ignored. */
+  readonly cause: string;
+  /** One to three imperative sentences for Muse Image, in English: the correction it gets next. */
+  readonly fix: string;
+};
+
+const DIAGNOSIS_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["problem", "cause", "fix"],
+  properties: { problem: { type: "string" }, cause: { type: "string" }, fix: { type: "string" } },
+} as const;
+
+/**
+ * Before a frame is drawn again, Muse Spark looks at the drawing that was rejected beside the video frame and the
+ * sheet, with the prompt that produced it, the checks it failed and the director's note when there is one (in any
+ * language, often a few loose words: "la pose debe estar invertida"). It says what went wrong, why the prompt let it
+ * happen, and writes the correction Muse Image gets next in concrete picture terms. A note passed on word for word was
+ * ambiguous ("inverted" read as "draw it mirrored") and the same prompt drew the same mistake three times.
+ */
+export async function diagnoseAttempt(input: {
+  /** The video frame, whole on the canvas: the pose authority. */
+  readonly target: Buffer;
+  readonly character: Buffer;
+  /** The rejected drawing on a flat grey. */
+  readonly drawing: Buffer;
+  /** The prompt Muse Image drew it from; null for a drawing the rig made. */
+  readonly prompt: string | null;
+  /** The checks it failed, `name: detail`. */
+  readonly failures: readonly string[];
+  /** The director's note and their red marks over an earlier drawing of this frame. */
+  readonly note?: { readonly comment: string; readonly marked: Buffer } | null;
+  readonly signal?: AbortSignal;
+}): Promise<AttemptDiagnosis> {
+  const config = requireMetaConfig();
+  const started = Date.now();
+  const image = (png: Buffer) => ({ type: "input_image" as const, image_url: `data:image/png;base64,${png.toString("base64")}`, detail: "high" as const });
+  const content = [
+    { type: "input_text" as const, text: "Image 1: THE VIDEO FRAME, the pose to draw (only the pose: the person's look is replaced)." },
+    image(input.target),
+    { type: "input_text" as const, text: "Image 2: THE CHARACTER SHEET, the authority on identity and style." },
+    image(input.character),
+    { type: "input_text" as const, text: "Image 3: THE REJECTED DRAWING of this frame." },
+    image(input.drawing),
+    ...(input.note ? [
+      { type: "input_text" as const, text: "Image 4: AN EARLIER DRAWING OF THIS FRAME WITH THE DIRECTOR'S RED PENCIL MARKS over what is wrong." },
+      image(input.note.marked),
+      { type: "input_text" as const, text: `THE DIRECTOR'S NOTE (their own words, maybe not in English): "${input.note.comment}"` },
+    ] : []),
+    { type: "input_text" as const, text: input.failures.length ? `AUTOMATIC CHECKS IT FAILED:\n${input.failures.map((line) => `- ${line}`).join("\n")}` : "AUTOMATIC CHECKS: none failed; the director rejected it." },
+    { type: "input_text" as const, text: input.prompt ? `THE PROMPT MUSE IMAGE DREW IMAGE 3 FROM:\n${input.prompt}` : "Image 3 was assembled by the character rig from approved drawings, with no prompt." },
+  ];
+  try {
+    const response = await plannerLimiter.run(() => withRetry(() => metaClient(config).responses.create({
+      model: config.plannerModel,
+      instructions: `You are the art director of a rotoscoped 2D anime animation. Muse Image, an image model, edits a video frame (Image 1) into the character of Image 2 in the same pose. Image 3 was rejected; it will be drawn again and you decide what Muse Image is told this time.
+1. problem: compare Image 3 with Image 1 (pose) and Image 2 (identity, outfit, style) and say exactly what is wrong. Name sides as seen in the picture (left of the image, right of the image), never the person's own left or right. Check first whether Image 3 is a mirror image of Image 1's pose (each limb on the opposite side of the picture): say so plainly when it is.
+2. When there is a director's note, it is the main thing to fix: work out what they mean from their words, their red marks and the images, even when the words are loose or ambiguous ("invertida" on a mirrored drawing means the sides are swapped and must be put back as in the video, not that the picture should be flipped again).
+3. cause: what in the prompt most likely led Muse Image there (a confusing or contradictory sentence, a description of an arm by its shoulder that is easy to swap, a missing detail, too many competing rules), or that it ignored a clear instruction. Be specific about the wording.
+4. fix: one to three imperative sentences in English that Muse Image gets as its correction. Concrete and positive: where each hand, forearm, foot or garment detail must be in the picture, by landmarks anyone can see (in front of the face, at the waist, on the left of the image). Never the words "invert", "flip", "mirror" or "reverse" as instructions; never checks, grid cells or percentages. Do not repeat the wording that already failed: say it another way.
+Each field under 80 words, in English.`,
+      reasoning: { effort: "medium" },
+      input: [{ type: "message", role: "user", content }],
+      text: { format: { type: "json_schema", name: "rotoscope_diagnosis", strict: true, schema: DIAGNOSIS_SCHEMA } },
+    }, { signal: input.signal }), { signal: input.signal }));
+    await recordUsage({ model: config.plannerModel, kind: "flipbook_review", cached: false, ok: true, inputTokens: response.usage?.input_tokens, outputTokens: response.usage?.output_tokens, durationMs: Date.now() - started });
+    if (response.status !== "completed" || !response.output_text) throw new Error("Muse Spark did not finish the diagnosis");
+    const diagnosis = JSON.parse(response.output_text) as AttemptDiagnosis;
+    if (!diagnosis.fix.trim()) throw new Error("Muse Spark wrote no correction");
+    return diagnosis;
+  } catch (error) {
+    throw metaError(error, "attempt diagnosis");
+  }
 }
 
 /** An earlier prompt as the writer is shown it: its frame, its target pose part and, for a failed one, what was wrong. */
@@ -582,6 +646,8 @@ export async function writeFramePrompt(input: {
   readonly lessons: readonly string[];
   /** Earlier prompts of this character whose drawings were approved, and those whose drawings failed (prompt-memory.ts). */
   readonly memory?: { readonly worked: readonly PromptExample[]; readonly failed: readonly PromptExample[] };
+  /** Why the last drawing of this frame was rejected and the prompt that drew it (diagnoseAttempt). */
+  readonly diagnosis?: { readonly reading: AttemptDiagnosis; readonly prompt: string | null } | null;
   readonly signal?: AbortSignal;
 }): Promise<string> {
   const config = requireMetaConfig();
@@ -595,6 +661,7 @@ export async function writeFramePrompt(input: {
     ...(input.lessons.length ? [{ type: "input_text" as const, text: `WHAT EARLIER DRAWINGS OF THIS ANIMATION WERE REJECTED FOR:\n${input.lessons.join("\n")}` }] : []),
     ...(input.memory?.worked.length ? [{ type: "input_text" as const, text: `TARGET POSE PARTS THAT WORKED for this character before (their drawings were approved). Learn how they say things; their poses are other frames', never copy them:\n${input.memory.worked.map((entry) => `- frame ${entry.frame}: ${entry.pose}`).join("\n")}` }] : []),
     ...(input.memory?.failed.length ? [{ type: "input_text" as const, text: `TARGET POSE PARTS THAT FAILED for this character before, with what was wrong in the drawing. Avoid what most likely caused it:\n${input.memory.failed.map((entry) => `- frame ${entry.frame}: ${entry.pose}\n  Wrong: ${entry.problems}`).join("\n")}` }] : []),
+    ...(input.diagnosis ? [{ type: "input_text" as const, text: `THIS FRAME WAS ALREADY DRAWN AND REJECTED. The art director's diagnosis:\nWrong: ${input.diagnosis.reading.problem}\nWhy: ${input.diagnosis.reading.cause}\nFix: ${input.diagnosis.reading.fix}${input.diagnosis.prompt ? `\n\nTHE PROMPT THAT DREW IT (it failed: do not reuse its wording for what went wrong):\n${input.diagnosis.prompt}` : ""}` }] : []),
   ];
   try {
     const response = await plannerLimiter.run(() => withRetry(() => metaClient(config).responses.create({
@@ -606,6 +673,7 @@ The studio's template prompt is your model of a well-made prompt: learn from it 
 - Add what you see that the template misses and that decides this frame: what the character's own clothes and hair do in this pose, which limb passes in front of which.
 - Never describe the video person's look (their clothes, colours, face, hair): only their pose.
 - Steer clear of the mistakes listed from earlier drawings, in plain words: never mention checks, grid cells or percentages.
+- When this frame was already drawn and rejected, its fix is the most important line of your prompt: keep it in CORRECTIONS, and write the part of TARGET POSE it concerns differently from the prompt that failed (shorter, by what is where in the picture), so Muse Image does not repeat the same drawing.
 - Keep the background rule exactly: perfectly flat solid magenta (#FF00FF) everywhere, never on the character, one character, whole body visible.
 Plain text, in English, under 450 words.`,
       reasoning: { effort: "medium" },
@@ -789,6 +857,81 @@ export function reviewCheck(review: Review, correction: Correction | null = null
     : { name: "review", passed: true, detail: `same pose part by part, same character, same style${overruled.length ? `; the joints measured the same where the reviewer saw a difference (${overruled.map((limb) => limb.part).join(", ")})` : ""}` };
 }
 
+/** One garment, accessory or face feature the identity review compared with the character sheet. */
+export type IdentityItem = { readonly part: string; readonly same: boolean; readonly note: string };
+
+/** Muse Spark's item-by-item identity comparison between the sheet and one drawing. */
+export type IdentityReview = {
+  readonly items: readonly IdentityItem[];
+  readonly sameIdentity: boolean;
+  readonly fix: string;
+};
+
+const IDENTITY_SCHEMA = {
+  type: "object",
+  additionalProperties: false,
+  required: ["items", "sameIdentity", "fix"],
+  properties: {
+    items: {
+      type: "array",
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["part", "same", "note"],
+        properties: { part: { type: "string" }, same: { type: "boolean" }, note: { type: "string" } },
+      },
+    },
+    sameIdentity: { type: "boolean" },
+    fix: { type: "string" },
+  },
+} as const;
+
+/**
+ * The identity review as a check. The reviewer names every part it compared (face, hair, each
+ * garment, shoes, accessories); any part that changed rejects the frame, whatever its average,
+ * because identity is not a score: a skirt instead of shorts is a different character.
+ */
+export function identityCheck(review: IdentityReview): Check {
+  if (!review.items.length) return { name: "identity", passed: true, status: "inconclusive", detail: "the reviewer compared no parts" };
+  const changed = review.items.filter((item) => !item.same);
+  const failed = [
+    ...changed.map((item) => `${item.part} differs${item.note ? `: ${item.note}` : ""}`),
+    !review.sameIdentity && "the drawing is not the same character as the sheet",
+  ].filter(Boolean) as string[];
+  return failed.length
+    ? { name: "identity", passed: false, severity: "critical", detail: failed.join(" | "), feedback: review.fix || failed.join(" ") }
+    : { name: "identity", passed: true, detail: `same on every part: ${review.items.map((item) => item.part).join(", ")}` };
+}
+
+/**
+ * A focused second opinion on identity only, before the full review: the character sheet and one
+ * drawing, no video frame, no pose. The full review juggles eight images and a changed garment
+ * (shorts drawn as a skirt) slipped through; here every item is named and compared one by one.
+ */
+export async function reviewIdentity(input: { readonly character: Buffer; readonly drawing: Buffer; readonly description?: string | null; readonly signal?: AbortSignal }): Promise<IdentityReview> {
+  const config = requireMetaConfig();
+  const started = Date.now();
+  const image = (png: Buffer) => ({ type: "input_image" as const, image_url: `data:image/png;base64,${png.toString("base64")}`, detail: "high" as const });
+  const instructions = `You compare ONE drawn animation frame with the character it must be, item by item. Image 1 is the character sheet, the authority. Image 2 is the drawing to check.
+First inventory Image 1 from top to bottom: the face (eyes and their shape and colour, brows, nose, mouth, face shape), the hair (silhouette, length, parting, fringe, strands, colour), every garment (each layer, its cut, length, neckline, sleeves, closures, pockets, seams, trim, embroidery, pattern and colours), the shoes, and every accessory.
+Then find each of those items in Image 2. same=true only when Image 2 shows the same item with the same kind, cut, length, silhouette, colours, placement and visible details. same=false when it is another kind of item (shorts drawn as a skirt, a blouse as a jacket, sandals as shoes), when it is longer, shorter, wider, slimmer or shaped differently, when a visible detail is missing or moved (a button, a pocket, a seam, a trim, a neckline), when the hair's length, shape or colour changes, or when the eyes, face shape or skin tone change. Colours: same=false only for a clearly different colour (another hue, or light against dark: brown shoes drawn red, a navy skirt drawn green, a white shirt drawn black). Near-black tones (black, charcoal, very dark brown, very dark navy) look alike under cel shading and at small sizes: they are the same item, never a reason for same=false. Judge the design only: ignore pose, expression, background, line weight and shading.${input.description ? ` The character's written description, to name its items: ${input.description}` : ""}
+sameIdentity=true only when every item is the same and Image 2 has no extra garment or accessory. fix: one or two imperative sentences telling the illustrator exactly which part to redraw and how, in English; empty when everything matches. Notes under 20 words. Be strict: a plausible anime outfit that is not THIS outfit is a failure.`;
+  try {
+    const response = await plannerLimiter.run(() => withRetry(() => metaClient(config).responses.create({
+      model: config.plannerModel,
+      instructions,
+      reasoning: { effort: "medium" },
+      input: [{ type: "message", role: "user", content: [image(input.character), image(input.drawing)] }],
+      text: { format: { type: "json_schema", name: "rotoscope_identity", strict: true, schema: IDENTITY_SCHEMA } },
+    }, { signal: input.signal }), { signal: input.signal }));
+    await recordUsage({ model: config.plannerModel, kind: "flipbook_review", cached: false, ok: true, inputTokens: response.usage?.input_tokens, outputTokens: response.usage?.output_tokens, durationMs: Date.now() - started });
+    if (response.status !== "completed" || !response.output_text) throw new Error("Muse Spark did not finish the identity review");
+    return JSON.parse(response.output_text) as IdentityReview;
+  } catch (error) {
+    throw metaError(error, "identity review");
+  }
+}
+
 export async function reviewFrame(input: { readonly character: Buffer; readonly pair: Buffer; readonly drawing?: Buffer; readonly previous: Buffer | null; readonly anchor?: Buffer | null; readonly correction?: Correction | null; readonly legs?: string; /** The drawing ghosted over its video frame, on the grid (ghostOverlay). */ readonly overlay?: Buffer; /** The character and the drawing at one scale (buildPair) with the character's measured profile (buildText). */ readonly build?: { readonly pair: Buffer; readonly profile: string }; /** The character in other poses (drawPoseSheet): how far its joints bend. */ readonly poseSheet?: Buffer | null; readonly signal?: AbortSignal }): Promise<Review> {
   const config = requireMetaConfig();
   const started = Date.now();
@@ -804,7 +947,7 @@ export async function reviewFrame(input: { readonly character: Buffer; readonly 
 "Right" and "left" always mean the subject's own right and left (a subject facing the camera has their right arm on the viewer's left).
 limbs: for each body part (${LIMBS.join("; ")}) describe in under 12 words where it is in the LEFT panel and where it is in the RIGHT panel (direction it points, bent or straight, in front of or beside the body, head tilt and torso lean), then same=true only if they match. ${input.legs ? `Measured on the video's joints, true for the LEFT panel whatever it looks like at a glance: ${input.legs} Judge the drawing's legs against that. ` : ""}Hands are judged ONLY by where the hand is and which way it points (up, down, toward the camera, across the body); finger shape, spread fingers, a pointing finger or palm orientation do not count as a difference. The character's own proportions may differ; the pose may not. Mirrored poses are wrong.${input.previous ? " Do not accept a drawing that repeats the previous frame's pose when the video pose changed." : ""}
 The LEFT panel gives ONLY the pose, expression and motion; Image 1 gives the whole look. The RIGHT drawing must look like Image 1 redrawn in the LEFT panel's pose, never like the LEFT panel, even where the LEFT person resembles the character.
-sameCharacter: is the RIGHT drawing the same character as Image 1 — same hair shape and colour, face and eye colour, skin tone, every clothing item and its colours? false if any of them follows the LEFT panel instead of Image 1 (a colour, a garment, the hair, the face or the body build taken from the LEFT person).
+sameCharacter: is the RIGHT drawing the same character as Image 1 — same hair shape and colour, face and eye colour, skin tone, every clothing item and its colours? false if any of them follows the LEFT panel instead of Image 1 (a colour, a garment, the hair, the face or the body build taken from the LEFT person). Near-black tones (black, charcoal, very dark brown, very dark navy) look alike under cel shading and at small sizes: never a reason for false; only a clearly different colour is.
 sameStyle: ${input.anchor ? `same line art and flat colouring as Image ${anchorImage}, the animation's established style, and as Image 1: same outline weight and colour, flat cel colours, same level of detail. false if the RIGHT drawing looks more polished, glossier, softer, more shaded, more detailed or more painterly than Image ${anchorImage}, or has thinner, lost or differently coloured outlines, even if it looks nicer; false too if its line work, colouring or shading follow the LEFT panel's drawing style instead.` : "same line art and flat colouring as Image 1: same outline weight and colour, same colours, same shading style. false if its line work, colouring or shading follow the LEFT panel's drawing style instead of Image 1."}
 anatomyOk: no missing, extra, merged or broken limbs, hands or fingers; nothing cropped; arms, legs and head keep the character sheet's proportions (a limb clearly longer than on Image 1, or a head clearly smaller, is an anatomy error).${input.poseSheet ? ` Image ${sheetImage} is the character's model sheet in other poses: a limb longer or thinner than there, or an elbow, knee or wrist bent backwards or past what it shows, is an anatomy error.` : ""}${input.correction ? ` correctionDone: Image ${correctionImage} is an earlier drawing of this frame with the director's red pencil marks, and the director asked: "${input.correction.comment.replace(/"/g, "'")}". true only if the RIGHT drawing fixes exactly that in the marked places.` : " correctionDone: always true (no correction was asked)."}
 clean: ${input.drawing ? `Image ${drawingImage} is the RIGHT drawing alone at full size, on grey. Inspect it closely, part by part — head and neck, each shoulder, each elbow, each wrist and hand, the waist, between the legs, each knee and ankle. ` : ""}true only if it is one clean, continuous drawing: false for ANY cut or slit across a limb, a gap or step in an outline, a torn, jagged or doubled edge, a sliver of missing skin or cloth, a loose fragment or stray black mark floating beside or between body parts, or a limb that looks pasted on. These come from cut-out pieces and are easy to miss: look for them before answering. cleanNotes: where each one is, sides as seen in the image; empty when clean.

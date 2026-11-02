@@ -6,6 +6,7 @@ import { AppError } from "../errors";
 import { guardAiRequest } from "../guard";
 import type { PaidWorkGate } from "../jobs";
 import { serveFile } from "../serve-file";
+import { thumbWidth } from "../../shared/thumbs";
 import { ensureSceneLoop } from "./flipbooks";
 import { contactSheet } from "./quality-control";
 import { flipbookFiles } from "./store";
@@ -42,7 +43,7 @@ export async function flipbookMedia(request: Request, id: string): Promise<Respo
   const flipbook = await requireFlipbookAccess(request, id);
   const search = new URL(request.url).searchParams;
   const kind = search.get("kind");
-  const png = (file: string) => serveFile(request, file, "image/png");
+  const png = (file: string) => serveFile(request, file, "image/png", undefined, { width: thumbWidth(search.get("w")) });
   switch (kind) {
     case "source":
       return png(flipbookFiles.source(flipbook.id));

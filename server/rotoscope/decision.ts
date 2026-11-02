@@ -27,6 +27,7 @@ export type Verdict = {
 const SEVERITY: Readonly<Record<string, Severity>> = {
   pose: "critical",
   review: "critical",
+  identity: "critical",
   alpha: "major",
   scale: "major",
   proportions: "major",

@@ -15,6 +15,8 @@ import {
   RotoscopeIdSchema,
   RotoscopeLiveSchema,
   type CharacterMeasures,
+  type CompareOptions,
+  type CompareResult,
   type FramePrompt,
   type FrameTrace,
   type GeneratorName,
@@ -36,6 +38,7 @@ import { drawFrontView } from "../characters/front-view";
 import { readJsonFile, writeAtomic } from "../animation/store";
 import { writeZip } from "../animation/zip";
 import { frameName } from "./extract";
+import { compareFile, renderCompare } from "./compare";
 import { CANVAS } from "./draw";
 import { learn, PROMPT_LESSONS } from "./lessons";
 import { fillCharacterKitFromRun, findCharacterKit, kitFitsBody } from "../characters/kit";
@@ -178,7 +181,7 @@ function view(state: State, manifest: Manifest | null, readings: ReadonlyMap<num
     start: state.start,
     seconds: state.seconds,
     videoSeconds: state.duration,
-    maxAttempts: manifest?.maxAttempts ?? ROTOSCOPE_LIMITS.maxAttempts,
+    maxAttempts: manifest?.maxAttempts ?? ROTOSCOPE_LIMITS.defaultAttempts,
     error: state.error,
     halted: manifest?.halted ? { frame: manifest.halted.frame, reason: manifest.halted.reason } : null,
     live: state.phase === "generating" || state.phase === "stopping" ? state.live : null,
@@ -317,7 +320,7 @@ export async function createRun(input: CreateRunInput): Promise<RotoscopeRun> {
         if (!input.frontOn) await frontOnCharacter(character, signal, (line) => void appendLog(id, line));
         // A saved character prepared in My characters brings its pose, description, pose sheet, palette and build.
         const kit = await findCharacterKit(input.ownerId, sha256(await readFile(character))).catch(() => null);
-        await initRun(path.join(dir, "work-init"), { video, character, fps: options.fps, start: options.start, seconds, maxAttempts: ROTOSCOPE_LIMITS.maxAttempts, ownerId: input.ownerId, name: state.name, measures, poseSheet: state.poseSheet, kit: kit ? { dir: kit.dir, body: kitFitsBody(kit, measures) } : null }, (line) => void appendLog(id, line))
+        await initRun(path.join(dir, "work-init"), { video, character, fps: options.fps, start: options.start, seconds, maxAttempts: ROTOSCOPE_LIMITS.defaultAttempts, ownerId: input.ownerId, name: state.name, measures, poseSheet: state.poseSheet, kit: kit ? { dir: kit.dir, body: kitFitsBody(kit, measures) } : null }, (line) => void appendLog(id, line))
           .then(() => moveInto(path.join(dir, "work-init"), dir));
         // A saved character (sent front-on) without animation data in My characters gets this run's analysis.
         if (!kit && input.frontOn) {
@@ -894,4 +897,29 @@ export async function exportZip(id: string, ownerId: string): Promise<{ data: Bu
   if (!approved.length) throw new AppError("nothing_to_export", 409, "No frame is approved yet.");
   const entries = await Promise.all(approved.map(async (frame) => ({ name: frameName(frame.index), data: await readFile(path.join(runDir(id), frame.approved!.file)) })));
   return { data: writeZip(entries), name: `${state.name.replace(/[^\w.-]+/g, "_") || "rotoscope"}_${manifest.fps}fps.zip` };
+}
+
+/**
+ * The video and the approved drawings as one clip, side by side or stacked. It has the frames the Preview plays:
+ * the unbroken run of approved ones from the first, so the video's sound (from the run's start) stays in step.
+ */
+export async function exportCompare(id: string, ownerId: string, options: CompareOptions): Promise<CompareResult> {
+  const state = await ownedState(id, ownerId);
+  const dir = runDir(id);
+  const manifest = await readManifest(dir);
+  const frames: { index: number; source: string; drawing: string }[] = [];
+  for (const frame of manifest.frames) {
+    if (frame.index !== frames.length + 1 || frame.status !== "approved" || !frame.approved) break;
+    frames.push({ index: frame.index, source: path.join(dir, frame.source), drawing: path.join(dir, frame.approved.file) });
+  }
+  if (!frames.length) throw new AppError("nothing_to_export", 409, "No frame is approved yet.");
+  if (options.sound && options.format !== "gif" && state.audio === false) throw new AppError("no_audio", 422, "This video has no sound to use.");
+  const sound = options.sound && options.format !== "gif" ? await soundClip(id) : null;
+  return renderCompare({ dir, base: state.name.replace(/[^\w.-]+/g, "_") || "rotoscope", fps: manifest.fps, frames, sound, options });
+}
+
+/** A clip `exportCompare` rendered: where it is and its type. */
+export async function comparisonFile(id: string, ownerId: string, name: string): Promise<{ file: string; type: string }> {
+  await ownedState(id, ownerId);
+  return compareFile(runDir(id), name);
 }

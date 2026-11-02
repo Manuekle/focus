@@ -9,6 +9,7 @@ import { Skeleton } from "../../components/ui/skeleton";
 import { Spinner } from "../../components/ui/spinner";
 import { rotoscopeUrls, type RotoscopeFrame, type RotoscopeLive, type RotoscopeRun } from "../../shared/rotoscope";
 import styles from "./rotoscope-canvas.module.css";
+import { thumbUrl } from "../../shared/thumbs";
 
 /** Height the tray and the drawing controls take from the bottom of the canvas. */
 export const TRAY_RESERVE = 250;
@@ -103,7 +104,7 @@ export function AttemptTray({ run, frame, items, current, open, onPick, onClose 
           >
             <span className={styles.attemptThumb} data-transparent="">
               {item.image ? (
-                <MediaImage src={rotoscopeUrls.media(run.id, "attempt", frame.index, item.attempt)} alt="" draggable={false} decoding="async" loading="lazy" />
+                <MediaImage src={thumbUrl(rotoscopeUrls.media(run.id, "attempt", frame.index, item.attempt), 96)} alt="" draggable={false} decoding="async" loading="lazy" />
               ) : <Skeleton className={styles.working} />}
               <span className={styles.attemptBadge} aria-hidden>
                 {item.kind === "live" ? <Spinner className="size-2.5" /> : <HugeiconsIcon icon={item.kind === "rejected" ? Cancel01Icon : Tick02Icon} size={10} strokeWidth={2.4} />}

@@ -16,7 +16,7 @@ import { Spinner } from "../../components/ui/spinner";
 import { Switch } from "../../components/ui/switch";
 import { ToggleChip } from "../../components/ui/toggle-chip";
 import { useToast } from "../../components/toast-provider";
-import { EXTEND_STEPS, FRAME_SIZE, nextOpenFrame, rotoscopeUrls, videoLeft, type RotoscopeFrame, type RotoscopeLive, type RotoscopeRun } from "../../shared/rotoscope";
+import { EXTEND_STEPS, FRAME_SIZE, nextOpenFrame, ROTOSCOPE_LIMITS, rotoscopeUrls, videoLeft, type RotoscopeFrame, type RotoscopeLive, type RotoscopeRun } from "../../shared/rotoscope";
 import { MAX_SEQUENCE_FRAMES, SEQUENCE_CLOCK } from "../../shared/sequence";
 import composer from "../_editor/composer.module.css";import { ImageGeneration } from "./image-generation";
 import fb from "../flipbook/flipbook.module.css";
@@ -33,6 +33,7 @@ import { RunMeasures } from "./run-measures";
 import { PromptLab } from "./prompt-lab";
 import { RotoscopeCanvas } from "./rotoscope-canvas";
 import { PipelineCanvas } from "./pipeline-canvas";
+import { CompareExport } from "./compare-export";
 import { RotoscopePlayer, type LiveStage } from "./rotoscope-player";
 import styles from "./rotoscope.module.css";
 
@@ -112,7 +113,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
     index: live.frame,
     source: rotoscopeUrls.media(run.id, "source", live.frame),
     drawing: live.image ? rotoscopeUrls.media(run.id, "attempt", live.frame, live.attempt) : null,
-    label: `Frame ${live.frame} · attempt ${live.tries}/${run.maxAttempts} · ${LIVE_LABEL[live.stage]}`,
+    label: `Frame ${live.frame} · attempt ${live.tries}/${live.of ?? run.maxAttempts} · ${LIVE_LABEL[live.stage]}`,
   } : null;
 
   const act = async (label: string, action: () => Promise<RotoscopeRun>) => {
@@ -146,8 +147,10 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
     const updated = await rotoscopeApi.correct(run.id, { frame, attempt, comment: note.comment, marks: note.marks });
     if (!note.redraw) return updated;
     onChange(updated);
-    return rotoscopeApi.generate(run.id, { dual, renderer });
+    // Only the noted frame is drawn again, once: Muse Spark reads the note before it is drawn.
+    return rotoscopeApi.generate(run.id, { frame, renderer, attempts: ROTOSCOPE_LIMITS.defaultAttempts });
   });
+  const redraw = (frame: number) => void act("Couldn’t redraw", () => rotoscopeApi.generate(run.id, { frame, renderer, attempts: ROTOSCOPE_LIMITS.defaultAttempts }));
   const attempts = run.frames.reduce((sum, frame) => sum + frame.attempts.length, 0);
   const segment = `${run.start.toFixed(1)}–${run.seconds !== null ? (run.start + run.seconds).toFixed(1) : "end"} s`;
   // The unbroken approved prefix (what Flipbook can take) at whole seconds.
@@ -209,7 +212,8 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
   ) : null;
 
   // The canvas's own controls, bottom centre: draw what is left, or redraw the frame that is selected.
-  const redrawable = selected !== null && run.phase === "ready" && selected.index !== next && (selected.status === "approved" || selected.attempts.length > 0);
+  // Any frame already drawn, the next open one too: "Resume" draws every open frame, this only the selected one.
+  const redrawable = selected !== null && run.phase === "ready" && (selected.status === "approved" || selected.attempts.length > 0);
   const drawing = run.phase === "generating" || run.phase === "stopping";
   const canvasActions = !run.frames.length ? null : run.phase === "extending" ? (
     <span className={styles.barStatus} role="status">
@@ -253,8 +257,8 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
           size="sm"
           variant="outline"
           disabled={acting}
-          onClick={() => void act("Couldn’t redraw", () => rotoscopeApi.generate(run.id, { frame: selected.index, renderer }))}
-          title={`Draws frame ${selected.index} again, up to ${run.maxAttempts} attempts. Its current drawing stays unless a new one passes every check.`}
+          onClick={() => redraw(selected.index)}
+          title={`Draws frame ${selected.index} once more; first Muse Spark reads why its last drawing failed and your note. Its current drawing stays unless the new one passes every check.`}
         >
           <HugeiconsIcon icon={Refresh01Icon} size={14} strokeWidth={1.75} />Redraw frame {selected.index}
         </Button>
@@ -329,7 +333,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
               return <Step key={step.stage} state={finished || position < at ? "done" : position === at ? "active" : "todo"} label={step.label} />;
             })}
           </ol>
-          <p className={fb.hint} role="status">Frame {live.frame} of {run.total} · attempt {live.tries} of {run.maxAttempts} · {LIVE_LABEL[live.stage]}</p>
+          <p className={fb.hint} role="status">Frame {live.frame} of {run.total} · attempt {live.tries} of {live.of ?? run.maxAttempts} · {LIVE_LABEL[live.stage]}</p>
         </div>
       ) : null}
 
@@ -396,6 +400,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
               {/* Keyed by what it shows, so a new tab or frame eases in instead of replacing the old one on the spot. */}
               <div key={dockTab === "frame" ? `frame-${selected?.index ?? 0}` : dockTab} className={styles.swap}>
                 {dockTab === "preview" && run.frames.length ? (
+                  <>
                   <RotoscopePlayer
                     frames={playable}
                     fps={run.fps}
@@ -413,6 +418,8 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
                     onSelect={pick}
                     strip={null}
                   />
+                  <CompareExport run={run} frames={playable.length} />
+                  </>
                 ) : dockTab === "frame" ? (
                   selected ? (
                     <Inspector
@@ -429,7 +436,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
                       onApprove={(attempt) => void act("Couldn’t approve", () => rotoscopeApi.approve(run.id, selected.index, attempt))}
                       onCorrect={(attempt, note) => correct(selected.index, attempt, note)}
                       onFollow={() => setPicked(null)}
-                      onRedraw={() => void act("Couldn’t redraw", () => rotoscopeApi.generate(run.id, { frame: selected.index, renderer }))}
+                      onRedraw={() => redraw(selected.index)}
                       onTestPrompt={(prompt) => void act("Couldn’t draw with your prompt", () => rotoscopeApi.generate(run.id, { frame: selected.index, prompt, attempts: 1, renderer: "muse" }))}
                     />
                   ) : run.phase === "preparing" ? <InspectorSkeleton /> : (
@@ -528,7 +535,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
 
                     <section className={fb.panel} aria-labelledby="ro-checks">
                       <div className={fb.panelHead}><h2 id="ro-checks" className={fb.panelTitle}>Quality checks</h2></div>
-                      <p className={fb.hint}>A frame is approved only when every check passes. After {run.maxAttempts} failed attempts the run stops on that frame; nothing after it is drawn until you resume or approve an attempt yourself.</p>
+                      <p className={fb.hint}>A frame is approved only when every check passes. After {run.maxAttempts} {run.maxAttempts === 1 ? "failed attempt" : "failed attempts"} the run stops on that frame; nothing after it is drawn until you resume or approve an attempt yourself.</p>
                       <ul className={fb.checkList}>
                         {CHECKS.map((check) => <li key={check.name} data-source="review"><span className="text-foreground">{check.label}.</span> {check.note}</li>)}
                       </ul>
@@ -688,6 +695,7 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
         <PencilNote
           image={drawing}
           busy={busy}
+          hint={`“Save note & redraw” draws only this frame again, once. First Muse Spark reads your note (in any language) against the drawing and the video and tells Muse Image exactly what to fix; the other frames keep their drawings.`}
           onCancel={() => setMarking(false)}
           onSend={(note) => { setMarking(false); onCorrect(record.attempt, note); }}
         />
@@ -698,7 +706,7 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
             <span className={styles.drawingStatus}>
               <Spinner className="size-3.5" />
               <span className="t-shimmer" data-text={LIVE_LABEL[pending.stage]}>{LIVE_LABEL[pending.stage]}</span>
-              <span className={styles.drawingTry}>{pending.tries}/{run.maxAttempts}</span>
+              <span className={styles.drawingTry}>{pending.tries}/{pending.of ?? run.maxAttempts}</span>
             </span>
           ) : null}
         </div>
@@ -735,7 +743,7 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
       {live && !(view === "drawing" && pending) ? (
         <div className={styles.liveRow} role="status">
           <Spinner className="size-3.5" />
-          <span className="min-w-0 flex-1">Attempt {live.tries} of {run.maxAttempts} · {LIVE_LABEL[live.stage]}</span>
+          <span className="min-w-0 flex-1">Attempt {live.tries} of {live.of ?? run.maxAttempts} · {LIVE_LABEL[live.stage]}</span>
           {view !== "drawing" || attempt !== liveAttempt ? (
             <Button size="xs" variant="ghost" onClick={() => { setChosen("live"); setInspect("drawing"); }}>Show</Button>
           ) : null}
@@ -785,7 +793,7 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
                 </span>
               </li>
             ))}
-            {!record.checks.some((check) => check.name === "review") && !record.passed ? <li data-passed="skipped"><span className={styles.checkIcon} aria-hidden>–</span><span className={styles.checkDetail}>Visual review skipped: a measured check failed first.</span></li> : null}
+            {!record.checks.some((check) => check.name === "review") && !record.passed ? <li data-passed="skipped"><span className={styles.checkIcon} aria-hidden>–</span><span className={styles.checkDetail}>{record.checks.some((check) => check.name === "identity" && !check.passed) ? "Visual review skipped: the identity check already rejects this drawing." : "Visual review skipped: a measured check failed first."}</span></li> : null}
           </ul>
         </div>
       ) : liveAttempt ? (

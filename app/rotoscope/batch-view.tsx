@@ -15,6 +15,7 @@ import fb from "../flipbook/flipbook.module.css";
 import { rotoscopeApi, useRotoscopeBatch } from "./rotoscope-client";
 import { PHASE_LABELS } from "./rotoscope-studio";
 import styles from "./rotoscope.module.css";
+import { thumbUrl } from "../../shared/thumbs";
 
 const STAGE_LABEL: Record<(typeof LIVE_STAGES)[number], string> = {
   drawing: "Drawing",
@@ -139,7 +140,7 @@ export function BatchView({ batchId, onOpenRun }: { readonly batchId: string; re
           return (
             <div key={run.id} className={styles.batchRow}>
               <div className={styles.batchWho}>
-                <span className={styles.batchAvatar}><MediaImage src={rotoscopeUrls.media(run.id, "character")} alt="" iconSize={12} /></span>
+                <span className={styles.batchAvatar}><MediaImage src={thumbUrl(rotoscopeUrls.media(run.id, "character"), 32)} alt="" iconSize={12} /></span>
                 <span className="min-w-0">
                   <span className="block truncate text-xs font-medium text-foreground" title={run.name}>{run.name.split(" · ").at(-1)}</span>
                   <span className="block truncate text-[11px] text-muted-foreground" title={status}>{run.error ?? status}</span>

@@ -7,6 +7,7 @@ import { cn } from "../../lib/utils";
 import { rotoscopeUrls, type RotoscopeRunSummary } from "../../shared/rotoscope";
 import shell from "../editor/studio.module.css";
 import { rotoscopeApi } from "./rotoscope-client";
+import { thumbUrl } from "../../shared/thumbs";
 
 /**
  * The latest Rotoscope runs, listed beside the Flipbook animations: both are
@@ -28,7 +29,7 @@ export function RecentRuns({ limit = 5 }: { readonly limit?: number }) {
           <li key={entry.id} className={shell.project}>
             <Link href={`/rotoscope?run=${entry.id}`} className={shell.projectLink}>
               <span className={cn(shell.poster, "relative overflow-hidden")}>
-                <MediaImage src={rotoscopeUrls.media(entry.id, "character")} className="absolute inset-0 size-full object-contain" iconSize={14} />
+                <MediaImage src={thumbUrl(rotoscopeUrls.media(entry.id, "character"), 48)} className="absolute inset-0 size-full object-contain" iconSize={14} />
               </span>
               <span className="min-w-0 flex-1">
                 <span className="block truncate text-xs text-foreground" title={entry.name}>{entry.name}</span>

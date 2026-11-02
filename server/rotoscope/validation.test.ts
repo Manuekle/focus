@@ -33,6 +33,12 @@ describe("decide", () => {
     expect(verdict.reasons).toHaveLength(2);
   });
 
+  it("rejects a changed garment or character as critical, even beside passing measurements", () => {
+    const verdict = decide([check("pose", true), check("colour", true), check("identity", false)]);
+    expect(verdict.decision).toBe("REJECTED");
+    expect(verdict.reasons[0]).toMatch(/^identity \(critical\)/);
+  });
+
   it("sends a minor finding to a person instead of drawing again", () => {
     expect(decide([check("pose", true), check("style", false)]).decision).toBe("REVIEW_NEEDED");
     expect(decide([check("pose", true), check("colour", false, { severity: "minor" })]).decision).toBe("REVIEW_NEEDED");

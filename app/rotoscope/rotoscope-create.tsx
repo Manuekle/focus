@@ -42,6 +42,7 @@ export const CHECKS = [
   { name: "proportions", label: "Proportions", note: "Every clear limb and the head are measured against the character’s own lengths: no over-long arms or legs." },
   { name: "alpha", label: "Background", note: "The magenta background must key out cleanly: nothing cut, no leftovers." },
   { name: "review", label: "Visual review", note: "Muse Spark compares video and drawing part by part, and the character’s design." },
+  { name: "identity", label: "Character identity", note: "A focused check compares the sheet and the drawing item by item: face, hair, every garment, shoes and accessories. A skirt instead of shorts rejects the frame." },
   { name: "mapping", label: "Character rig", note: "The first try deforms an approved drawing onto the source pose; only surface it never showed is repainted." },
   { name: "policies", label: "Animation policies", note: "Timing, holds, arcs and spacing are measured against the video (animation-principles skills)." },
 ] as const;
@@ -242,7 +243,7 @@ export function RotoscopeCreate({ disabled, onCreated, onBatch }: { readonly dis
             </div>
           ) : null}
           <p className={fb.readingNote}>
-            The letterbox is cropped and each frame is drawn in order; a frame that fails {ROTOSCOPE_LIMITS.maxAttempts} times stops the run there, and drawing resumes from it.
+            The letterbox is cropped and each frame is drawn in order; a frame that fails {ROTOSCOPE_LIMITS.defaultAttempts === 1 ? "its first check" : `${ROTOSCOPE_LIMITS.defaultAttempts} times`} stops the run there, and drawing resumes from it.
           </p>
         </section>
       </section>
@@ -367,7 +368,7 @@ export function RotoscopeCreate({ disabled, onCreated, onBatch }: { readonly dis
             ) : (
               <>
                 <p className={fb.cost}><span>Frames to draw</span><strong>{frames ?? "—"}</strong></p>
-                <p className={fb.hint}>Up to {frames !== null ? frames * ROTOSCOPE_LIMITS.maxAttempts : "—"} Muse Image drawings if every frame needed every attempt; most frames pass on the first or second.</p>
+                <p className={fb.hint}>Up to {frames !== null ? frames * ROTOSCOPE_LIMITS.defaultAttempts : "—"} Muse Image drawings: {ROTOSCOPE_LIMITS.defaultAttempts === 1 ? "one per frame" : `each frame up to ${ROTOSCOPE_LIMITS.defaultAttempts} times`}; a frame that fails its checks stops the run.</p>
               </>
             )}
             <Disclosure title="How each drawing is checked">

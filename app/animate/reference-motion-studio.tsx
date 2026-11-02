@@ -484,18 +484,18 @@ function JobView({ job, onAction, onNew }: { readonly job: AnimationJob; readonl
               <figcaption className={styles.hint}>Result</figcaption>
             </figure>
             <figure>
-              <video src={`${referenceMotionUrls.asset(job.drivingVideoAssetId)}#t=${job.config.startSeconds},${end}`} className={styles.video} controls muted playsInline />
+              <video src={`${referenceMotionUrls.asset(job.drivingVideoAssetId)}#t=${job.config.startSeconds},${end}`} className={styles.video} controls preload="metadata" muted playsInline />
               <figcaption className={styles.hint}>Original segment</figcaption>
             </figure>
             {has.has("pose_overlay.mp4") ? (
               <figure>
-                <video src={referenceMotionUrls.output(job.id, "pose_overlay.mp4")} className={styles.video} controls loop muted playsInline />
+                <video src={referenceMotionUrls.output(job.id, "pose_overlay.mp4")} className={styles.video} controls preload="metadata" loop muted playsInline />
                 <figcaption className={styles.hint}>Detected poses</figcaption>
               </figure>
             ) : null}
             {has.has("animation_rife.mp4") ? (
               <figure>
-                <video src={referenceMotionUrls.output(job.id, "animation_rife.mp4")} className={styles.video} controls loop muted playsInline />
+                <video src={referenceMotionUrls.output(job.id, "animation_rife.mp4")} className={styles.video} controls preload="metadata" loop muted playsInline />
                 <figcaption className={styles.hint}>RIFE variant (A/B)</figcaption>
               </figure>
             ) : null}

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { checkAlpha, keyOut, type Rgba } from "./alpha";
 import { angleBetween, comparePoses, describeLegs, describePose, direction, type Pose } from "./pose-match";
 import { checkStyle, outlineDensity } from "./style";
-import { framePrompt, identityLine, isIdentityLine, reviewCheck, type FrameInput, type Review } from "./draw";
+import { framePrompt, identityCheck, identityLine, isIdentityLine, reviewCheck, type FrameInput, type IdentityReview, type Review } from "./draw";
 
 /** A magenta canvas with filled rectangles of the given colours. */
 function canvas(width: number, height: number, rects: { x: number; y: number; w: number; h: number; rgb: [number, number, number] }[]): Rgba {
@@ -128,6 +128,30 @@ describe("comparePoses", () => {
     expect(angleBetween([1, 0.0001], [1, -0.0001])).toBeLessThan(1);
     expect(direction(0, -1)).toBe("up");
     expect(direction(-1, 1)).toBe("down-left");
+  });
+});
+
+describe("identityCheck", () => {
+  const item = (part: string, same = true): IdentityReview["items"][number] => ({ part, same, note: same ? "" : "a skirt, not the sheet's shorts" });
+
+  it("passes only when every garment, the hair and the face are the same", () => {
+    const check = identityCheck({ items: [item("face"), item("hair"), item("blouse"), item("shorts"), item("sandals")], sameIdentity: true, fix: "" });
+    expect(check.passed).toBe(true);
+    expect(check.detail).toContain("shorts");
+  });
+
+  it("rejects a changed garment as a critical finding, whatever the rest matches", () => {
+    const check = identityCheck({ items: [item("face"), item("hair"), item("blouse"), item("shorts", false), item("sandals")], sameIdentity: false, fix: "Draw the high-waisted shorts with their button and pockets, not a skirt." });
+    expect(check.passed).toBe(false);
+    expect(check.severity).toBe("critical");
+    expect(check.detail).toContain("shorts differs: a skirt");
+    expect(check.feedback).toContain("Draw the high-waisted shorts");
+  });
+
+  it("does not approve a review that compared nothing", () => {
+    const check = identityCheck({ items: [], sameIdentity: true, fix: "" });
+    expect(check.passed).toBe(true);
+    expect(check.status).toBe("inconclusive");
   });
 });
 
