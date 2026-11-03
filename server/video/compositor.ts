@@ -1,6 +1,6 @@
 import path from "node:path";
 import sharp from "sharp";
-import { BREAK_FRAME_CANVAS, type RenderParams, type RenderParamsOf } from "../../shared/render";
+import { BREAK_FRAME_CANVAS, RANGE_EFFECTS, rangeWeight, type RenderParams, type RenderParamsOf } from "../../shared/render";
 import { BREAK_FRAME_WARNING, ERASE_MOVING_CAMERA_WARNING, missingSubjectMaskWarning } from "../../shared/render-warnings";
 import type { NormalizedMedia } from "../../shared/schemas";
 import type { FreezePlan } from "../../shared/temporal";
@@ -9,7 +9,7 @@ import { frameAt, type Box, type Tracking } from "../../shared/tracking";
 import { AppError } from "../errors";
 import { probe } from "../ffmpeg";
 import { parseRate } from "../media-validation";
-import { backgroundBlur, blendOver, blurSigma, cropGhost, dilate, drawGhost, inpaintRegion, luma, padBox, selectiveColor, spotlight, trailOpacity, type Ghost } from "./effects";
+import { backgroundBlur, blendOver, blurSigma, cropGhost, dilate, drawGhost, inpaintRegion, luma, padBox, pixelate, selectiveColor, spotlight, trailOpacity, type Ghost } from "./effects";
 import { createDeliverer } from "./delivery";
 import { createFinisher } from "./finish";
 import { renderTimeFreeze, type FreezeSummary } from "./temporal";
@@ -229,6 +229,36 @@ export function eraseProcessor(media: NormalizedMedia, params: RenderParamsOf<"e
   };
 }
 
+/**
+ * Pixelate. On the subject: its mask, grown by half a block so no edge of a
+ * face or plate peeks out, takes the blocks; nothing is left to light up. On
+ * the background: the whole frame takes the blocks and the subject is laid
+ * back on top, sharp.
+ */
+export function pixelateProcessor(media: NormalizedMedia, params: RenderParamsOf<"pixelate">): FrameProcessor {
+  const { width, height } = media;
+  const block = Math.max(2, Math.round((params.blockSize * Math.max(width, height)) / 1280));
+  const grow = Math.ceil(block / 2);
+  const margin = featherRadius(params.feather, width, height) * 2 + 1;
+  return {
+    width,
+    height,
+    async process(_index, frame, alpha) {
+      if (params.region === "subject") {
+        if (!alpha.box) return { rgba: frame, alpha: null };
+        const region = padBox(alpha.box, grow + margin, width, height);
+        const out = Buffer.from(frame);
+        blendOver(out, pixelate(frame, width, height, block, region), dilate(alpha.data, width, height, grow), 1, region, width);
+        return { rgba: out, alpha: null };
+      }
+      const out = pixelate(frame, width, height, block);
+      if (alpha.box) blendOver(out, frame, alpha.data, 1, padBox(alpha.box, margin, width, height), width);
+      return { rgba: out, alpha: alpha.box ? alpha.data : null };
+    },
+    summary: () => ({ breakoutFrameRatio: null, warnings: [] }),
+  };
+}
+
 export function breakFrameProcessor(media: NormalizedMedia, params: RenderParamsOf<"break_frame">, layout: BreakFrameLayout): FrameProcessor {
   const { width, height } = layout.canvas;
   const { scale, offsetX, offsetY } = layout.transform;
@@ -386,6 +416,8 @@ export function createProcessor(media: NormalizedMedia, params: RenderParams, ma
       return motionEchoProcessor(media, params);
     case "erase":
       return eraseProcessor(media, params);
+    case "pixelate":
+      return pixelateProcessor(media, params);
     case "break_frame":
       return breakFrameProcessor(
         media,
@@ -450,6 +482,11 @@ export async function renderVideo(input: {
     signal,
   });
 
+  // An effect range: outside it the original frame plays (cropped and titled
+  // like the rest), at its edges the effect fades in and out.
+  const range = RANGE_EFFECTS.has(params.effect) ? params.delivery.range : undefined;
+  const duration = media.frameCount / media.fps;
+
   let index = 0;
   let framesWithoutMask = 0;
   try {
@@ -457,11 +494,21 @@ export async function renderVideo(input: {
       if (signal?.aborted) throw new AppError("canceled", 499, "Processing canceled.");
       if (index >= media.frameCount) break;
       const raw = masks.alphaAt(index);
-      if (!raw.box) framesWithoutMask++;
+      const weight = rangeWeight(index / media.fps, range, duration);
+      if (!raw.box && weight > 0) framesWithoutMask++;
       const alpha: Alpha = raw.box ? { data: feather(raw.data, media.width, media.height, radius), box: raw.box } : raw;
-      const processed = await processor.process(index, frame, alpha);
-      const cropped = deliverer.crop(processed.rgba, processed.alpha);
-      const finished = finisher ? await finisher.apply(index, cropped.rgba, cropped.alpha) : cropped.rgba;
+      let finished: Buffer;
+      if (weight === 0) {
+        // Still cropped with the subject's mask, so a following crop keeps tracking through the untouched part.
+        finished = deliverer.crop(frame, alpha.box ? alpha.data : null).rgba;
+      } else {
+        // Effects and the finish may write into the frame they were given: keep the original for the fade.
+        const original = weight < 1 ? Buffer.from(frame) : undefined;
+        const processed = await processor.process(index, frame, alpha);
+        const cropped = deliverer.crop(processed.rgba, processed.alpha, original);
+        finished = finisher ? await finisher.apply(index, cropped.rgba, cropped.alpha) : cropped.rgba;
+        if (cropped.original) mix(finished, cropped.original, weight);
+      }
       await writer.write(deliverer.titles(index, finished));
       index++;
       input.onProgress?.(index / media.frameCount);
@@ -478,11 +525,20 @@ export async function renderVideo(input: {
 
   const summary = processor.summary();
   const warnings = [...summary.warnings];
-  // Erase targets come and go (captions, a passer-by): frames without one are expected.
-  if (framesWithoutMask > 0 && params.effect !== "erase") {
-    warnings.push(missingSubjectMaskWarning(framesWithoutMask, media.frameCount));
+  // Erase and censor targets come and go (captions, a passer-by, a face turning away): frames without one are expected.
+  if (framesWithoutMask > 0 && params.effect !== "erase" && !(params.effect === "pixelate" && params.region === "subject")) {
+    warnings.push(missingSubjectMaskWarning(framesWithoutMask, range ? Math.max(1, Math.round((range.end - range.start) * media.fps)) : media.frameCount));
   }
   return { width: deliverer.width, height: deliverer.height, frameCount: index, framesWithoutMask, breakoutFrameRatio: summary.breakoutFrameRatio, warnings };
+}
+
+/** `edited` becomes original + (edited − original) × weight, in place. Alpha is left as it is. */
+export function mix(edited: Buffer, original: Buffer, weight: number): void {
+  for (let p = 0; p < edited.length; p += 4) {
+    edited[p] = Math.round(original[p] + (edited[p] - original[p]) * weight);
+    edited[p + 1] = Math.round(original[p + 1] + (edited[p + 1] - original[p + 1]) * weight);
+    edited[p + 2] = Math.round(original[p + 2] + (edited[p + 2] - original[p + 2]) * weight);
+  }
 }
 
 /**

@@ -47,6 +47,8 @@ export const VideoAssetSchema = z.object({
     poster: z.string(),
     source: z.string(),
   }),
+  /** Made by cutting another clip in the editor: the clip it came from, so the editor can go back to it. */
+  cutFrom: z.object({ videoId: VideoIdSchema }).optional(),
 });
 export type VideoAsset = z.infer<typeof VideoAssetSchema>;
 
@@ -77,7 +79,7 @@ export const ConceptSchema = z
   .regex(/^[\p{L}\p{N}][\p{L}\p{N} '\-]*$/u, "Concept must be a plain noun phrase")
   .refine((value) => value.split(/\s+/).length <= 6, "Concept must be at most six words");
 
-export const PlanEffectSchema = z.enum(["selective_color", "background_blur", "spotlight", "break_frame", "motion_echo", "erase", "time_freeze_echo"]);
+export const PlanEffectSchema = z.enum(["selective_color", "background_blur", "spotlight", "break_frame", "motion_echo", "erase", "pixelate", "time_freeze_echo"]);
 export type PlanEffect = z.infer<typeof PlanEffectSchema>;
 
 /** Which plan effects each editor effect may resolve to. */
@@ -85,7 +87,7 @@ export const EFFECT_PLAN_EFFECTS: Record<EffectId, readonly PlanEffect[]> = {
   "reality-shift": ["selective_color", "background_blur", "spotlight"],
   "break-the-frame": ["break_frame"],
   "motion-echo": ["motion_echo"],
-  erase: ["erase"],
+  erase: ["erase", "pixelate"],
   "time-freeze": ["time_freeze_echo"],
 };
 
@@ -115,6 +117,9 @@ export const EditPlanSchema = z.object({
     intensity: z.number().min(0).max(1).optional(),
     trailCount: z.number().int().min(2).max(8).optional(),
     trailSpacingMs: z.number().int().min(40).max(1000).optional(),
+    /** Pixelate only: what gets the blocks, and how big they are. */
+    region: z.enum(["subject", "background"]).optional(),
+    blockSize: z.number().int().min(4).max(48).optional(),
     /** Finishing touches named in the instruction ("cinematic", "gold glow"). */
     finish: FinishPatchSchema.optional(),
     /**

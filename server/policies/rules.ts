@@ -231,11 +231,15 @@ const holds: Policy<ValidationContext> = {
     const unit = torsoLength(target) ?? 1;
     const held = EXTREMITIES.filter((name) => target[name] && previous.target[name] && dist(target[name]!.p, previous.target[name]!.p) / unit < HOLD.still);
     if (held.length < 2) return null;
-    // Moving onto the target is a correction (the previous drawing was off), not drift: only a joint that
-    // moves and lands away from where the source has it is boiling.
-    const drifting = held.filter((name) => generated[name] && previous.generated![name]
-      && dist(generated[name]!.p, previous.generated![name]!.p) / unit > HOLD.drift
-      && dist(generated[name]!.p, target[name]!.p) / unit > HOLD.drift);
+    // Moving toward the target is a correction (the previous drawing was off), not drift: only a joint that
+    // moves, lands away from where the source has it and no nearer than the previous drawing had it is boiling.
+    // An approved frame can sit half a torso off at a foot: the next drawing closing most of that gap moves.
+    const drifting = held.filter((name) => {
+      const [now, before] = [generated[name], previous.generated![name]];
+      if (!now || !before) return false;
+      const off = dist(now.p, target[name]!.p) / unit;
+      return dist(now.p, before.p) / unit > HOLD.drift && off > HOLD.drift && off > dist(before.p, previous.target[name]!.p) / unit - HOLD.drift;
+    });
     return { passed: drifting.length === 0, detail: drifting.length ? `held in the source but moving in the drawing: ${drifting.join(", ")}` : `${held.length} held joints stay still` };
   },
 };

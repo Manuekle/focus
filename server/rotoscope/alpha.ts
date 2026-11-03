@@ -1,5 +1,6 @@
 import sharp from "sharp";
 import type { Check } from "./run-state";
+import type { CanvasEdge } from "./body-map";
 
 // Transparent background: the generator paints the character on flat magenta
 // (a colour the character doesn't wear); this keys it out. Check 3 then
@@ -247,7 +248,8 @@ function nearTransparent(image: Rgba, radius: number): Uint8Array {
   return near;
 }
 
-export function checkAlpha(image: Rgba): Check {
+/** `reaches`: edges the pose guide itself touches (the video subject's hand at the frame's border): touching them is the pose, not a crop. */
+export function checkAlpha(image: Rgba, reaches: readonly CanvasEdge[] = []): Check {
   const { width, height, data } = image;
   const total = width * height;
   const margin = 2;
@@ -261,7 +263,7 @@ export function checkAlpha(image: Rgba): Check {
       if (data[i + 3] > 24 && data[i + 3] < 232 && !near[y * width + x]) spill++;
       if (data[i + 3] < 128) continue;
       opaque++;
-      if (x < margin || y < margin || x >= width - margin || y >= height - margin) edge++;
+      if ((x < margin && !reaches.includes("left")) || (y < margin && !reaches.includes("top")) || (x >= width - margin && !reaches.includes("right")) || (y >= height - margin && !reaches.includes("bottom"))) edge++;
     }
   }
   const corners = [0, width - 1, (height - 1) * width, total - 1].every((p) => data[p * 4 + 3] === 0);

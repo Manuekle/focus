@@ -1,7 +1,7 @@
 import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { createWriteStream } from "node:fs";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { copyFile, readFile, stat, writeFile } from "node:fs/promises";
 import { Readable, Transform } from "node:stream";
 import { pipeline } from "node:stream/promises";
 import type { ReadableStream as WebReadableStream } from "node:stream/web";
@@ -10,6 +10,7 @@ import {
   formatBytes,
   hasAcceptedExtension,
 } from "../shared/media";
+import { normalizeCut, type CutSegment } from "../shared/cut";
 import { VideoAssetSchema, type NormalizedMedia, type VideoAsset, type VideoId } from "../shared/schemas";
 import { Limiter } from "./ai/meta";
 import { AppError } from "./errors";
@@ -170,6 +171,78 @@ async function normalize(
     codec: "h264",
     hasAudio: result.streams.some((stream) => stream.codec_type === "audio"),
   };
+}
+
+/**
+ * A new clip made of the parts of `id` that the editor kept, joined in order.
+ * Cut from the normalized file (same size, fps and codec), so it skips a
+ * second normalization and lines up frame for frame with what was previewed.
+ */
+export async function cutVideo(id: string, keep: readonly CutSegment[]): Promise<VideoAsset> {
+  const parent = await getVideo(id);
+  const parts = normalizeCut(keep, parent.normalized.durationSeconds);
+  if (!parts.length) throw new AppError("invalid_cut", 400, "Keep at least one part of the clip.");
+  const audio = parent.normalized.hasAudio;
+  const filters = parts.flatMap(({ start, end }, index) => [
+    `[0:v]trim=start=${start.toFixed(3)}:end=${end.toFixed(3)},setpts=PTS-STARTPTS[v${index}]`,
+    ...(audio ? [`[0:a]atrim=start=${start.toFixed(3)}:end=${end.toFixed(3)},asetpts=PTS-STARTPTS[a${index}]`] : []),
+  ]);
+  const inputs = parts.map((_, index) => (audio ? `[v${index}][a${index}]` : `[v${index}]`)).join("");
+  filters.push(`${inputs}concat=n=${parts.length}:v=1:a=${audio ? 1 : 0}${audio ? "[v][a]" : "[v]"}`);
+
+  const childId = randomUUID();
+  const dir = await createVideoDir(childId);
+  const output = path.join(dir, VIDEO_FILES.normalized);
+  try {
+    await normalizeLimiter.run(() => ffmpeg([
+      "-i", path.join(videoDir(parent.id), VIDEO_FILES.normalized),
+      "-filter_complex", filters.join(";"),
+      "-map", "[v]",
+      ...(audio ? ["-map", "[a]"] : []),
+      "-r", String(parent.normalized.fps), "-fps_mode", "cfr",
+      "-c:v", "libx264", "-preset", "veryfast", "-crf", "18", "-profile:v", "high", "-pix_fmt", "yuv420p",
+      ...(audio ? ["-c:a", "aac", "-b:a", "160k", "-ac", "2"] : ["-an"]),
+      "-movflags", "+faststart",
+      output,
+    ], Math.max(120_000, Math.ceil(parent.normalized.durationSeconds) * 10_000)));
+    await ffmpeg(["-i", output, "-frames:v", "1", "-q:v", "3", path.join(dir, VIDEO_FILES.poster)]);
+    // The cut is its own source: downloading the "original" of a cut clip gives the cut.
+    await copyFile(output, path.join(dir, VIDEO_FILES.source(".mp4")));
+
+    const result = await probe(output);
+    const video = result.streams.find((stream) => stream.codec_type === "video");
+    const durationSeconds = Number(result.format.duration ?? video?.duration);
+    if (!video?.width || !video.height || !Number.isFinite(durationSeconds) || durationSeconds <= 0) throw new AppError("cut_failed", 500, "We couldn’t cut this clip. Try again.");
+    const fps = parseRate(video.avg_frame_rate) || parent.normalized.fps;
+    const normalized: NormalizedMedia = {
+      ...parent.normalized,
+      width: video.width,
+      height: video.height,
+      fps,
+      frameCount: Number(video.nb_frames) || Math.max(1, Math.round(durationSeconds * fps)),
+      durationSeconds,
+    };
+    const { size } = await stat(output);
+    const asset: VideoAsset = {
+      id: childId,
+      originalName: `${path.parse(parent.originalName).name}.mp4`,
+      createdAt: new Date().toISOString(),
+      source: { ...parent.source, sizeBytes: size, container: "mp4", codec: "h264", width: video.width, height: video.height, rotation: 0, durationSeconds, fps },
+      normalized,
+      urls: {
+        preview: `/api/videos/${childId}/media?variant=normalized`,
+        poster: `/api/videos/${childId}/media?variant=poster`,
+        source: `/api/videos/${childId}/media?variant=source`,
+      },
+      cutFrom: { videoId: parent.id },
+    };
+    await writeFile(path.join(dir, VIDEO_FILES.asset), JSON.stringify(asset, null, 2));
+    return asset;
+  } catch (error) {
+    await removeVideoDir(childId);
+    if (error instanceof AppError) throw error;
+    throw new AppError("cut_failed", 422, "We couldn’t cut this clip. Try again.", toolDetail(error, dir));
+  }
 }
 
 export async function getVideo(id: string): Promise<VideoAsset> {

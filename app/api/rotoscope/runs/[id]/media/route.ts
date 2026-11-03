@@ -6,10 +6,10 @@ import { thumbWidth } from "../../../../../../shared/thumbs";
 import { assertRotoscopeEnabled, mediaFile } from "../../../../../../server/rotoscope/service";
 
 type Context = { params: Promise<{ id: string }> };
-const KINDS = new Set<RotoscopeMedia>(["source", "guide", "attempt", "frame", "character", "scaled", "posesheet", "correction", "audio", "exposed", "labels", "mask", "overlay", "build", "scan", "drawn", "work"]);
+const KINDS = new Set<RotoscopeMedia>(["source", "guide", "attempt", "frame", "character", "scaled", "posesheet", "correction", "audio", "exposed", "labels", "mask", "overlay", "build", "scan", "drawn", "work", "plate", "scenery"]);
 const positive = (value: string | null) => (value && /^\d{1,5}$/.test(value) ? Number(value) : undefined);
 /** Rewritten under the same URL (a refit moves every drawing; the scaled sheet follows the measures): always revalidated. */
-const CHANGING = new Set<RotoscopeMedia>(["attempt", "frame", "scaled", "posesheet", "overlay", "build", "scan", "drawn", "work"]);
+const CHANGING = new Set<RotoscopeMedia>(["attempt", "frame", "scaled", "posesheet", "overlay", "build", "scan", "drawn", "work", "plate", "scenery"]);
 
 export async function GET(request: Request, { params }: Context) {
   try {

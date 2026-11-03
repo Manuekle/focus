@@ -56,18 +56,34 @@
 .stagePair {
   --stage-height: min(56vh, 600px);
   display: grid;
-  grid-template-columns: repeat(var(--panes), minmax(0, 1fr));
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 12px;
-  width: min(100%, calc(var(--stage-height) * 2 / 3 * var(--panes) + 12px * (var(--panes) - 1)));
+  width: min(100%, calc(var(--stage-height) * 4 / 3 + 12px));
   margin-inline: auto;
 }
+/* One pane keeps the two-pane box: same size and place, so switching views never moves the layout. */
+.stagePair[data-panes="1"] { grid-template-columns: minmax(0, 1fr); }
+.stagePair[data-panes="1"] > * { width: calc((100% - 12px) / 2); justify-self: center; }
 .stagePair > * { max-height: none; }
 .stagePane { position: relative; }
 .stagePane img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .stagePane span:not([aria-hidden]) { max-width: 100%; padding: 0 16px; text-align: center; text-wrap: balance; }
-.stagePane[data-background="white"] { background: #fff; }
-.stagePane[data-background="dark"] { background: #111214; }
-.speedRow { display: flex; width: 100%; flex-direction: column; gap: 8px; }
+/* Fullscreen: the stage takes the height the controls leave, on the page's own background. */
+.player:fullscreen { justify-content: center; padding: 24px clamp(16px, 4vw, 48px); overflow-y: auto; background: var(--background); }
+.player:fullscreen .stagePair { --stage-height: calc(100vh - 170px) !important; }
+.player:fullscreen > * { width: min(100%, 1400px); margin-inline: auto; }
+/* The preview's display choices under the strip: view and background, as the app's sliding tabs. */
+.readout { margin-left: 8px; }
+.displayBar { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px 16px; }
+.swatches { display: flex; align-items: center; gap: 8px; }
+.swatch { display: grid; width: 24px; height: 24px; place-items: center; overflow: hidden; border: 1px solid var(--border); border-radius: 999px; color: var(--muted-foreground); background: var(--muted); transition: box-shadow 150ms ease-out; }
+.swatchRing { display: inline-flex; border-radius: 999px; transition: box-shadow 150ms ease-out; }
+.swatch[aria-pressed="true"], .swatch[data-selected], .swatchRing[data-selected] { box-shadow: 0 0 0 2px var(--background), 0 0 0 4px var(--primary); }
+.swatch:focus-visible { outline: 2px solid var(--ring); outline-offset: 2px; }
+.swatch[data-kind="checker"] { background: repeating-conic-gradient(#d4d4d8 0 25%, #fff 0 50%) 0 0 / 8px 8px; }
+.swatch img { width: 100%; height: 100%; object-fit: cover; }
+.playerTabs { --tabs-radius: 999px; --tabs-pill-radius: 999px; }
+.playerTabs :global(.t-tab) { padding-inline: 10px; font-size: 12px; }
 
 /* The comparison clip's controls under the player: flat, set off by a hairline like the Run tab's panels. */
 .compareExport { display: flex; min-width: 0; flex-direction: column; gap: 12px; padding-top: 20px; border-top: 1px solid var(--border); }
@@ -342,16 +358,19 @@
   backdrop-filter: blur(14px);
   animation: compare-in 280ms var(--ease-smooth-out) backwards;
 }
-.compareHead { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.compareTitle { font-size: 13px; font-weight: 600; }
+.compareHead { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 6px 12px; }
+.compareTitle { font-size: 13px; font-weight: 600; white-space: nowrap; }
 .compareTitle span { color: var(--muted-foreground); font-weight: 400; font-variant-numeric: tabular-nums; }
-.compareNav { display: flex; align-items: center; gap: 2px; }
-.compareBody { display: grid; min-height: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
-.comparePane { display: flex; min-width: 0; min-height: 0; flex-direction: column; gap: 8px; margin: 0; }
+.compareNav { display: flex; flex-wrap: wrap; align-items: center; justify-content: flex-end; gap: 2px; margin-left: auto; }
+/* Each picture hugs the 2:3 frame at the tallest size the body allows, so the three line up with no empty bands. */
+.compare { container: compare / inline-size; }
+.compareBody { container: compare-body / size; display: grid; min-height: 0; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.comparePane { display: flex; min-width: 0; min-height: 0; flex-direction: column; align-items: center; justify-content: center; gap: 8px; margin: 0; }
 .compareImage {
   position: relative;
-  min-height: 0;
-  flex: 1;
+  width: min(100%, calc((100cqh - 40px) * 2 / 3));
+  aspect-ratio: 2 / 3;
+  flex: none;
   overflow: hidden;
   border-radius: 12px;
   background: color-mix(in srgb, var(--foreground) 1.6%, transparent);
@@ -365,16 +384,17 @@
 }
 .compareImage img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
 .compareEmpty { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted-foreground); font-size: 12px; }
-.comparePane figcaption { display: flex; align-items: center; justify-content: center; gap: 8px; color: var(--muted-foreground); font-size: 12px; line-height: 16px; }
+.comparePane figcaption { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 4px 8px; text-align: center; color: var(--muted-foreground); font-size: 12px; line-height: 16px; }
 .compareVerdict { display: inline-flex; align-items: center; gap: 3px; padding: 0 7px; border-radius: 999px; background: var(--status-success-bg); color: var(--status-success-fg); font-size: 11px; }
 .compareVerdict[data-passed="false"] { background: var(--status-failed-bg); color: var(--status-failed-fg); }
 .compareFoot { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 6px; }
 .compareUse { margin-left: 8px; }
 .compareFootLabel { margin-right: 4px; color: var(--muted-foreground); font-size: 12px; }
 @keyframes compare-in { from { opacity: 0; scale: 0.98; translate: 0 12px; } }
-@media (max-width: 720px) {
-  .compareBody { grid-template-columns: 1fr; grid-auto-rows: minmax(0, 1fr); overflow-y: auto; scrollbar-width: none; }
-  .compareImage { min-height: 220px; }
+/* Too narrow for three across: one under the other, scrolling. */
+@container compare (max-width: 560px) {
+  .compareBody { container-type: normal; grid-template-columns: 1fr; grid-auto-rows: max-content; align-content: start; overflow-y: auto; scrollbar-width: none; }
+  .compareImage { width: 280px; max-width: 100%; }
 }
 @media (prefers-reduced-motion: reduce) { .compare { animation: none; } }
 
@@ -412,3 +432,25 @@
 .promptImages { display: flex; flex-direction: column; gap: 6px; padding-left: 0; font-size: 11px; line-height: 1.5; color: var(--muted-foreground); }
 .promptText.promptText { min-height: 220px; max-height: 420px; overflow-y: auto; font-family: var(--font-mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 11.5px; line-height: 1.55; }
 .promptAnalysis { display: flex; flex-direction: column; gap: 10px; padding-top: 4px; }
+
+/* The prompt test page (/rotoscope?test=…): controls on top, the frame and the drawing side by side, flat. */
+.testPage { display: flex; max-width: 960px; min-height: 100dvh; flex-direction: column; gap: 20px; margin: 0 auto; padding: 24px 16px 48px; background: var(--background); }
+.testHeader { display: flex; flex-direction: column; align-items: flex-start; gap: 6px; }
+.testHeader h1 { margin: 0; font-size: 20px; font-weight: 600; letter-spacing: -0.02em; }
+.testControls { display: flex; flex-direction: column; gap: 10px; padding-bottom: 20px; border-bottom: 1px solid var(--border); }
+.testPick { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.testFrame { width: 88px; }
+.testResult { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 16px; }
+.testResult figure { display: flex; min-width: 0; flex-direction: column; align-items: flex-start; gap: 8px; margin: 0; }
+.testPicture { position: relative; display: grid; width: 100%; aspect-ratio: 2 / 3; place-items: center; overflow: hidden; border-radius: 12px; background: color-mix(in srgb, var(--foreground) 4%, transparent); }
+.testPicture img { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; }
+.testPicture[data-transparent] {
+  background-color: var(--checker-base);
+  background-image: linear-gradient(45deg, color-mix(in srgb, var(--foreground) 3.9%, transparent) 25%, transparent 25%), linear-gradient(-45deg, color-mix(in srgb, var(--foreground) 3.9%, transparent) 25%, transparent 25%), linear-gradient(45deg, transparent 75%, color-mix(in srgb, var(--foreground) 3.9%, transparent) 75%), linear-gradient(-45deg, transparent 75%, color-mix(in srgb, var(--foreground) 3.9%, transparent) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+}
+.testPrompt { margin: 0; color: var(--muted-foreground); font-size: 12px; line-height: 1.55; white-space: pre-wrap; }
+@media (max-width: 560px) { .testResult { grid-template-columns: 1fr; } }
+/* A drawing moved onto the video's framing in the preview (RotoscopeRun.framing): scaled from the canvas's top left. */
+.framed { position: absolute; inset: 0; transform-origin: 0 0; }

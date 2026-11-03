@@ -78,6 +78,47 @@ export const TitleSchema = z.object({
 });
 export type Title = z.infer<typeof TitleSchema>;
 
+/** Shortest effect range: anything shorter reads as a glitch. */
+export const MIN_RANGE_SECONDS = 0.5;
+/** The effect fades in and out over this long at a range edge inside the clip. */
+export const RANGE_FADE_SECONDS = 0.25;
+
+/** Where the effect (and its finish) applies, in seconds of the clip. Outside it the original frames play. */
+export const EffectRangeSchema = z.object({
+  start: z.number().min(0).max(3600),
+  end: z.number().min(0).max(3600),
+}).refine((range) => range.end - range.start >= MIN_RANGE_SECONDS - 1e-6, "Effect range too short");
+export type EffectRange = z.infer<typeof EffectRangeSchema>;
+
+/** Effects that keep the source frame and clock; Break the Frame changes the canvas and Time Freeze the length. */
+export const RANGE_EFFECTS: ReadonlySet<PlanEffect> = new Set(["selective_color", "background_blur", "spotlight", "motion_echo", "erase", "pixelate"]);
+
+/**
+ * How much of the effect shows at `seconds`: 0 outside the range, 1 inside,
+ * a short ramp at an edge that falls inside the clip so the effect never
+ * snaps on.
+ */
+export function rangeWeight(seconds: number, range: EffectRange | undefined, duration: number): number {
+  if (!range) return 1;
+  if (seconds < range.start || seconds >= range.end) return 0;
+  const fadeIn = range.start <= 1e-3 ? 1 : (seconds - range.start) / RANGE_FADE_SECONDS;
+  const fadeOut = range.end >= duration - 1e-3 ? 1 : (range.end - seconds) / RANGE_FADE_SECONDS;
+  return clamp(Math.min(fadeIn, fadeOut), 0, 1);
+}
+
+/**
+ * A range clamped to the clip, or undefined when it covers the whole clip
+ * (nothing to limit) or can't be made valid.
+ */
+export function normalizeRange(range: { start: number; end: number } | null | undefined, duration: number): EffectRange | undefined {
+  if (!range || !Number.isFinite(range.start) || !Number.isFinite(range.end)) return undefined;
+  const start = clamp(Math.min(range.start, range.end), 0, duration);
+  const end = clamp(Math.max(range.start, range.end), 0, duration);
+  if (start <= 1e-3 && end >= duration - 1e-3) return undefined;
+  if (end - start < MIN_RANGE_SECONDS) return undefined;
+  return { start: Math.round(start * 1000) / 1000, end: Math.round(end * 1000) / 1000 };
+}
+
 /**
  * What the viewer receives on top of the effect, the same for every effect:
  * the crop (16:9 or 9:16, following the subject when there is one) and the
@@ -88,6 +129,8 @@ export const DeliverySchema = z.object({
   /** Keep the subject in the crop instead of centering it. */
   follow: z.boolean().default(true),
   titles: z.array(TitleSchema).max(TITLE_MAX).default([]),
+  /** Absent = the whole clip. Ignored by effects outside RANGE_EFFECTS. Optional, not defaulted, so older renders keep their cache key. */
+  range: EffectRangeSchema.optional(),
 });
 export type Delivery = z.infer<typeof DeliverySchema>;
 const delivery = DeliverySchema.prefault({});
@@ -154,6 +197,21 @@ export const EraseParamsSchema = z.object({
   delivery,
 });
 
+/**
+ * Pixelate: big square blocks over the tracked target (a face, a plate, a
+ * logo: censoring) or over everything but it (a stylized background).
+ * `blockSize` is in pixels of a 1280-wide frame, scaled to the clip; a
+ * pixelated subject's mask grows by half a block so no edge peeks out.
+ */
+export const PixelateParamsSchema = z.object({
+  effect: z.literal("pixelate"),
+  region: z.enum(["subject", "background"]).default("subject"),
+  blockSize: z.number().int().min(4).max(48).default(16),
+  feather: z.number().min(0).max(4).default(1.5),
+  finish,
+  delivery,
+});
+
 /** Time Freeze + Echo. The target is the job's selection, like every other effect. */
 export const TimeFreezeEchoParamsSchema = z.object({
   effect: z.literal("time_freeze_echo"),
@@ -174,6 +232,7 @@ export const RenderParamsSchema = z.discriminatedUnion("effect", [
   BreakFrameParamsSchema,
   MotionEchoParamsSchema,
   EraseParamsSchema,
+  PixelateParamsSchema,
   TimeFreezeEchoParamsSchema,
 ]);
 export type RenderParams = z.infer<typeof RenderParamsSchema>;
@@ -201,6 +260,8 @@ export function defaultParams(plan: EditPlan): RenderParams {
         return { effect: "break_frame" };
       case "erase":
         return { effect: "erase" };
+      case "pixelate":
+        return { effect: "pixelate", ...(plan.parameters.region ? { region: plan.parameters.region } : {}), ...(plan.parameters.blockSize === undefined ? {} : { blockSize: Math.round(clamp(plan.parameters.blockSize, 4, 48)) }) };
       case "motion_echo":
         return {
           effect: "motion_echo",
@@ -236,6 +297,7 @@ export const PARAM_BOUNDS = {
   trailSpacingMs: [60, 400],
   feather: [0, 4],
   expand: [0, 24],
+  blockSize: [4, 48],
 } as const;
 const FINISH_BOUNDS = { accentStrength: [0.2, 1], vignette: [0, 1], grain: [0, 1] } as const;
 
@@ -251,9 +313,12 @@ export function clampFinish(patch: FinishPatch): FinishPatch {
 /** A requested change: any knob may be absent (keep it). */
 export type ParamsPatch = {
   readonly effect?: PlanEffect;
-  readonly settings?: Partial<Record<"intensity" | "darkness" | "trailCount" | "trailSpacingMs" | "feather" | "expand" | "echoCount" | "echoSpacingMs" | "freezeDurationMs", number>> &
-    Partial<{ level: BlurLevel; background: "dark" | "light"; frameSize: "compact" | "balanced" | "wide"; fill: "auto" | "spatial" }>;
+  readonly settings?: Partial<Record<"intensity" | "darkness" | "trailCount" | "trailSpacingMs" | "feather" | "expand" | "blockSize" | "echoCount" | "echoSpacingMs" | "freezeDurationMs", number>> &
+    Partial<{ level: BlurLevel; background: "dark" | "light"; frameSize: "compact" | "balanced" | "wide"; fill: "auto" | "spatial"; region: "subject" | "background" }>;
   readonly finish?: FinishPatch;
+  /** Where the effect applies; null = the whole clip again. Needs the clip length to clamp. */
+  readonly range?: { readonly start: number; readonly end: number } | null;
+  readonly duration?: number;
 };
 
 /**
@@ -267,7 +332,7 @@ export function applyParamsPatch(current: RenderParams, patch: ParamsPatch): Ren
   const settings: Record<string, unknown> = { ...patch.settings };
   for (const [key, [min, max]] of Object.entries(PARAM_BOUNDS)) {
     const value = settings[key];
-    if (typeof value === "number") settings[key] = key === "trailCount" || key === "trailSpacingMs" || key === "expand" ? Math.round(clamp(value, min, max)) : clamp(value, min, max);
+    if (typeof value === "number") settings[key] = key === "trailCount" || key === "trailSpacingMs" || key === "expand" || key === "blockSize" ? Math.round(clamp(value, min, max)) : clamp(value, min, max);
   }
   if (base.effect === "time_freeze_echo") {
     // Flat chat knobs land in the nested temporal edit; the freeze point never changes here.
@@ -282,7 +347,14 @@ export function applyParamsPatch(current: RenderParams, patch: ParamsPatch): Ren
     if (bound(freeze, TEMPORAL_BOUNDS.freezeDurationMs) !== undefined) settings.freezeDurationMs = bound(freeze, TEMPORAL_BOUNDS.freezeDurationMs);
     delete settings.trigger;
   }
-  const parsed = RenderParamsSchema.safeParse({ ...base, ...settings, effect, finish: { ...base.finish, ...clampFinish(patch.finish ?? {}) } });
+  let delivery = base.delivery;
+  if (patch.range !== undefined && patch.duration !== undefined) {
+    const rest: Delivery = { ...base.delivery };
+    delete rest.range;
+    const range = normalizeRange(patch.range, patch.duration);
+    delivery = range ? { ...rest, range } : rest;
+  }
+  const parsed = RenderParamsSchema.safeParse({ ...base, ...settings, effect, finish: { ...base.finish, ...clampFinish(patch.finish ?? {}) }, delivery });
   return parsed.success ? parsed.data : base;
 }
 
@@ -314,6 +386,7 @@ const EFFECT_LABEL: Record<PlanEffect, string> = {
   break_frame: "Break the Frame",
   motion_echo: "Motion Echo",
   erase: "Erase",
+  pixelate: "Pixelate",
   time_freeze_echo: "Time Freeze",
 };
 
@@ -339,6 +412,8 @@ export function describeParamChanges(before: RenderParams, after: RenderParams):
   knob("trailCount", "Trails", String);
   knob("trailSpacingMs", "Spacing", (value: number) => `${value} ms`);
   knob("expand", "Cover margin", (value: number) => `${value} px`);
+  knob("region", "Pixelate", (value: string) => (value === "subject" ? "the subject" : "the background"));
+  knob("blockSize", "Block size", (value: number) => `${value} px`);
   knob("fill", "Fill", (value: string) => (value === "auto" ? "background from other frames" : "surrounding pixels"));
   if (after.effect === "time_freeze_echo") {
     const prev = before.effect === "time_freeze_echo" ? before : (effectDefaults("time_freeze_echo") as RenderParamsOf<"time_freeze_echo">);
@@ -367,6 +442,8 @@ export function describeParamChanges(before: RenderParams, after: RenderParams):
     const count = after.delivery.titles.length;
     changes.push(count ? `Titles: ${count}` : "Titles: off");
   }
+  const [r0, r1] = [before.delivery.range, after.delivery.range];
+  if (JSON.stringify(r0) !== JSON.stringify(r1)) changes.push(r1 ? `Effect from ${r1.start.toFixed(1)} s to ${r1.end.toFixed(1)} s` : "Effect on the whole clip");
   return changes;
 }
 

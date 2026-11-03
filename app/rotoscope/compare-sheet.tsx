@@ -1,11 +1,12 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { ArrowLeft01Icon, ArrowRight01Icon, Cancel01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
+import { ArrowLeft01Icon, ArrowRight01Icon, Cancel01Icon, Refresh01Icon, Tick02Icon } from "@hugeicons/core-free-icons";
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { ImageViewer, ImageViewerContent, ImageViewerThumbnail, type ImageViewerImage } from "../../components/motion/image-viewer";
 import { ToggleChip } from "../../components/ui/toggle-chip";
+import { OwnImageButton } from "./own-image-button";
 import { FRAME_SIZE, rotoscopeUrls, type RotoscopeFrame, type RotoscopeRun } from "../../shared/rotoscope";
 import { time } from "./frame-state";
 import styles from "./rotoscope.module.css";
@@ -16,7 +17,7 @@ import styles from "./rotoscope.module.css";
  * attempts below to see which one follows the video best; the arrows (or the
  * keys) move to the next frame without leaving.
  */
-export function CompareSheet({ run, frame, initialAttempt, onFrame, canApprove, busy, onApprove, onClose }: {
+export function CompareSheet({ run, frame, initialAttempt, onFrame, canApprove, busy, onApprove, onRedraw, onUpload, onClose }: {
   readonly run: RotoscopeRun;
   readonly frame: RotoscopeFrame;
   /** The attempt the inspector was showing when the sheet opened. */
@@ -26,6 +27,10 @@ export function CompareSheet({ run, frame, initialAttempt, onFrame, canApprove, 
   readonly canApprove: boolean;
   readonly busy: boolean;
   readonly onApprove: (attempt: number) => void;
+  /** Draws this frame once more; absent while the frame can't be redrawn (the run is busy, or nothing is drawn yet). */
+  readonly onRedraw?: () => void;
+  /** Puts the person's own image on the frame; absent while the run is busy. */
+  readonly onUpload?: (image: File) => void;
   readonly onClose: () => void;
 }) {
   const attempts = [...frame.attempts].reverse();
@@ -40,6 +45,13 @@ export function CompareSheet({ run, frame, initialAttempt, onFrame, canApprove, 
 
   // A new frame starts on its own best attempt.
   useEffect(() => { setChosen(null); }, [frame.index]);
+  // A redraw that lands while the sheet is open is shown at once.
+  const latest = frame.attempts.at(-1)?.attempt ?? null;
+  const seen = useRef({ index: frame.index, latest });
+  useEffect(() => {
+    if (seen.current.index === frame.index && latest !== null && latest !== seen.current.latest) setChosen(latest);
+    seen.current = { index: frame.index, latest };
+  }, [frame.index, latest]);
   useEffect(() => { closeRef.current?.focus({ preventScroll: true }); }, []);
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
@@ -68,6 +80,12 @@ export function CompareSheet({ run, frame, initialAttempt, onFrame, canApprove, 
       <div className={styles.compareHead}>
         <span className={styles.compareTitle}>Frame {frame.index} <span>· {time(run, frame.index)}</span></span>
         <div className={styles.compareNav}>
+          {onUpload ? <OwnImageButton frame={frame.index} replacing={frame.attempts.length > 0} disabled={busy} onPick={onUpload} size="xs" /> : null}
+          {onRedraw ? (
+            <Button type="button" size="xs" variant="outline" className="mr-2" disabled={busy} onClick={onRedraw} title={`Draws frame ${frame.index} once more and keeps the new drawing; asks first whether with the video’s background or transparent.`}>
+              <HugeiconsIcon icon={Refresh01Icon} size={13} strokeWidth={1.75} />Redraw frame {frame.index}
+            </Button>
+          ) : null}
           <Button type="button" size="icon-xs" variant="ghost" aria-label="Previous frame" disabled={first} onClick={() => onFrame(frame.index - 1)}>
             <HugeiconsIcon icon={ArrowLeft01Icon} size={15} strokeWidth={1.75} />
           </Button>

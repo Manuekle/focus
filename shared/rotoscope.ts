@@ -23,6 +23,8 @@ export const ROTOSCOPE_LIMITS = {
   /** A pencil note: the comment's length and the marks image's size. */
   maxCommentLength: 600,
   maxMarkBytes: 8 * 1024 * 1024,
+  /** A person's own picture for a frame. */
+  maxUploadBytes: 20 * 1024 * 1024,
 } as const;
 
 /**
@@ -142,8 +144,23 @@ export const RotoscopeRunSchema = RotoscopeRunSummarySchema.extend({
   batch: z.string().nullable().default(null),
   /** How many first frames each round of its batch draws. */
   batchFrames: z.number().int().nullable().default(null),
+  /** The preview's backgrounds made for this run (kind=plate, kind=scenery): the video's room cloned, and redrawn in the character's style. */
+  backdrops: z.object({ plate: z.boolean(), scenery: z.boolean() }).default({ plate: false, scenery: false }),
+  /**
+   * Where the drawings' canvas (the video frame at the run's fit, enlarged around the person) sits on the whole video
+   * frame letterboxed on the same canvas, as the preview's video pane shows it: scale, then x and y as shares of the
+   * canvas. Null before the run is laid out.
+   */
+  framing: z.object({ scale: z.number(), x: z.number(), y: z.number() }).nullable().default(null),
 });
 export type RotoscopeRun = z.infer<typeof RotoscopeRunSchema>;
+
+/** How a direct drawing comes out: with the video frame's own background, or cut out on transparency. */
+export type DrawBackground = "scene" | "none";
+
+/** A preview background: the video's room with the person taken out, or that room redrawn as an anime background. */
+export const BackdropSchema = z.object({ kind: z.enum(["plate", "scenery"]) });
+export type BackdropKind = z.infer<typeof BackdropSchema>["kind"];
 
 export const ApproveAttemptSchema = z.object({ frame: z.number().int().min(1), attempt: z.number().int().min(1) });
 
@@ -164,7 +181,12 @@ export const GenerateOptionsSchema = z.object({
   renderer: RendererSchema.optional(),
   prompt: z.string().trim().min(1).max(MAX_PROMPT_LENGTH).optional(),
   attempts: z.number().int().min(1).max(ROTOSCOPE_LIMITS.maxAttempts).optional(),
-}).refine((value) => value.prompt === undefined || value.frame !== undefined, { message: "A prompt is tested on one frame." });
+  /** Draws directly, as the test page does (one Muse Image edit per frame, approved as drawn): with the video's background ("scene") or cut out ("none"). */
+  background: z.enum(["scene", "none"]).optional(),
+  /** The frames a person picked to redraw, approved or not: drawn directly, so with a `background`. */
+  redraw: z.array(z.number().int().min(1)).min(1).max(1000).optional(),
+}).refine((value) => value.prompt === undefined || value.frame !== undefined, { message: "A prompt is tested on one frame." })
+  .refine((value) => value.redraw === undefined || value.background !== undefined, { message: "Picked frames are drawn directly: say which background." });
 
 /** A frame's Muse Image prompt: the one an attempt was drawn with (`sent`), or the one its next drawing would get. */
 export const FramePromptSchema = z.object({ prompt: z.string(), images: z.array(z.string()), sent: z.boolean() });
@@ -247,7 +269,7 @@ export const CompareResultSchema = z.object({
 export type CompareResult = z.infer<typeof CompareResultSchema>;
 
 /** overlay: an attempt's drawing ghosted over its video frame on the grid, as Muse Spark reviewed it; build: the character and the drawing at one scale; scan: the pose error map (joints, vectors, bad cells); exposed: an attempt's repaint regions; labels: the body regions of the drawing it was deformed from; mask: the character's silhouette; scaled: the character sheet as tall as the video person; work: one of an attempt's pipeline pictures (WORK_PICTURES). */
-export type RotoscopeMedia = "source" | "guide" | "attempt" | "frame" | "character" | "scaled" | "posesheet" | "correction" | "audio" | "exposed" | "labels" | "mask" | "overlay" | "build" | "scan" | "drawn" | "work";
+export type RotoscopeMedia = "source" | "guide" | "attempt" | "frame" | "character" | "scaled" | "posesheet" | "correction" | "audio" | "exposed" | "labels" | "mask" | "overlay" | "build" | "scan" | "drawn" | "work" | "plate" | "scenery";
 
 /** The pictures an attempt's pipeline keeps in work/, by name: what the generator got and what each step made. */
 export const WORK_PICTURES = ["raw", "draft", "keyed", "mannequin", "continuity", "fidelity", "person"] as const;
@@ -339,6 +361,8 @@ export const rotoscopeUrls = {
   /** The reference video's sound from the run's start, as AAC. */
   audio: (id: string) => `/api/rotoscope/runs/${id}/media?kind=audio`,
   zip: (id: string) => `/api/rotoscope/runs/${id}/export`,
+  /** POST { kind } draws a preview background (one Muse Image picture). */
+  backdrop: (id: string) => `/api/rotoscope/runs/${id}/backdrop`,
   /** A rendered comparison clip (`CompareResult.file`); a `download` name turns it into an attachment with that name. */
   compare: (id: string, file: string, download?: string) => `/api/rotoscope/runs/${id}/compare?file=${file}${download ? `&download=${encodeURIComponent(download)}` : ""}`,
   /** A frame's Muse Image prompt (an attempt's, or the next drawing's); POST analyses an edited one. */

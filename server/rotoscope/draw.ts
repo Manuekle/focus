@@ -474,9 +474,10 @@ export async function buildPair(character: Buffer, drawing: Buffer): Promise<Buf
 /**
  * What Muse Image gets for one frame, written like /characters edits a design: the video frame is
  * Image 1 and the character Image 2, and the person is replaced by the character, so the pose comes
- * from the picture itself. The rest is this frame alone: Muse Spark's short note of its pose
- * (describeMotion), the character's outfit item by item, and, only on a retry or a pencil note, what was
- * wrong with the earlier attempt. Nothing from any other frame.
+ * from the picture itself. The rest is this frame alone: the character's outfit item by item and, only on a
+ * retry or a pencil note, what was wrong with the earlier attempt. Nothing from any other frame. No pose in
+ * words: when Muse Spark's reading of the picture said something the picture doesn't (legs "spread wide",
+ * high heels read as "heels lifted"), Muse Image drew the words; with the picture alone it copied the pose.
  */
 export type SwapInput = {
   /** The video frame in colour on the canvas, at the placement the drawing must keep. */
@@ -486,13 +487,21 @@ export type SwapInput = {
   readonly characterSheet?: Buffer;
   /** The character's identity line (describeCharacter); empty leaves it out. */
   readonly description: string;
-  readonly note: string;
+  /** A pose in words (the lab's "swap-note" setting only): the run draws from the picture alone. */
+  readonly note?: string;
   readonly correction: Correction | null;
   readonly feedback: readonly string[];
   /** Muse Spark's reading of the last rejected drawing and of the note (diagnoseAttempt): its fix replaces both. */
   readonly diagnosis?: AttemptDiagnosis | null;
+  /** "key" (the run's): flat magenta to cut out; "scene": Image 1's own background kept around the character (the test page). */
+  readonly background?: "key" | "scene";
+  /** A close-up of the character's face (likeness.ts faceReference): the face and the head's size held to the sheet in every frame. */
+  readonly face?: Buffer | null;
   readonly signal?: AbortSignal;
 };
+
+/** How the character's face close-up is named to Muse Image. */
+export const FACE_ROLE = "THE FACE: a close-up of the character's own face from Image 2, the authority on the face.";
 
 /** How the previous frame is named to the generator. */
 export const CONTINUITY_ROLE = (frame: number) => `REFERENCE D, CONTINUITY: frame ${frame} of this same animation, the moment just before, already approved. Draw the character exactly as it is drawn there (face, eyes, hair strands, line weight, colours, outfit folds and accessories) so this frame follows it without a jump. Its pose is the previous moment, never the pose to draw.`;
@@ -518,6 +527,9 @@ export function swapFramePrompt(input: SwapInput): { prompt: string; references:
     { png: input.character, role: `THE CHARACTER: the authority on identity, outfit and style.${input.characterSheet ? " It is drawn as tall as the person of Image 1." : ""} Its own pose is not the pose to draw.`, ...(input.characterSheet ? { derivedFrom: input.characterSheet } : {}) },
     ...(input.correction ? [{ png: input.correction.marked, role: "AN EARLIER DRAWING OF THIS SAME FRAME with the director's RED pencil marks over the parts that are wrong. The red marks are notes only: never draw them." }] : []),
   ];
+  // The face last, after any marked drawing, so the corrections keep naming theirs Image 3.
+  if (input.face) references.push({ png: input.face, role: FACE_ROLE });
+  const faceImage = references.length;
   // The checks' measurements speak of grid cells and percentages of a picture this prompt doesn't have: only what is wrong, in words.
   const fixes = input.feedback.join(" ").split(/(?<=\.)\s+/).filter((sentence) => sentence && !/\bcells?\b|\d\s?%/.test(sentence));
   const items = input.description ? outfitItems(input.description) : "";
@@ -534,12 +546,15 @@ export function swapFramePrompt(input: SwapInput): { prompt: string; references:
     ...(fixes.length ? [`The previous attempt at this frame was rejected. Fix: ${fixes.join(" ")}`] : []),
   ];
   const prompt = [
-    "Edit Image 1 into one frame of a 2D anime animation: replace the person with the character of Image 2. Keep Image 1's pose, framing, size and position exactly; take nothing of the person's look.",
+    "Edit Image 1 into one frame of a 2D anime animation: replace the person with the character of Image 2. Keep Image 1's pose, framing, size and position exactly, sides as seen, never mirrored; take nothing of the person's look.",
     `CHARACTER (copy from Image 2, item by item)${items ? `: ${items}.` : "."} Keep the same face, proportions, colours, line work and flat cel shading as Image 2. Do not redesign, simplify or beautify anything.`,
-    `POSE (as seen in Image 1, never mirrored)${input.note ? `: ${input.note}` : "."}`,
+    ...(input.note ? [`POSE (as seen in Image 1, never mirrored): ${input.note}`] : []),
     ...(corrections.length ? [`CORRECTIONS\n${corrections.join("\n")}`] : []),
+    ...(input.face ? [`FACE: draw exactly the face of Image ${faceImage}: the same eye shape and size, brows, nose, mouth and face shape, and the head the same size relative to the shoulders as in Image 2.`] : []),
     "Clean, sharp line art: no motion blur, no extra or missing limbs, five fingers per visible hand.",
-    `Background: perfectly flat solid ${KEY_COLOR} magenta everywhere, no floor or shadow; never magenta on the character. One character, whole body visible.`,
+    input.background === "scene"
+      ? "Background: keep Image 1's own background exactly, the same room, objects, light and framing; only the person is replaced. One character, whole body visible."
+      : `Background: perfectly flat solid ${KEY_COLOR} magenta everywhere, no floor or shadow; never magenta on the character. One character, whole body visible.`,
   ].join("\n\n");
   return { prompt, references };
 }

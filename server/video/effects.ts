@@ -142,6 +142,42 @@ export function drawGhost(base: Buffer, ghost: Ghost, opacity: number, width: nu
 }
 
 /** Expands a box by a margin, clamped to the frame (feathered edges reach past SAM's box). */
+/**
+ * Each block of `size` px takes its mean color, over the whole frame or only
+ * the blocks that touch `region`. Blocks sit on the frame's grid, not the
+ * region's, so they stay put while a tracked subject moves under them.
+ */
+export function pixelate(frame: Buffer, width: number, height: number, size: number, region?: Box): Buffer {
+  const out = Buffer.from(frame);
+  const area = region ?? { left: 0, top: 0, right: width, bottom: height };
+  for (let top = Math.floor(area.top / size) * size; top < area.bottom; top += size) {
+    const bottom = Math.min(height, top + size);
+    for (let left = Math.floor(area.left / size) * size; left < area.right; left += size) {
+      const right = Math.min(width, left + size);
+      let r = 0;
+      let g = 0;
+      let b = 0;
+      for (let y = top; y < bottom; y++) {
+        for (let p = (y * width + left) * 4, end = (y * width + right) * 4; p < end; p += 4) {
+          r += frame[p];
+          g += frame[p + 1];
+          b += frame[p + 2];
+        }
+      }
+      const count = (bottom - top) * (right - left);
+      const [mr, mg, mb] = [Math.round(r / count), Math.round(g / count), Math.round(b / count)];
+      for (let y = top; y < bottom; y++) {
+        for (let p = (y * width + left) * 4, end = (y * width + right) * 4; p < end; p += 4) {
+          out[p] = mr;
+          out[p + 1] = mg;
+          out[p + 2] = mb;
+        }
+      }
+    }
+  }
+  return out;
+}
+
 export function padBox(box: Box, margin: number, width: number, height: number): Box {
   return {
     left: Math.max(0, box.left - margin),

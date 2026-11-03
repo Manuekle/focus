@@ -18,8 +18,8 @@ import { dataRoot } from "../storage";
 import { decodeImage } from "../animation/image-input";
 import { checkAlpha, closeCuts, fromRgba, KEY_COLOR, keyBackground, toRgba } from "./alpha";
 import { checkStyle, outlineDensity } from "./style";
-import { bodySpec, checkProportions, describeFace, fullLengths, onCanvas, sheetEstimates, sheetLengths, type BodySpec } from "./body-map";
-import { analyzePrompt, CANVAS, diagnoseAttempt, type AttemptDiagnosis, redrawRigFrame, describeCharacter, describeStyle, writeFramePrompt, describeFrame, describeMotion, drawPoseSheet, drawSwap, swapFramePrompt, type PromptAnalysis, buildPair, buildText, ghostOverlay, profileCharacter, validBuild, reconcileBuild, type BuildProfile, fitCanvas, framePrompt, identityCheck, isFrameSpec, isIdentityLine, namePalette, onColour, reviewCheck, reviewFrame, reviewIdentity, sideBySide, toCanvas, type Correction, type FrameInput } from "./draw";
+import { bodySpec, checkProportions, describeFace, fullLengths, onCanvas, sheetEstimates, sheetLengths, usualTorso, type BodySpec } from "./body-map";
+import { analyzePrompt, CANVAS, diagnoseAttempt, type AttemptDiagnosis, redrawRigFrame, describeCharacter, describeStyle, writeFramePrompt, describeFrame, drawPoseSheet, drawSwap, swapFramePrompt, type PromptAnalysis, buildPair, buildText, ghostOverlay, profileCharacter, validBuild, reconcileBuild, type BuildProfile, fitCanvas, framePrompt, identityCheck, isFrameSpec, isIdentityLine, namePalette, onColour, reviewCheck, reviewFrame, reviewIdentity, sideBySide, toCanvas, type Correction, type FrameInput } from "./draw";
 import { holdColours, PALETTE_VERSION, paletteImage, paletteShares, paletteText, profiledPalette, sheetColours, type Palette } from "./colour";
 import { mannequin, sheetBuild } from "./mannequin";
 import { generateHiggsfield } from "./higgsfield";
@@ -528,6 +528,7 @@ export async function layoutRun(dir: string, options: { readonly keep?: boolean 
   const full = fullLengths(onFit, sheetLengths(reference, onFit));
   // Sheet limbs seen foreshortened (hands clasped in front): their full length estimated from the clip's own limb ratio.
   const estimates = sheetEstimates(reference, clip, onFit);
+  const torso = usualTorso(onFit);
   const marksOf = (index: number): Marks => {
     const marks = marksAt(index, fit);
     if (!marks) throw new Error(`frame ${index}: the pose guide has no face, ankles or hips to place the grid lines`);
@@ -541,7 +542,7 @@ export async function layoutRun(dir: string, options: { readonly keep?: boolean 
     return {
       marks,
       // Every joint and limb length in grid cells, at this frame's size of the character.
-      spec: bodySpec(onCanvas(guide, fit), marks, sheet.headHeight * size * fit.scale, full, estimates),
+      spec: bodySpec(onCanvas(guide, fit), marks, sheet.headHeight * size * fit.scale, full, estimates, torso),
       guide: await withGrid(await placeOnCanvas(await readFile(path.join(dir, "guides", frameName(index)))), marks),
       sourceGrey: await withGrid(await placeOnCanvas(await sharp(path.join(dir, "source", frameName(index))).greyscale().png().toBuffer())),
     };
@@ -588,15 +589,14 @@ export async function layoutRun(dir: string, options: { readonly keep?: boolean 
 }
 
 /**
- * What Muse Image gets for a frame's next drawing, built as generateRun builds it but with no model call: the kept
- * pose note (none when the frame was never drawn) and the character's items.
+ * What Muse Image gets for a frame's next drawing, built as generateRun builds it but with no model call: the
+ * character's items.
  */
 async function nextSwap(dir: string, index: number) {
   const { character, characterAtVideoScale, sourcePlaced } = await layoutRun(dir);
-  const note = await readFile(path.join(dir, "notes", `frame_${String(index).padStart(4, "0")}.txt`), "utf8").then((text) => text.trim(), () => "");
   return swapFramePrompt({
     frame: await sourcePlaced(index), character: (await characterAtVideoScale()).png, characterSheet: character,
-    description: (await readFile(path.join(dir, "character.txt"), "utf8")).trim(), note, correction: null, feedback: [],
+    description: (await readFile(path.join(dir, "character.txt"), "utf8")).trim(), correction: null, feedback: [],
   });
 }
 
@@ -923,7 +923,7 @@ async function scoreDrawing(keyed: Buffer, drawn: Pose, colour: Check, scoring: 
     checkScale(registered, marks),
     colour,
     checkProportions(spec, drawn, measured, marks),
-    checkAlpha(await toRgba(placed.png)),
+    checkAlpha(await toRgba(placed.png), spec?.reaches),
     // Line work held to the run's first drawing: the model reviewer lets a prettier, softer render through.
     ...(anchorDensity ? [checkStyle(await toRgba(placed.png), anchorDensity)] : []),
   ];
@@ -1159,28 +1159,6 @@ export async function generateRun(dir: string, options: {
     }
   };
 
-  /**
-   * Muse Spark's short note of one video frame's pose (describeMotion), asked once and kept in notes/
-   * for every attempt and resume of that frame. It reads that frame alone; without one (the call failed)
-   * the frame is drawn from the picture alone.
-   */
-  const noteFor = async (index: number): Promise<string> => {
-    const file = path.join(dir, "notes", `frame_${String(index).padStart(4, "0")}.txt`);
-    const kept = await readFile(file, "utf8").then((text) => text.trim(), () => "");
-    if (kept) return kept;
-    try {
-      const note = await describeMotion({ frame: await sourcePlaced(index), signal: options.signal });
-      await mkdir(path.dirname(file), { recursive: true });
-      await writeFile(file, `${note}\n`);
-      log(`  frame ${index} pose note: ${note}`);
-      return note;
-    } catch (error) {
-      options.signal?.throwIfAborted();
-      log(`  frame ${index}: couldn't write the pose note (${error instanceof Error ? error.message.slice(0, 120) : String(error)}); drawing from the picture alone`);
-      return "";
-    }
-  };
-
   /** The mapping engine, opened on the first frame that uses it; null when it can't run on this run. */
   let mapping: Promise<RunMapping | null> | null = null;
   const openMappingNow = async () => {
@@ -1310,8 +1288,12 @@ export async function generateRun(dir: string, options: {
         // The redraw is on the same canvas as the draft (an edit keeps Image 1's layout): its pose is compared before registration.
         const kept = redrawKeptPose(frame.result.plan.generated as Skeleton, redrawn.drawn);
         const moved = kept.worst === null ? "pose not found" : `ends moved ≤ ${kept.worst.toFixed(2)} torso`;
-        repair = { applied: true, kept: kept.kept, note: kept.kept ? `rig draft redrawn by Muse Image; ${moved}` : `Muse Image's redraw discarded: ${moved} (limit ${REDRAW_TOLERANCE})` };
-        if (kept.kept) candidate = { ...redrawn, generator: "rig", note: `rig draft redrawn by Muse Image; ${redrawn.note}` };
+        // A redraw that moved an end isn't trusted blindly, but the draft is torn by design (that's what the redraw heals):
+        // submitting it would trade a small pose shift, which the pose check still measures, for broken limbs and lost outlines.
+        // So an untrusted redraw still competes with the draft on the measured checks.
+        const rescued = !kept.kept && better(redrawn, draft);
+        repair = { applied: true, kept: kept.kept || rescued, note: kept.kept ? `rig draft redrawn by Muse Image; ${moved}` : rescued ? `rig draft redrawn by Muse Image; ${moved} (past ${REDRAW_TOLERANCE}, kept: it measures better than the torn draft)` : `Muse Image's redraw discarded: ${moved} (limit ${REDRAW_TOLERANCE})` };
+        if (kept.kept || rescued) candidate = { ...redrawn, generator: "rig", note: `rig draft redrawn by Muse Image; ${redrawn.note}` };
       } catch (error) {
         options.signal?.throwIfAborted();
         repair = { applied: false, kept: false, note: `redraw failed: ${error instanceof Error ? error.message.slice(0, 120) : String(error)}` };
@@ -1520,14 +1502,14 @@ export async function generateRun(dir: string, options: {
       // Muse Image edits the colour video frame into the character with a short prompt; Higgsfield still gets the full one.
       await trace.start("prompt", { model: !options.prompt && writer === "spark" ? meta.plannerModel : "template", summary: "reading the pose and writing Muse Image's prompt" });
       // A frame Muse Image drew mirrored is drawn next from the mirrored video frame and its drawing turned back: the
-      // model keeps reaching for the same arm, so it gets the pose it reaches for. The pose note and the marked
-      // drawing speak of the unmirrored frame and stay out; Muse Spark writes the pose from the mirrored picture, and
+      // model keeps reaching for the same arm, so it gets the pose it reaches for. The marked drawing speaks of the
+      // unmirrored frame and stays out; Muse Spark writes the pose from the mirrored picture, and
       // the reading of the last drawing (diagnosisFor) was made on the mirrored pictures.
       if (mirrorInput) log(`  Muse Image drew frame ${frame.index} mirrored before: it edits the mirrored video frame and its drawing is turned back`);
       const written = generators.includes("muse")
         ? swapFramePrompt(mirrorInput
-          ? { frame: await sharp(await sourcePlaced(frame.index)).flop().png().toBuffer(), character: (await characterAtVideoScale()).png, characterSheet: character, description, note: "", correction: null, feedback: [], diagnosis: diagnosis?.reading ?? null, signal: options.signal }
-          : { frame: await sourcePlaced(frame.index), character: (await characterAtVideoScale()).png, characterSheet: character, description, note: await noteFor(frame.index), correction: input.correction, feedback, diagnosis: diagnosis?.reading ?? null, signal: options.signal })
+          ? { frame: await sharp(await sourcePlaced(frame.index)).flop().png().toBuffer(), character: (await characterAtVideoScale()).png, characterSheet: character, description, correction: null, feedback: [], diagnosis: diagnosis?.reading ?? null, signal: options.signal }
+          : { frame: await sourcePlaced(frame.index), character: (await characterAtVideoScale()).png, characterSheet: character, description, correction: input.correction, feedback, diagnosis: diagnosis?.reading ?? null, signal: options.signal })
         : null;
       // Muse Spark's own prompt, written from the template and the images; the template draws when it can't write one.
       const manifestNow = written && !options.prompt && writer === "spark" ? await readManifest(dir) : null;

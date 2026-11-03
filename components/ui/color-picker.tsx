@@ -71,12 +71,15 @@ export function ColorPicker({
   label,
   presets = ["#ffffff", "#000000", "#f4f1ea", "#1d1f27", "#87ceeb", "#f6c177", "#9ccfd8", "#eb6f92"],
   className,
+  container,
 }: {
   readonly value: string;
   readonly onChange: (hex: string) => void;
   readonly label: string;
   readonly presets?: readonly string[];
   readonly className?: string;
+  /** Where the list portals to; the body by default. Pass a fullscreen element so the list shows inside it. */
+  readonly container?: HTMLElement | null;
 }) {
   const [hsv, setHsv] = React.useState<Hsv>(() => hexToHsv(HEX.test(value) ? value : "#ffffff"));
   const [draft, setDraft] = React.useState(value);
@@ -120,7 +123,7 @@ export function ColorPicker({
         className={cn("size-7 shrink-0 cursor-pointer rounded-md border-0 p-0 shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--foreground)_14.9%,transparent)] outline-none transition-[scale,box-shadow] duration-150 ease-[var(--ease-smooth-out)] hover:scale-105 focus-visible:outline-2 focus-visible:outline-offset-1 focus-visible:outline-[color:var(--btn-focus-ring)] data-[state=open]:shadow-[inset_0_0_0_1px_color-mix(in_srgb,var(--foreground)_14.9%,transparent),0_0_0_2px_var(--primary)]", className)}
         style={{ background: value }}
       />
-      <Popover.Portal>
+      <Popover.Portal container={container ?? undefined}>
         <Popover.Content
           side="bottom"
           align="start"

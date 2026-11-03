@@ -12,7 +12,7 @@ import { recordUsage } from "./usage";
 // patch of the same bounded knobs the sliders expose. The masks never change
 // here, so applying a turn is a local re-render, never a new SAM pass.
 
-const V1_EFFECTS = ["selective_color", "background_blur", "spotlight", "break_frame", "motion_echo", "erase"] as const;
+const V1_EFFECTS = ["selective_color", "background_blur", "spotlight", "break_frame", "motion_echo", "erase", "pixelate"] as const;
 const TEMPORAL_SETTINGS = ["echoCount", "echoSpacingMs", "freezeDurationMs"] as const;
 
 /** Strict-mode schema of one turn. Time Freeze knobs exist only with temporal effects enabled. */
@@ -20,7 +20,7 @@ export function assistantJsonSchema(temporal: boolean) {
   return {
     type: "object",
     additionalProperties: false,
-    required: ["reply", "action", "effect", "settings", "finish", "newInstruction"],
+    required: ["reply", "action", "effect", "settings", "finish", "range", "newInstruction"],
     properties: {
       reply: { type: "string" },
       action: { type: "string", enum: ["adjust", "new_edit", "none"] },
@@ -28,7 +28,7 @@ export function assistantJsonSchema(temporal: boolean) {
       settings: {
         type: "object",
         additionalProperties: false,
-        required: ["intensity", "darkness", "level", "background", "frameSize", "trailCount", "trailSpacingMs", "expand", "fill", "feather", ...(temporal ? TEMPORAL_SETTINGS : [])],
+        required: ["intensity", "darkness", "level", "background", "frameSize", "trailCount", "trailSpacingMs", "expand", "fill", "region", "blockSize", "feather", ...(temporal ? TEMPORAL_SETTINGS : [])],
         properties: {
           intensity: nullable({ type: "number" }),
           darkness: nullable({ type: "number" }),
@@ -39,11 +39,19 @@ export function assistantJsonSchema(temporal: boolean) {
           trailSpacingMs: nullable({ type: "integer" }),
           expand: nullable({ type: "integer" }),
           fill: nullable({ type: "string", enum: ["auto", "spatial"] }),
+          region: nullable({ type: "string", enum: ["subject", "background"] }),
+          blockSize: nullable({ type: "integer" }),
           feather: nullable({ type: "number" }),
           ...(temporal ? Object.fromEntries(TEMPORAL_SETTINGS.map((key) => [key, nullable({ type: "integer" })])) : {}),
         },
       },
       finish: FINISH_JSON_SCHEMA,
+      range: nullable({
+        type: "object",
+        additionalProperties: false,
+        required: ["whole", "startSeconds", "endSeconds"],
+        properties: { whole: { type: "boolean" }, startSeconds: nullable({ type: "number" }), endSeconds: nullable({ type: "number" }) },
+      }),
       newInstruction: nullable({ type: "string" }),
     },
   };
@@ -58,8 +66,11 @@ Effects (the subject's masks work with all of them):
 - spotlight: background dark except a soft pool of light following the subject. darkness 0.2–0.95.
 - break_frame: subject steps out of an inner frame on a 1080×1350 canvas. background dark | light, frameSize compact | balanced | wide.
 - motion_echo: fading trails of the subject. trailCount 2–6, trailSpacingMs 60–400, intensity 0.2–1. Best with a still camera.
-- erase: the subject (text, a logo, an object) is removed and the background fills in. expand 0–24 = extra px of cover around it (raise it when outlines, shadows or traces remain), fill auto (reuse the background seen in other frames when the camera is still) | spatial (paint only from the surrounding pixels; try it when the fill shows ghosts). Only switch to or from erase when the user asks to remove or bring back the subject.${temporal ? TEMPORAL_EFFECT_LINE : ""}
+- erase: the subject (text, a logo, an object) is removed and the background fills in. expand 0–24 = extra px of cover around it (raise it when outlines, shadows or traces remain), fill auto (reuse the background seen in other frames when the camera is still) | spatial (paint only from the surrounding pixels; try it when the fill shows ghosts). Only switch to or from erase when the user asks to remove or bring back the subject.
+- pixelate: big square pixels over the subject (region subject: censoring a face, a plate, a logo) or over everything but it (region background). blockSize 4–48 px ("bigger pixels" → larger). Switch to pixelate when the user asks to pixelate, censor or mosaic; it keeps the same masks.${temporal ? TEMPORAL_EFFECT_LINE : ""}
 All effects: feather 0–4 = edge softness in px.
+
+Effect range (selective_color, background_blur, spotlight, motion_echo, erase and pixelate only): the effect and its finish can run on part of the clip, with the original video before and after and a short fade at each edge. "Current edit" shows it as delivery.range in seconds (absent = the whole clip). "only from 3 to 6 seconds", "just the last two seconds", "start the effect at the jump" → range { whole: false, startSeconds, endSeconds } within the clip's length; "the whole video again" → range { whole: true }. Otherwise range null. For a range on break_frame${temporal ? " or time_freeze_echo" : ""} use action "none" and explain that effect always covers the whole clip.
 
 Finish (on top of any effect):
 - look: natural | cinematic (teal-orange film) | noir (contrasty black and white, note: removes the subject's color too) | warm (golden hour) | cool (moonlight blue) | vintage (faded film) | vivid (punchy color).
@@ -93,6 +104,8 @@ const AssistantOutputSchema = z.object({
       trailSpacingMs: NumberField.optional(),
       expand: NumberField.optional(),
       fill: z.enum(["auto", "spatial"]).optional(),
+      region: z.enum(["subject", "background"]).optional(),
+      blockSize: NumberField.optional(),
       feather: NumberField.optional(),
       echoCount: NumberField.optional(),
       echoSpacingMs: NumberField.optional(),
@@ -100,6 +113,7 @@ const AssistantOutputSchema = z.object({
     })
     .default({}),
   finish: z.record(z.string(), z.unknown()).default({}),
+  range: z.object({ whole: z.boolean(), startSeconds: NumberField.optional(), endSeconds: NumberField.optional() }).optional(),
   newInstruction: z.string().trim().min(3).max(300).optional(),
 });
 
@@ -143,9 +157,16 @@ export function parseAssistantOutput(text: string, options: { readonly temporal?
   return {
     reply: turn.reply,
     action: turn.action,
-    patch: turn.action === "adjust" ? { effect, settings: turn.settings, finish } : {},
+    patch: turn.action === "adjust" ? { effect, settings: turn.settings, finish, ...rangePatch(turn.range) } : {},
     newInstruction: turn.action === "new_edit" ? turn.newInstruction : undefined,
   };
+}
+
+/** The model's range answer as a patch: the whole clip, a part, or nothing to change (an incomplete part is ignored). */
+function rangePatch(range: z.infer<typeof AssistantOutputSchema>["range"]): Pick<ParamsPatch, "range"> {
+  if (!range) return {};
+  if (range.whole) return { range: null };
+  return range.startSeconds !== undefined && range.endSeconds !== undefined ? { range: { start: range.startSeconds, end: range.endSeconds } } : {};
 }
 
 /** The last few turns, oldest first, as plain text for the model. */

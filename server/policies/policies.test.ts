@@ -91,6 +91,15 @@ describe("policy registry", () => {
     expect(constraintFailures(still.outcomes)).toEqual([]);
   });
 
+  it("lets a held joint move toward the source when the previous drawing had it off, not away", () => {
+    // The previous approved drawing is 120 px off everywhere; this one closes most of the gap (40 px off, still past the drift).
+    const correcting = registry.run("validation", { stage: "validation", index: 5, target: s, generated: shifted(40), previous: { target: s, generated: shifted(120) } });
+    expect(constraintFailures(correcting.outcomes)).toEqual([]);
+    // From 40 px off to 120 px off: drift.
+    const worse = registry.run("validation", { stage: "validation", index: 5, target: s, generated: shifted(120), previous: { target: s, generated: shifted(40) } });
+    expect(constraintFailures(worse.outcomes).map((outcome) => outcome.id)).toEqual(["timing/hold"]);
+  });
+
   it("warns, without rejecting, when a moving hand leaves the source's arc or spacing", () => {
     const target = shifted(80);
     const generated = { ...target, leftWrist: { p: [target.leftWrist!.p[0] - 70, target.leftWrist!.p[1] + 60] as const, score: 0.9 } } as Skeleton;

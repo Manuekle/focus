@@ -108,7 +108,7 @@
   .zoom { display: none; }
 }
 @media (prefers-reduced-motion: reduce) {
-  .clip, .middle { transition: none; }
+  .clip, .middle, .cutPart, .cutHandle::after { transition: none; }
   .clip[data-state="working"] { animation: none; }
 }
 .transport output { max-width: 220px; margin-left: 6px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -119,6 +119,21 @@
 .filmstrip { position: absolute; top: 5px; bottom: 5px; display: flex; overflow: hidden; border-radius: 8px; background: color-mix(in srgb, var(--key) 30%, var(--card)); box-shadow: inset 0 0 0 2px var(--key); }
 .filmstrip img { display: block; height: 100%; flex: 1 0 0; min-width: 0; object-fit: cover; opacity: 0.92; }
 .filmstripName { position: absolute; left: 6px; bottom: 4px; padding: 1px 6px; border-radius: 5px; background: color-mix(in srgb, var(--key) 88%, #000); color: #fff; font-size: 11px; white-space: nowrap; }
+/* The cut list (media-timeline.tsx): removed parts dimmed, kept parts outlined with trim handles at both edges. */
+.cutGap { position: absolute; z-index: 1; top: 5px; bottom: 5px; border-radius: 6px; background: repeating-linear-gradient(-45deg, color-mix(in srgb, var(--card) 78%, transparent) 0 5px, color-mix(in srgb, var(--card) 90%, transparent) 5px 10px); pointer-events: none; }
+.cutPart { position: absolute; z-index: 2; top: 5px; bottom: 5px; border-radius: 8px; box-shadow: inset 0 0 0 2px color-mix(in srgb, #fff 55%, transparent); cursor: pointer; transition: box-shadow 150ms var(--ease-smooth-out); }
+.cutPart[aria-pressed="true"] { box-shadow: inset 0 0 0 2px #fff, 0 0 0 1px var(--key); }
+.cutHandle { position: absolute; top: 0; bottom: 0; width: 10px; cursor: ew-resize; touch-action: none; }
+.cutHandle[data-edge="start"] { left: 0; border-radius: 8px 0 0 8px; }
+.cutHandle[data-edge="end"] { right: 0; border-radius: 0 8px 8px 0; }
+.cutHandle::after { position: absolute; top: 50%; width: 3px; height: 18px; border-radius: 2px; background: #fff; box-shadow: 0 0 0 1px color-mix(in srgb, #000 30%, transparent); translate: 0 -50%; opacity: 0; transition: opacity 150ms var(--ease-smooth-out); content: ""; }
+.cutHandle[data-edge="start"]::after { left: 3px; }
+.cutHandle[data-edge="end"]::after { right: 3px; }
+.cutPart:hover .cutHandle::after, .cutPart[aria-pressed="true"] .cutHandle::after { opacity: 1; }
+/* The effect range: its lane's span resizes from both edges like a kept part. */
+.span[data-resizable] { overflow: visible; }
+.span[data-resizable] .cutHandle::after { height: 12px; opacity: 0.85; }
+.span[data-resizable]:hover .cutHandle::after { opacity: 1; }
 .span { position: absolute; top: 6px; bottom: 6px; display: flex; min-width: 0; align-items: center; gap: 5px; padding: 0 8px; overflow: hidden; border-radius: 6px; color: #fff; }
 .span[data-tone="masks"] { padding: 0; background: linear-gradient(180deg, color-mix(in srgb, #10b981 82%, #fff), #10b981); }
 .span[data-tone="effect"] { background: linear-gradient(180deg, color-mix(in srgb, var(--middle) 82%, #fff), var(--middle)); }

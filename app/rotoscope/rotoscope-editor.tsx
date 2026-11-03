@@ -27,6 +27,7 @@ import { PencilNote } from "./pencil-note";
 import { ImageViewer, ImageViewerContent, ImageViewerThumbnail, type ImageViewerImage } from "../../components/motion/image-viewer";
 import { ActivityLog } from "./activity-log";
 import { CompareSheet } from "./compare-sheet";
+import { OwnImageButton } from "./own-image-button";
 import { MappingInspector } from "./mapping-inspector";
 import { DockResizer, useDockWidth } from "./dock-resizer";
 import { RunMeasures } from "./run-measures";
@@ -35,6 +36,7 @@ import { RotoscopeCanvas } from "./rotoscope-canvas";
 import { PipelineCanvas } from "./pipeline-canvas";
 import { CompareExport } from "./compare-export";
 import { RotoscopePlayer, type LiveStage } from "./rotoscope-player";
+import { chooseBackground } from "./choose-background";
 import styles from "./rotoscope.module.css";
 
 const LIVE_STEPS = [
@@ -100,6 +102,8 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
   // Picking a frame leaves the Run tab for its inspector; the Preview tab follows the pick instead.
   const pick = (index: number) => { setPicked(index); setDockTab((tab) => (tab === "run" ? "frame" : tab)); };
 
+  // A drawing made directly (direct.ts), or the person's own image, is on the video's own framing: the preview shows it as it is.
+  const isDirect = (frame: RotoscopeFrame | undefined, attempt: number | null) => frame?.attempts.find((entry) => entry.attempt === attempt)?.checks.some((check) => check.name === "direct" || check.name === "uploaded") ?? false;
   const playable = useMemo(() => {
     const approved = run.frames.filter((frame) => frame.status === "approved");
     // Only the unbroken run of approved frames from the first plays as an animation.
@@ -107,12 +111,16 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
       index: frame.index,
       drawing: `${rotoscopeUrls.media(run.id, "frame", frame.index)}&v=${frame.approvedAttempt}`,
       source: rotoscopeUrls.media(run.id, "source", frame.index),
+      direct: isDirect(frame, frame.approvedAttempt),
     }));
+    // isDirect reads only its arguments.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [run.id, run.frames]);
   const liveStage: LiveStage | null = live && !picked ? {
     index: live.frame,
     source: rotoscopeUrls.media(run.id, "source", live.frame),
     drawing: live.image ? rotoscopeUrls.media(run.id, "attempt", live.frame, live.attempt) : null,
+    direct: isDirect(run.frames[live.frame - 1], live.attempt),
     label: `Frame ${live.frame} · attempt ${live.tries}/${live.of ?? run.maxAttempts} · ${LIVE_LABEL[live.stage]}`,
   } : null;
 
@@ -127,7 +135,12 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
   // The character rig deforms an approved drawing first; off, every attempt is generated (the server remembers it per run).
   const [rigFirst, setRigFirst] = useState(run.renderer !== "muse");
   const renderer = rigFirst ? "auto" as const : "muse" as const;
-  const draw = () => void act("Couldn’t start drawing", () => rotoscopeApi.generate(run.id, { dual, renderer }));
+  // Every drawing is made directly, as on the test page; first the person says how it comes out.
+  const draw = async () => {
+    const open = run.frames.filter((frame) => frame.status !== "approved").length;
+    const background = await chooseBackground(open === 1 ? "the drawing" : `the ${open} drawings`);
+    if (background) await act("Couldn’t start drawing", () => rotoscopeApi.generate(run.id, { background }));
+  };
   // The next piece of the video: its frames are cut and measured, then drawn as soon as they are ready.
   const [step, setStep] = useState<number>(EXTEND_STEPS[0]);
   const [drawAfterExtend, setDrawAfterExtend] = useState(false);
@@ -139,7 +152,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
   useEffect(() => {
     if (!drawAfterExtend || run.phase !== "ready") return;
     setDrawAfterExtend(false);
-    if (!run.error && nextOpenFrame(run) !== null) draw();
+    if (!run.error && nextOpenFrame(run) !== null) void draw();
     // Only the end of the extension starts the drawing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drawAfterExtend, run.phase]);
@@ -150,7 +163,30 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
     // Only the noted frame is drawn again, once: Muse Spark reads the note before it is drawn.
     return rotoscopeApi.generate(run.id, { frame, renderer, attempts: ROTOSCOPE_LIMITS.defaultAttempts });
   });
-  const redraw = (frame: number) => void act("Couldn’t redraw", () => rotoscopeApi.generate(run.id, { frame, renderer, attempts: ROTOSCOPE_LIMITS.defaultAttempts }));
+  // Frames picked on the sheet to redraw together.
+  const [marked, setMarked] = useState<ReadonlySet<number>>(new Set());
+  const [marking, setMarking] = useState(false);
+  const toggleMark = (index: number) => setMarked((current) => {
+    const next = new Set(current);
+    if (!next.delete(index)) next.add(index);
+    return next;
+  });
+  const redrawPicked = async () => {
+    const frames = [...marked].sort((a, b) => a - b);
+    const background = await chooseBackground(frames.length === 1 ? `frame ${frames[0]}` : `the ${frames.length} picked frames`);
+    if (!background) return;
+    await act("Couldn’t redraw the picked frames", async () => {
+      const updated = await rotoscopeApi.generate(run.id, { redraw: frames, background });
+      setMarked(new Set());
+      setMarking(false);
+      return updated;
+    });
+  };
+  const redraw = async (frame: number) => {
+    const background = await chooseBackground(`frame ${frame}`);
+    if (background) await act("Couldn’t redraw", () => rotoscopeApi.generate(run.id, { frame, background }));
+  };
+  const uploadOwn = (frame: number, image: File) => void act("Couldn’t use your image", () => rotoscopeApi.upload(run.id, frame, image));
   const attempts = run.frames.reduce((sum, frame) => sum + frame.attempts.length, 0);
   const segment = `${run.start.toFixed(1)}–${run.seconds !== null ? (run.start + run.seconds).toFixed(1) : "end"} s`;
   // The unbroken approved prefix (what Flipbook can take) at whole seconds.
@@ -229,7 +265,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
         <HugeiconsIcon icon={Cancel01Icon} size={14} strokeWidth={1.75} />Stop
       </Button>
     </>
-  ) : run.phase === "ready" && ((!complete && run.total > 0) || redrawable || (complete && left > 0)) ? (
+  ) : run.phase === "ready" && run.total > 0 ? (
     <>
       {complete && left > 0 ? (
         <>
@@ -248,7 +284,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
         </>
       ) : null}
       {!complete && run.total > 0 ? (
-        <Button size="sm" variant="ai" disabled={acting} onClick={draw} title={started ? `Keeps frames 1–${(next ?? 1) - 1} and draws the rest.` : "Draws one image per frame, in order."}>
+        <Button size="sm" variant="ai" disabled={acting} onClick={() => void draw()} title={started ? `Keeps the approved frames and draws the rest, once each; asks first whether with the video’s background or transparent.` : "Draws each frame once, as the test page does; asks first whether with the video’s background or transparent."}>
           {drawFace(started ? `Resume from frame ${next}` : `Draw ${run.total} frames`)}
         </Button>
       ) : null}
@@ -257,11 +293,22 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
           size="sm"
           variant="outline"
           disabled={acting}
-          onClick={() => redraw(selected.index)}
-          title={`Draws frame ${selected.index} once more; first Muse Spark reads why its last drawing failed and your note. Its current drawing stays unless the new one passes every check.`}
+          onClick={() => void redraw(selected.index)}
+          title={`Draws frame ${selected.index} once more, as the test page does, and keeps the new drawing; asks first whether with the video’s background or transparent.`}
         >
           <HugeiconsIcon icon={Refresh01Icon} size={14} strokeWidth={1.75} />Redraw frame {selected.index}
         </Button>
+      ) : null}
+      <ToggleChip size="sm" selected={marking} onClick={() => setMarking((on) => !on)} title="Pick the frames to redraw together: click each one (or ⌘/Ctrl-click in any mode).">
+        <HugeiconsIcon icon={Tick02Icon} size={14} strokeWidth={1.75} />{marking ? "Picking frames" : "Pick frames"}
+      </ToggleChip>
+      {marked.size ? (
+        <>
+          <Button size="sm" variant="ai" disabled={acting} onClick={() => void redrawPicked()} title={`Draws frames ${[...marked].sort((a, b) => a - b).join(", ")} once more, as the test page does; asks first whether with the video’s background or transparent.`}>
+            <HugeiconsIcon icon={Refresh01Icon} size={14} strokeWidth={1.75} />Redraw {marked.size} frame{marked.size === 1 ? "" : "s"}
+          </Button>
+          <Button size="sm" variant="ghost" disabled={acting} onClick={() => setMarked(new Set())}>Clear</Button>
+        </>
       ) : null}
     </>
   ) : null;
@@ -360,6 +407,9 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
             onToggleDock={() => setDockOpen((open) => !open)}
             viewing={dockTab === "frame" ? viewing : null}
             actions={canvasActions}
+            marked={marked}
+            marking={marking}
+            onMark={toggleMark}
             onPickAttempt={(frame, attempt) => {
               setPicked(frame);
               setAttemptPick({ frame, attempt });
@@ -376,6 +426,8 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
               canApprove={run.phase === "ready" && (selected.status === "approved" || selected.status === "failed" || selected.index === next)}
               busy={acting}
               onApprove={(attempt) => void act("Couldn’t approve", () => rotoscopeApi.approve(run.id, selected.index, attempt))}
+              onRedraw={redrawable ? () => void redraw(selected.index) : undefined}
+              onUpload={run.phase === "ready" ? (image) => uploadOwn(selected.index, image) : undefined}
               onClose={() => setComparing(false)}
             />
           ) : null}
@@ -414,9 +466,16 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
                       source: rotoscopeUrls.media(run.id, "source", selected.index),
                       drawing: selected.status === "approved" ? `${rotoscopeUrls.media(run.id, "frame", selected.index)}&v=${selected.approvedAttempt}`
                         : selected.attempts.length ? rotoscopeUrls.media(run.id, "attempt", selected.index, selected.attempts.at(-1)!.attempt) : null,
+                      direct: isDirect(selected, selected.status === "approved" ? selected.approvedAttempt : selected.attempts.at(-1)?.attempt ?? null),
                     } : null}
                     onSelect={pick}
                     strip={null}
+                    backdrops={{
+                      plate: run.backdrops.plate ? rotoscopeUrls.media(run.id, "plate") : null,
+                      scenery: run.backdrops.scenery ? rotoscopeUrls.media(run.id, "scenery") : null,
+                    }}
+                    framing={run.framing}
+                    onMakeBackdrop={(kind) => act(kind === "plate" ? "Couldn’t clone the background" : "Couldn’t generate the background", () => rotoscopeApi.backdrop(run.id, kind))}
                   />
                   <CompareExport run={run} frames={playable.length} />
                   </>
@@ -437,6 +496,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
                       onCorrect={(attempt, note) => correct(selected.index, attempt, note)}
                       onFollow={() => setPicked(null)}
                       onRedraw={() => redraw(selected.index)}
+                      onUpload={run.phase === "ready" ? (image) => uploadOwn(selected.index, image) : undefined}
                       onTestPrompt={(prompt) => void act("Couldn’t draw with your prompt", () => rotoscopeApi.generate(run.id, { frame: selected.index, prompt, attempts: 1, renderer: "muse" }))}
                     />
                   ) : run.phase === "preparing" ? <InspectorSkeleton /> : (
@@ -492,7 +552,7 @@ export function RotoscopeEditor({ run, onChange }: { readonly run: RotoscopeRun;
                       {run.phase === "ready" && !complete && run.total ? (
                         <div className={fb.cta}>
                           <p className="text-xs text-muted-foreground">{!started ? `Next: ${run.total} drawings, one per frame, in order.` : next === 1 ? "Frame 1 gets fresh attempts; its rejected ones stay in its history." : next === 2 ? "Frame 1 stays as it is; drawing continues at frame 2." : `Frames 1–${(next ?? 1) - 1} stay as they are; drawing continues at frame ${next}.`}</p>
-                          <Button className="w-full" variant="ai" disabled={acting} onClick={draw}>
+                          <Button className="w-full" variant="ai" disabled={acting} onClick={() => void draw()}>
                             {drawFace(started ? `Resume from frame ${next}` : `Draw ${run.total} frames`)}
                           </Button>
                         </div>
@@ -594,7 +654,7 @@ function DrawingFx({ ghost, image, onRevealed }: { readonly ghost: string; reado
   );
 }
 
-function Inspector({ run, frame, requested, onViewing, onCompare, following, canApprove, canCorrect, busy, onApprove, onCorrect, onFollow, onRedraw, onTestPrompt }: {
+function Inspector({ run, frame, requested, onViewing, onCompare, following, canApprove, canCorrect, busy, onApprove, onCorrect, onFollow, onRedraw, onUpload, onTestPrompt }: {
   readonly run: RotoscopeRun;
   readonly frame: RotoscopeFrame;
   /** An attempt chosen elsewhere (the canvas tray) to show first. */
@@ -610,6 +670,8 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
   readonly onCorrect: (attempt: number, note: { comment: string; marks: Blob; redraw: boolean }) => void;
   readonly onFollow: () => void;
   readonly onRedraw: () => void;
+  /** Puts the person's own image on the frame; absent while the run is busy. */
+  readonly onUpload?: (image: File) => void;
   /** Draws this frame once with a prompt from the debug panel. */
   readonly onTestPrompt: (prompt: string) => void;
 }) {
@@ -677,6 +739,7 @@ function Inspector({ run, frame, requested, onViewing, onCompare, following, can
           <Button type="button" size="sm" variant="ghost" onClick={onCompare} title="Video, pose guide and drawing side by side">
             <HugeiconsIcon icon={LayoutThreeColumnIcon} size={14} strokeWidth={1.75} />Compare
           </Button>
+          {onUpload ? <OwnImageButton frame={frame.index} replacing={frame.attempts.length > 0} disabled={busy} onPick={onUpload} /> : null}
           <Badge tone={state === "approved" ? "success" : state === "drawing" ? "info" : state === "halted" || state === "rejected" ? "warning" : "neutral"}>{state === "drawing" ? "Live" : STATE_LABEL[state]}</Badge>
         </div>
       </div>

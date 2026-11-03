@@ -6,7 +6,7 @@ import { listZip } from "../animation/zip";
 import { frameName } from "./extract";
 import { runsRoot } from "./pipeline";
 import { writeManifest, type Manifest } from "./run-state";
-import { approveAttempt, deleteRun, exportZip, getMapping, getRun, importConsoleRun, listRuns, mediaFile, startGeneration } from "./service";
+import { approveAttempt, deleteRun, uploadAttempt, exportZip, getMapping, getRun, importConsoleRun, listRuns, mediaFile, startGeneration } from "./service";
 
 let root: string;
 let previous: string | undefined;
@@ -85,6 +85,20 @@ describe("rotoscope service", () => {
     const zip = await exportZip(run.id, "owner-a");
     expect(zip.name).toBe("test-1s_9fps.zip");
     expect(listZip(zip.data).map((entry) => entry.name)).toEqual([frameName(1), frameName(2)]);
+  });
+
+  it("keeps the person's own image as a new approved attempt, fitted to the canvas", async () => {
+    const run = await importConsoleRun(await consoleRun(), "owner-a");
+    const sharp = (await import("sharp")).default;
+    const image = await sharp({ create: { width: 300, height: 300, channels: 4, background: { r: 255, g: 0, b: 0, alpha: 1 } } }).png().toBuffer();
+    const updated = await uploadAttempt(run.id, "owner-a", 2, image);
+    expect(updated).toMatchObject({ approved: 2, halted: null });
+    expect(updated.frames[1]).toMatchObject({ status: "approved", manual: true, approvedAttempt: 2 });
+    expect(updated.frames[1].attempts.at(-1)?.checks[0]?.name).toBe("uploaded");
+    const meta = await sharp(await mediaFile(run.id, "owner-a", "frame", 2)).metadata();
+    expect([meta.width, meta.height, meta.hasAlpha]).toEqual([1024, 1536, true]);
+    await expect(uploadAttempt(run.id, "owner-a", 2, Buffer.from("not an image"))).rejects.toThrow(/couldn’t read/);
+    await expect(uploadAttempt(run.id, "owner-b", 2, image)).rejects.toThrow(/doesn’t exist/);
   });
 
   it("refuses to draw a complete run and deletes it", async () => {

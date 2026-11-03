@@ -75,6 +75,8 @@ const CHOICE_LABEL: Partial<Record<PlanEffect, string>> = {
   selective_color: "Color",
   background_blur: "Blur",
   spotlight: "Spotlight",
+  erase: "Remove",
+  pixelate: "Pixelate",
 };
 
 /** Switching the effect inside its family starts from that effect's defaults, keeping the finish. */
@@ -330,6 +332,23 @@ export function EffectControls({
         </>
       ) : null}
 
+      {value.effect === "pixelate" ? (
+        <>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-xs text-muted-foreground">Pixelate</span>
+            <SlidingTabs
+              tabs={[
+                { id: "subject", label: "Subject" },
+                { id: "background", label: "Background" },
+              ]}
+              value={value.region}
+              onValueChange={(id) => onChange({ ...value, region: id as typeof value.region })}
+            />
+          </div>
+          <Range label="Block size" value={value.blockSize} min={4} max={48} step={2} format={(px) => `${px} px`} onChange={(blockSize) => onChange({ ...value, blockSize })} />
+        </>
+      ) : null}
+
       {value.effect === "time_freeze_echo" && temporalEffectsEnabled() ? (
         <>
           <Range label="Echoes" value={value.echo.count} min={TEMPORAL_BOUNDS.echoCount[0]} max={TEMPORAL_BOUNDS.echoCount[1]} step={1} format={String} onChange={(count) => onChange({ ...value, echo: { ...value.echo, count } })} />
@@ -357,7 +376,7 @@ export function EffectControls({
           <Range label="Edge softness" value={value.feather} min={0} max={4} step={0.5} format={(px) => `${px} px`} onChange={(feather) => onChange({ ...value, feather })} />
           <div className="h-px bg-border" />
           <p className="-mb-1 text-xs font-medium text-foreground">Finish</p>
-          <FinishControls value={value.finish} onChange={(finish) => onChange({ ...value, finish })} subjectLight={value.effect !== "erase"} />
+          <FinishControls value={value.finish} onChange={(finish) => onChange({ ...value, finish })} subjectLight={value.effect !== "erase" && !(value.effect === "pixelate" && value.region === "subject")} />
           <div className="h-px bg-border" />
           <p className="-mb-1 text-xs font-medium text-foreground">Format and titles</p>
           {delivery}

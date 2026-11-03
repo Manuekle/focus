@@ -19,7 +19,7 @@ import { recordUsage } from "./usage";
 
 import { FINISH_JSON_SCHEMA, nullable } from "./finish-schema";
 
-const V1_EFFECTS = ["selective_color", "background_blur", "spotlight", "break_frame", "motion_echo", "erase"] as const;
+const V1_EFFECTS = ["selective_color", "background_blur", "spotlight", "break_frame", "motion_echo", "erase", "pixelate"] as const;
 
 /**
  * Strict-mode JSON schema: every key required, optional values are nullable.
@@ -48,11 +48,13 @@ export function planJsonSchema(temporal: boolean) {
       parameters: {
         type: "object",
         additionalProperties: false,
-        required: ["intensity", "trailCount", "trailSpacingMs", "finish", ...(temporal ? TEMPORAL_KEYS : [])],
+        required: ["intensity", "trailCount", "trailSpacingMs", "region", "blockSize", "finish", ...(temporal ? TEMPORAL_KEYS : [])],
         properties: {
           intensity: nullable({ type: "number" }),
           trailCount: nullable({ type: "integer" }),
           trailSpacingMs: nullable({ type: "integer" }),
+          region: nullable({ type: "string", enum: ["subject", "background"] }),
+          blockSize: nullable({ type: "integer" }),
           finish: nullable(FINISH_JSON_SCHEMA),
           ...(temporal
             ? {
@@ -84,13 +86,14 @@ Supported effects (and only these):
 - spotlight: the background goes dark around a soft pool of light that follows the target ("spotlight", "light only the singer", "dramatic darkness").
 - break_frame: the target appears to step out of an inner frame, with depth.
 - motion_echo: trailing silhouettes of the moving target.
-- erase: the target is removed from the video and the background fills in where it was ("remove the text", "erase the subtitles", "delete the watermark", "remove the logo", "take out the person in the background").${temporal ? TEMPORAL_EFFECT_LINE : ""}
+- erase: the target is removed from the video and the background fills in where it was ("remove the text", "erase the subtitles", "delete the watermark", "remove the logo", "take out the person in the background").
+- pixelate: big square pixels hide the target ("pixelate his face", "censor the license plate", "blur out the logo like TV", "mosaic") or, with region "background", everything but the target ("pixelate the background", "8-bit background").${temporal ? TEMPORAL_EFFECT_LINE : ""}
 
 The user picked an effect family in the interface. Use it as the default:
 - "reality-shift" → selective_color, background_blur or spotlight (choose by the wording; default selective_color).
 - "break-the-frame" → break_frame.
 - "motion-echo" → motion_echo.
-- "erase" → erase.${temporal ? '\n- "time-freeze" → time_freeze_echo.' : ""}
+- "erase" → erase, or pixelate when the instruction asks to pixelate, censor or mosaic instead of removing.${temporal ? '\n- "time-freeze" → time_freeze_echo.' : ""}
 When the instruction explicitly asks for an effect of another family (e.g. "blur the background" while "motion-echo" is picked), follow the instruction and return that effect. Never set supported=false because of the family.
 
 target.concept is a segmentation prompt: ONE short English noun phrase naming the visible subject (1–4 words, e.g. "skateboarder", "red car", "dog", "woman in white dress"). Never a sentence, never a command, no punctuation. Translate to English if the instruction is in another language.
@@ -100,9 +103,9 @@ target.selection:
 - "several" when the user wants subjects of different kinds ("the girl and her dog"): concept names the main one; target.description tells the user, in English, to click the other subject in the video to add it.
 - "single" otherwise.
 target.description: a short note (in English) to tell instances apart, or null.
-For erase of on-screen writing (text, captions, subtitles, titles, lower thirds, any words) use the concept "caption" and selection "all": SAM finds overlaid writing as "caption", not as "text". For a logo or watermark use "logo". If some writing is missed, the user clicks it in the video to add it.
+To pixelate a face use the concept "face"; for a license plate use "license plate". For erase or pixelate of on-screen writing (text, captions, subtitles, titles, lower thirds, any words) use the concept "caption" and selection "all": SAM finds overlaid writing as "caption", not as "text". For a logo or watermark use "logo". If some writing is missed, the user clicks it in the video to add it.
 
-parameters: intensity 0–1 (default 0.8 when unspecified, or null; for spotlight it is how dark the background gets), trailCount 2–8 and trailSpacingMs 40–1000 only for motion_echo, otherwise null.${temporal ? TEMPORAL_PARAMETER_LINES : ""}
+parameters: intensity 0–1 (default 0.8 when unspecified, or null; for spotlight it is how dark the background gets), trailCount 2–8 and trailSpacingMs 40–1000 only for motion_echo, otherwise null. For pixelate only (otherwise null): region "subject" (default, hides the target) or "background"; blockSize 4–48 px only when the user describes the block size ("chunky", "big pixels" → 32, "fine" → 8).${temporal ? TEMPORAL_PARAMETER_LINES : ""}
 parameters.finish: optional finishing touches on top of the effect, only when the instruction asks for them, otherwise null. Each key null unless asked:
 - look: "cinematic" (teal-orange film), "noir" (contrasty black and white), "warm" (golden hour), "cool" (moonlight blue), "vintage" (faded film), "vivid" (punchy color), "natural" (no grade).
 - subject: "glow" (soft halo around the subject) or "outline" (clean stroke around its silhouette); accent: "white", "gold", "cyan", "magenta" or "lime"; accentStrength 0.2–1.
@@ -133,9 +136,9 @@ export function parsePlanOutput(text: string, options: { readonly temporal?: boo
   const clean = stripNulls(raw) as { parameters?: Record<string, unknown> } | null;
   // A finishing value slightly out of range is clamped, not a failed plan.
   if (clean?.parameters?.finish && typeof clean.parameters.finish === "object") clean.parameters.finish = clampFinish(clean.parameters.finish as FinishPatch);
-  // So are Time Freeze numbers: "ten copies" means the most there can be.
+  // So are whole-number knobs: "ten copies" or "huge pixels" mean the most there can be.
   if (clean?.parameters) {
-    for (const [key, [min, max]] of Object.entries(TEMPORAL_PLAN_BOUNDS)) {
+    for (const [key, [min, max]] of Object.entries(INTEGER_PLAN_BOUNDS)) {
       const value = clean.parameters[key];
       if (typeof value === "number" && Number.isFinite(value)) clean.parameters[key] = Math.round(Math.min(max, Math.max(min, value)));
     }
@@ -155,7 +158,7 @@ export function parsePlanOutput(text: string, options: { readonly temporal?: boo
   // with "all" every instance is used, otherwise the user picks on the video.
   const effect = plan.effect;
   const finish = plan.parameters.finish && Object.keys(plan.parameters.finish).length ? plan.parameters.finish : undefined;
-  const { intensity, trailCount, trailSpacingMs, triggerEvent, echoCount, echoSpacingMs, freezeDurationMs } = plan.parameters;
+  const { intensity, trailCount, trailSpacingMs, region, blockSize, triggerEvent, echoCount, echoSpacingMs, freezeDurationMs } = plan.parameters;
   return {
     ...plan,
     needsClarification: plan.needsClarification && plan.target.selection !== "all",
@@ -166,11 +169,14 @@ export function parsePlanOutput(text: string, options: { readonly temporal?: boo
         ? { intensity, trailCount, trailSpacingMs, finish }
         : effect === "time_freeze_echo"
           ? { intensity, triggerEvent, echoCount, echoSpacingMs, freezeDurationMs, finish }
-          : { intensity, finish },
+          : effect === "pixelate"
+            ? { region, blockSize, finish }
+            : { intensity, finish },
   };
 }
 
-const TEMPORAL_PLAN_BOUNDS = {
+const INTEGER_PLAN_BOUNDS = {
+  blockSize: [4, 48],
   echoCount: TEMPORAL_BOUNDS.echoCount,
   echoSpacingMs: TEMPORAL_BOUNDS.echoSpacingMs,
   freezeDurationMs: TEMPORAL_BOUNDS.freezeDurationMs,

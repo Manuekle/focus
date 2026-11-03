@@ -15,6 +15,7 @@ import {
   ArrowExpand01Icon,
   CenterFocusIcon,
   PanelRightOpenIcon,
+  Tick02Icon,
   ZoomInIcon,
   ZoomOutIcon,
 } from "@hugeicons/core-free-icons";
@@ -105,6 +106,9 @@ export function RotoscopeCanvas({
   actions,
   viewing,
   onPickAttempt,
+  marked,
+  marking = false,
+  onMark,
 }: {
   readonly run: RotoscopeRun;
   /** One-based frame index, or null before the run has frames. */
@@ -118,6 +122,11 @@ export function RotoscopeCanvas({
   readonly viewing: { readonly frame: number; readonly attempt: number | null } | null;
   /** An attempt chosen in the tray: the inspector shows it. */
   readonly onPickAttempt: (frame: number, attempt: number) => void;
+  /** The frames picked to redraw together. */
+  readonly marked?: ReadonlySet<number>;
+  /** Picking mode: a click picks or unpicks a frame instead of opening it. A ⌘/Ctrl/Shift-click picks in any mode. */
+  readonly marking?: boolean;
+  readonly onMark?: (index: number) => void;
 }) {
   const [moved, setMoved] = useState<Record<number, XY>>({});
   const [restored, setRestored] = useState(false);
@@ -611,6 +620,7 @@ export function RotoscopeCanvas({
                   type="button"
                   data-frame-index={frame.index}
                   data-selected={frame.index === selected}
+                  data-marked={marked?.has(frame.index) ?? false}
                   data-expanded={trayOpen && trayFrame === frame.index}
                   data-state={state}
                   data-lod={detailed ? "detail" : "block"}
@@ -620,7 +630,7 @@ export function RotoscopeCanvas({
                   tabIndex={frame.index === tabStop ? 0 : -1}
                   aria-pressed={frame.index === selected}
                   aria-expanded={trayOpen && trayFrame === frame.index}
-                  aria-label={`Frame ${frame.index}, ${STATE_LABEL[state]}${frame.manual ? ", approved by you" : ""}`}
+                  aria-label={`Frame ${frame.index}, ${STATE_LABEL[state]}${frame.manual ? ", approved by you" : ""}${marked?.has(frame.index) ? ", picked to redraw" : ""}`}
                   title={`Frame ${frame.index} · ${time(run, frame.index)} · ${STATE_LABEL[state]}`}
                   onPointerDown={(event) => startDrag(event, frame)}
                   onPointerMove={moveDrag}
@@ -629,6 +639,10 @@ export function RotoscopeCanvas({
                   onClick={(event) => {
                     if (movedRef.current) {
                       event.preventDefault();
+                      return;
+                    }
+                    if (onMark && (marking || event.metaKey || event.ctrlKey || event.shiftKey)) {
+                      onMark(frame.index);
                       return;
                     }
                     onSelect(frame.index);
@@ -655,6 +669,7 @@ export function RotoscopeCanvas({
                     )}
                     {state === "drawing" && live ? <span className={styles.liveFlag}>Attempt {live.tries}</span> : null}
                     <span className={styles.frameIndex} aria-hidden>{frame.index}</span>
+                    {marked?.has(frame.index) ? <span className={styles.markedFlag} aria-hidden><HugeiconsIcon icon={Tick02Icon} size={12} strokeWidth={2.25} /></span> : null}
                     <span className={styles.status} data-state={state} aria-hidden />
                   </span>
                 </button>

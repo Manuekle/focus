@@ -445,9 +445,10 @@ async function runJob(id: string, video: VideoAsset, request: EditRequest, key: 
   let segmentationId = filled?.id ?? conceptId;
   let tracking = filled ?? conceptTracking;
 
-  // Text removal: SAM's concept pass misses small writing, so Muse Spark boxes
-  // every overlay it sees and SAM tracks the ones not found yet.
-  if (plan.effect === "erase" && TEXT_ERASE_CONCEPTS.has(plan.target.concept)) {
+  // Text removal (or pixelation): SAM's concept pass misses small writing, so
+  // Muse Spark boxes every overlay it sees and SAM tracks the ones not found yet.
+  const hidesText = plan.effect === "erase" || (plan.effect === "pixelate" && plan.parameters.region !== "background");
+  if (hidesText && TEXT_ERASE_CONCEPTS.has(plan.target.concept)) {
     const more = await overlayTracking(id, video, tracking, segmentationId, signal).catch(() => null);
     if (signal.aborted) return;
     if (more) ({ tracking, segmentationId } = more);
@@ -784,7 +785,7 @@ export async function chatEdit(id: string, message: string): Promise<EditJob> {
     media: video.normalized,
     videoId: video.id,
   });
-  const next = turn.action === "adjust" ? applyParamsPatch(current, turn.patch) : null;
+  const next = turn.action === "adjust" ? applyParamsPatch(current, { ...turn.patch, duration: video.normalized.durationSeconds }) : null;
   const changes = next ? describeParamChanges(current, next) : [];
   const now = new Date().toISOString();
   const user: ChatMessage = { id: chatId(), role: "user", text: message, at: now };

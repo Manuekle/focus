@@ -60,3 +60,14 @@ describe("AI editor on Time Freeze", () => {
     expect(assistantInstructions(true)).toMatch(/drag the freeze marker/);
   });
 });
+
+describe("effect range turns", () => {
+  const turn = (range: unknown) => JSON.stringify({ reply: "Done.", action: "adjust", effect: null, settings: {}, finish: {}, range, newInstruction: null });
+
+  it("reads a part, the whole clip, or nothing", () => {
+    expect(parseAssistantOutput(turn({ whole: false, startSeconds: 3, endSeconds: 6 })).patch.range).toEqual({ start: 3, end: 6 });
+    expect(parseAssistantOutput(turn({ whole: true, startSeconds: null, endSeconds: null })).patch.range).toBeNull();
+    expect("range" in parseAssistantOutput(turn(null)).patch).toBe(false);
+    expect("range" in parseAssistantOutput(turn({ whole: false, startSeconds: 3, endSeconds: null })).patch).toBe(false);
+  });
+});

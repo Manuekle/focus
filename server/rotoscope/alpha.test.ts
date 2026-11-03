@@ -78,3 +78,26 @@ describe("keyBackground", () => {
     expect(keyBackground(noisy).background).toBe(KEY_COLOR);
   });
 });
+
+describe("checkAlpha", () => {
+  /** A cut-out figure whose arm reaches the canvas's left edge. */
+  function reachingLeft(): Rgba {
+    const data = Buffer.alloc(W * H * 4);
+    for (let y = 0; y < H; y++) for (let x = 0; x < W; x++) {
+      const inside = (x >= 60 && x < 140 && y >= 40 && y < 260) || (x < 60 && y >= 80 && y < 100);
+      data[(y * W + x) * 4 + 3] = inside ? 255 : 0;
+    }
+    return { data, width: W, height: H };
+  }
+
+  it("fails a figure cropped by the canvas edge", () => {
+    const check = checkAlpha(reachingLeft());
+    expect(check.passed).toBe(false);
+    expect(check.detail).toMatch(/touches the canvas edge/);
+  });
+
+  it("passes it when the pose guide itself reaches that edge (the video subject's hand at the frame's border)", () => {
+    expect(checkAlpha(reachingLeft(), ["left"]).passed).toBe(true);
+    expect(checkAlpha(reachingLeft(), ["right"]).passed).toBe(false);
+  });
+});

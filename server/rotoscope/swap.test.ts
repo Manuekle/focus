@@ -3,16 +3,17 @@ import { buildText, outfitItems, reconcileBuild, swapFramePrompt, validBuild, ty
 import { guardPrompt } from "./guardrails";
 
 const png = (n: number) => Buffer.from([n]);
-const base = { frame: png(1), character: png(2), description: "Keep the character exactly as drawn: navy bob, red cheongsam.", note: "The arm on the right of the image is raised.", correction: null, feedback: [] as string[] };
+const base = { frame: png(1), character: png(2), description: "Keep the character exactly as drawn: navy bob, red cheongsam.", correction: null, feedback: [] as string[] };
 
 describe("swapFramePrompt", () => {
-  it("edits the video frame into the character with this frame's own note and nothing else", () => {
+  it("edits the video frame into the character, the pose from the picture alone", () => {
     const { prompt, references } = swapFramePrompt(base);
     expect(references.map((reference) => reference.png)).toEqual([png(1), png(2)]);
     expect(references[0].role).toMatch(/^THE VIDEO FRAME to edit: the pose/);
     expect(references[1].role).toMatch(/^THE CHARACTER: the authority on identity, outfit and style/);
     expect(prompt).toMatch(/^Edit Image 1 into one frame of a 2D anime animation: replace the person with the character of Image 2\./);
-    expect(prompt).toContain(`POSE (as seen in Image 1, never mirrored): ${base.note}`);
+    expect(prompt).toContain("sides as seen, never mirrored");
+    expect(prompt).not.toContain("POSE");
     expect(prompt).not.toMatch(/previous|rejected|correction|mannequin|skeleton|grid|CONTINUITY|PRIORITIES|ART STYLE/i);
   });
 
@@ -49,11 +50,8 @@ describe("swapFramePrompt", () => {
     expect(retry).not.toContain("Image 3");
   });
 
-  it("carries a frame's own note, never another's", () => {
-    const [a, b] = [swapFramePrompt({ ...base, note: "Both hands on the head." }), swapFramePrompt({ ...base, note: "Arms out wide." })];
-    expect(a.prompt).toContain("Both hands on the head.");
-    expect(a.prompt).not.toContain("Arms out wide.");
-    expect(b.prompt).not.toContain("Both hands on the head.");
+  it("carries a pose note only when one is given (the lab's swap-note setting)", () => {
+    expect(swapFramePrompt({ ...base, note: "Both hands on the head." }).prompt).toContain("POSE (as seen in Image 1, never mirrored): Both hands on the head.");
   });
 
   it("names what was wrong only on a retry, and adds the pencil marks as Image 3", () => {
@@ -70,9 +68,18 @@ describe("swapFramePrompt", () => {
     expect(prompt).not.toMatch(/cells|78 %/);
   });
 
-  it("leaves the pose note and the items out when there is nothing to say", () => {
-    const { prompt } = swapFramePrompt({ ...base, description: "", note: "" });
-    expect(prompt).toContain("POSE (as seen in Image 1, never mirrored).");
+  it("names the face close-up after the marked drawing, so corrections keep Image 3", () => {
+    const alone = swapFramePrompt({ ...base, face: png(7) });
+    expect(alone.references.at(-1)?.role).toMatch(/^THE FACE/);
+    expect(alone.prompt).toContain("FACE: draw exactly the face of Image 3");
+    const marked = swapFramePrompt({ ...base, face: png(7), correction: { marked: png(3), comment: "Raise the hand." } });
+    expect(marked.references.map((reference) => reference.png)).toEqual([png(1), png(2), png(3), png(7)]);
+    expect(marked.prompt).toContain("FACE: draw exactly the face of Image 4");
+    expect(swapFramePrompt(base).prompt).not.toContain("FACE:");
+  });
+
+  it("leaves the items out when there is nothing to say", () => {
+    const { prompt } = swapFramePrompt({ ...base, description: "" });
     expect(prompt).toContain("CHARACTER (copy from Image 2, item by item). Keep");
   });
 });

@@ -12,7 +12,7 @@ import { Switch } from "../../components/ui/switch";
 import { ToggleChip } from "../../components/ui/toggle-chip";
 import { formatBytes } from "../../shared/media";
 import type { FlowStepId } from "../../shared/pipeline";
-import type { RenderParams, RenderResult } from "../../shared/render";
+import { MIN_RANGE_SECONDS, RANGE_EFFECTS, applyParamsPatch, type RenderParams, type RenderResult } from "../../shared/render";
 import { ACTIVE_JOB_STATUSES, SuggestionsSchema, type EditJob, type EffectId, type Suggestions, type VideoAsset } from "../../shared/schemas";
 import { frameAt, hitTest } from "../../shared/tracking";
 import { Composer } from "./composer";
@@ -29,6 +29,10 @@ import { flipbookEnabled, rotoscopeEnabled, temporalEffectsEnabled } from "../..
 import { CLIP_DESTINATION, fetchClip, stashClip, type ClipDestination } from "./clip-handoff";
 import { prefersReducedMotion, useReducedMotion } from "../../lib/hooks/use-reduced-motion";
 import { MediaTimeline, type TimelineLane } from "./media-timeline";
+import { CutTools, useCutEditor } from "./cut-tools";
+import { timecode } from "../flipbook/frame-timeline";
+import { saveDraft } from "./draft";
+import { rightsStore } from "../../shared/rights-store";
 import { ScrollArea } from "../../components/ui/scroll-area";
 import { RightsConfirmation, useRightsConfirmation } from "../../components/ui/rights-confirmation";
 import { RIGHTS_COPY, rightsAssetKey } from "../../shared/rights";
@@ -172,8 +176,26 @@ export function EditorView({
 
   // Tied to this clip: a different upload starts unconfirmed. The server checks again.
   const rights = useRightsConfirmation(rightsAssetKey(["edit", video.id]));
+  // Before the first edit the full page cuts the clip on its timeline. A
+  // cut becomes a new clip: the editor reopens on it, with the same
+  // instruction, the rights answer carried over, and the edit started when
+  // Generate is what applied it.
+  const cutEditor = useCutEditor({
+    video,
+    media,
+    enabled: page && !job,
+    onCut: (clip, generate) => {
+      if (rights.confirmed) {
+        const key = rightsAssetKey(["edit", clip.id]);
+        if (key) rightsStore.setConfirmed(key, true);
+      }
+      saveDraft({ videoId: clip.id, prompt, effect, autostart: generate });
+      router.push(`/editor?v=${clip.id}`);
+    },
+  });
   const submit = () => {
     if (!rights.guard()) return Promise.resolve();
+    if (page && !job && !cutEditor.whole) return cutEditor.applyCut(true);
     return run(() => jobApi.create({ videoId: video.id, effect, prompt }));
   };
 
@@ -270,15 +292,49 @@ export function EditorView({
     }
     lanes.push({ id: "masks", label: "Masks", spans: spans.map((span) => ({ ...span, tone: "masks" as const })) });
   }
+  // The effect range: on a finished edit whose effect keeps the clip's clock,
+  // the effect lane's edges (or I and O at the playhead) set where the effect
+  // runs. It changes the draft; Apply renders it, like any other setting.
+  const clipSeconds = video.normalized.durationSeconds;
+  const rangeDraft = page && result && draft && showingRender && !busy && RANGE_EFFECTS.has(draft.effect) && draft.effect === result.render.params.effect ? draft : null;
+  const effectRange = rangeDraft ? rangeDraft.delivery.range ?? { start: 0, end: clipSeconds } : null;
+  const setRange = (start: number, end: number) => setDraft((current) => (current ? applyParamsPatch(current, { range: { start, end }, duration: clipSeconds }) : current));
+  const setRangeEdge = (edge: "start" | "end", time: number) => {
+    if (!effectRange) return;
+    if (edge === "start") setRange(Math.max(0, Math.min(time, effectRange.end - MIN_RANGE_SECONDS)), effectRange.end);
+    else setRange(effectRange.start, Math.min(clipSeconds, Math.max(time, effectRange.start + MIN_RANGE_SECONDS)));
+  };
+  const setRangeEdgeRef = useRef(setRangeEdge);
+  setRangeEdgeRef.current = setRangeEdge;
+  const rangeKeys = Boolean(effectRange);
+  useEffect(() => {
+    if (!rangeKeys) return;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || !media) return;
+      if (event.target instanceof Element && event.target.closest('input, textarea, select, [contenteditable="true"], [role="slider"], [role="textbox"]')) return;
+      const key = event.key.toLowerCase();
+      if (key !== "i" && key !== "o") return;
+      event.preventDefault();
+      setRangeEdgeRef.current(key === "i" ? "start" : "end", media.currentTime);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [rangeKeys, media]);
+  const rangeDirty = Boolean(rangeDraft && result && JSON.stringify(rangeDraft.delivery.range) !== JSON.stringify(result.render.params.delivery.range));
+
   if (showingRender && stageRender) {
     const freeze = stageRender.temporal;
+    const label = PLAN_EFFECT_LABEL[stageRender.params.effect];
     lanes.push({
       id: "effect",
       label: "Effect",
       spans: [
-        { start: 0, end: stageRender.durationSeconds, tone: "effect", label: PLAN_EFFECT_LABEL[stageRender.params.effect] },
+        effectRange
+          ? { start: effectRange.start, end: effectRange.end, tone: "effect", label }
+          : { start: 0, end: stageRender.durationSeconds, tone: "effect", label },
         ...(freeze ? [{ start: freeze.freezeStart / stageRender.fps, end: (freeze.freezeStart + freeze.freezeFrames) / stageRender.fps, tone: "freeze" as const, label: "Freeze" }] : []),
       ],
+      ...(effectRange ? { resize: { fps, onEdge: setRangeEdge } } : {}),
     });
   } else if (editingMoment && temporalDraft?.trigger.timestampMs !== undefined) {
     lanes.push({ id: "freeze", label: "Freeze point", spans: [], markers: [temporalDraft.trigger.timestampMs / 1000] });
@@ -483,7 +539,7 @@ export function EditorView({
               onSubmit={() => void submit()}
               canSubmit={rights.confirmed}
               blockedReason={rights.confirmed ? undefined : RIGHTS_COPY.error}
-              busy={busy}
+              busy={busy || cutEditor.applying}
               suggestions={clipSuggestions}
               suggestionsLoading={suggestionsLoading}
               onQuickEdit={(quickEffect, quickPrompt) => {
@@ -498,6 +554,7 @@ export function EditorView({
       </motion.div>
 
       {failure ? <EditorNotice title="Action couldn’t be completed" description={failure} /> : null}
+      {cutEditor.failure ? <EditorNotice title="Clip couldn’t be cut" description={cutEditor.failure} /> : null}
       {pollError ? <EditorNotice title="Connection interrupted" description={pollError} /> : null}
     </>
   );
@@ -542,6 +599,16 @@ export function EditorView({
           film={showingRender && stageRender ? { src: stageRender.urls.video, name: "Edited" } : { src: video.urls.preview, name: video.originalName }}
           lanes={lanes}
           audio={showingRender && stageRender ? stageRender.hasAudio : video.normalized.hasAudio}
+          cut={cutEditor.timeline}
+          tools={cutEditor.timeline ? <CutTools editor={cutEditor} duration={video.normalized.durationSeconds} originalId={video.cutFrom?.videoId} onOriginal={(id) => router.push(`/editor?v=${id}`)} /> : effectRange ? (
+            <>
+              <span className="px-1 text-xs tabular-nums text-muted-foreground" title="Drag the effect’s edges, or press I and O at the playhead">
+                Effect {timecode(effectRange.start)}–{timecode(effectRange.end)}
+              </span>
+              {rangeDraft?.delivery.range ? <Button size="xs" variant="ghost" onClick={() => setDraft((current) => (current ? applyParamsPatch(current, { range: null, duration: clipSeconds }) : current))}>Whole clip</Button> : null}
+              {rangeDirty ? <Button size="xs" variant="secondary" onClick={applyDraft} disabled={busy}>Apply</Button> : null}
+            </>
+          ) : undefined}
         />
         {mobileDownload}
       </section>

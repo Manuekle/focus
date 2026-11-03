@@ -27,8 +27,8 @@ export type Deliverer = {
   readonly height: number;
   /** True when the crop wants the subject's mask to follow it. */
   readonly follows: boolean;
-  /** Crops one frame (and the subject mask in the same coordinates). */
-  crop(rgba: Buffer, alpha: Uint8Array | null): { rgba: Buffer; alpha: Uint8Array | null };
+  /** Crops one frame (and the subject mask, and optionally the original frame, in the same window). */
+  crop(rgba: Buffer, alpha: Uint8Array | null, original?: Buffer): { rgba: Buffer; alpha: Uint8Array | null; original?: Buffer };
   /** Draws the titles that are on screen at this output frame, in place. */
   titles(index: number, rgba: Buffer): Buffer;
 };
@@ -56,8 +56,8 @@ export async function createDeliverer(source: { width: number; height: number; f
     width: out.width,
     height: out.height,
     follows,
-    crop(rgba, alpha) {
-      if (!crops) return { rgba, alpha };
+    crop(rgba, alpha, original) {
+      if (!crops) return { rgba, alpha, original };
       if (follows && alpha) {
         const box = maskCenter(alpha, source.width, source.height);
         if (box) {
@@ -67,11 +67,14 @@ export async function createDeliverer(source: { width: number; height: number; f
       }
       const left = free.x === 0 ? 0 : clamp(Math.round(centerX - out.width / 2), 0, free.x);
       const top = free.y === 0 ? 0 : clamp(Math.round(centerY - out.height / 2), 0, free.y);
-      const cropped = Buffer.allocUnsafe(out.width * out.height * 4);
-      for (let y = 0; y < out.height; y++) {
-        const from = ((top + y) * source.width + left) * 4;
-        rgba.copy(cropped, y * out.width * 4, from, from + out.width * 4);
-      }
+      const windowOf = (frame: Buffer) => {
+        const cropped = Buffer.allocUnsafe(out.width * out.height * 4);
+        for (let y = 0; y < out.height; y++) {
+          const from = ((top + y) * source.width + left) * 4;
+          frame.copy(cropped, y * out.width * 4, from, from + out.width * 4);
+        }
+        return cropped;
+      };
       let croppedAlpha: Uint8Array | null = null;
       if (alpha) {
         croppedAlpha = new Uint8Array(out.width * out.height);
@@ -80,7 +83,7 @@ export async function createDeliverer(source: { width: number; height: number; f
           croppedAlpha.set(alpha.subarray(from, from + out.width), y * out.width);
         }
       }
-      return { rgba: cropped, alpha: croppedAlpha };
+      return { rgba: windowOf(rgba), alpha: croppedAlpha, original: original && windowOf(original) };
     },
     titles(index, rgba) {
       if (!prepared.length) return rgba;

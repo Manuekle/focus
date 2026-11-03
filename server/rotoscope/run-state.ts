@@ -163,7 +163,7 @@ export async function verifyApproved(dir: string, manifest: Manifest): Promise<v
   }
 }
 
-async function approve(dir: string, frame: FrameState, attempt: number, png: Buffer, manual = false): Promise<void> {
+export async function approve(dir: string, frame: FrameState, attempt: number, png: Buffer, manual = false): Promise<void> {
   const file = `frames/${frameName(frame.index)}`;
   await mkdir(path.join(dir, "frames"), { recursive: true });
   await writeFile(path.join(dir, file), png);
@@ -337,6 +337,33 @@ export async function approveManually(dir: string, index: number, attempt: numbe
     await approve(dir, target, attempt, await readFile(path.join(dir, record.file)), true);
     if (manifest.halted?.frame === index) manifest.halted = null;
     await writeManifest(dir, manifest);
+  } finally {
+    await release();
+  }
+}
+
+/** The check an attempt carries when it is the person's own picture, not a drawing the run made. */
+export const UPLOADED_CHECK = "uploaded";
+
+/**
+ * The person's own picture for a frame (one they drew or generated elsewhere),
+ * kept as the frame's next attempt and approved at once, whatever the frame's
+ * state. Returns the attempt's number.
+ */
+export async function addOwnAttempt(dir: string, index: number, png: Buffer): Promise<number> {
+  const release = await acquireLock(dir);
+  try {
+    const manifest = await readManifest(dir);
+    const frame = manifest.frames.find((entry) => entry.index === index);
+    if (!frame) throw new Error(`frame ${index} doesn't exist`);
+    const attempt = frame.attempts.reduce((top, entry) => Math.max(top, entry.attempt), 0) + 1;
+    await mkdir(path.join(dir, "attempts"), { recursive: true });
+    await writeFile(path.join(dir, attemptFile(index, attempt)), png);
+    frame.attempts.push({ attempt, at: new Date().toISOString(), file: attemptFile(index, attempt), passed: true, checks: [{ name: UPLOADED_CHECK, passed: true, detail: "your own picture, not checked" }] });
+    await approve(dir, frame, attempt, png, true);
+    if (manifest.halted?.frame === index) manifest.halted = null;
+    await writeManifest(dir, manifest);
+    return attempt;
   } finally {
     await release();
   }

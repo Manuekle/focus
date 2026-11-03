@@ -70,6 +70,21 @@ describe("checkProportions", () => {
     expect(check.feedback).toMatch(/upper arm on the LEFT of the image is 41 % longer than the character's own: even fully extended it measures at most 1.20 cells/);
   });
 
+  it("measures against the character's torso when the guide's is longer (the video subject leaning)", () => {
+    // The guide's torso is the subject's, 90 px longer: hips and legs lower; the drawing keeps the character's torso and limbs.
+    const upright = standing();
+    const leaning = { ...upright, keypoints: upright.keypoints.map(([x, y], i) => (i >= 11 ? [x, y! + 90] as const : [x, y] as const)) };
+    expect(checkProportions(bodySpec(leaning, marks, 140)!, standing(), marks, marks).passed).toBe(false);
+    expect(checkProportions(bodySpec(leaning, marks, 140, undefined, undefined, 300)!, standing(), marks, marks).passed).toBe(true);
+  });
+
+  it("names the canvas edges the guide reaches", () => {
+    const upright = standing();
+    const reaching = { ...upright, keypoints: upright.keypoints.map((point, i) => (i === 10 ? [12, 760] as const : point)) };
+    expect(bodySpec(reaching, marks, 140)!.reaches).toEqual(["left"]);
+    expect(bodySpec(standing(), marks, 140)!.reaches).toBeUndefined();
+  });
+
   it("measures against the drawing's own size (its torso), whatever size it came out", () => {
     const half = onCanvas(standing(), { scale: 0.5, x: 0, y: 0 });
     expect(checkProportions(spec, half, { head: 100, feet: 620, center: 256 }, marks).passed).toBe(true);

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
+import { z } from "zod";
 import { ApiErrorBodySchema } from "../../shared/schemas";
-import { BatchSchema, CompareResultSchema, FramePromptSchema, FrameTraceSchema, MappingViewSchema, PromptAnalysisSchema, RotoscopeFlipbookSchema, RotoscopeRunSchema, RotoscopeRunSummarySchema, rotoscopeUrls, type CharacterMeasures, type CompareOptions, type MappingJoint, type Renderer, type RotoscopeBatch, type RotoscopeRun, type RotoscopeRunSummary } from "../../shared/rotoscope";
+import { BatchSchema, CompareResultSchema, FramePromptSchema, FrameTraceSchema, MappingViewSchema, PromptAnalysisSchema, RotoscopeFlipbookSchema, RotoscopeRunSchema, RotoscopeRunSummarySchema, rotoscopeUrls, type BackdropKind, type CharacterMeasures, type DrawBackground, type CompareOptions, type MappingJoint, type Renderer, type RotoscopeBatch, type RotoscopeRun, type RotoscopeRunSummary } from "../../shared/rotoscope";
 import { discoverRotoscopeRuns, observeRotoscope } from "../_activity/activity-adapters";
 import { getActivityVersion } from "../_activity/activity-store";
 import { rightsHeaders } from "../../shared/rights";
@@ -36,6 +37,7 @@ async function call<T>(url: string, init: RequestInit | undefined, parse: (value
 }
 
 const parseRun = (value: unknown) => RotoscopeRunSchema.parse(value);
+const TestDrawingSchema = z.object({ image: z.string().startsWith("data:image/png;base64,"), prompt: z.string() });
 const parseRunList = (value: unknown) => RotoscopeRunSummarySchema.array().parse(value);
 const parseBatch = (value: unknown) => BatchSchema.parse(value);
 const post = (body?: unknown): RequestInit => (body === undefined ? { method: "POST" } : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
@@ -43,7 +45,7 @@ const post = (body?: unknown): RequestInit => (body === undefined ? { method: "P
 export const rotoscopeApi = {
   list: () => call("/api/rotoscope/runs", undefined, parseRunList),
   get: (id: string) => call(`/api/rotoscope/runs/${id}`, undefined, parseRun),
-  generate: (id: string, options: { dual?: boolean; frame?: number; renderer?: Renderer; prompt?: string; attempts?: number } = {}) => call(`/api/rotoscope/runs/${id}/generate`, post(options), parseRun),
+  generate: (id: string, options: { dual?: boolean; frame?: number; renderer?: Renderer; prompt?: string; attempts?: number; background?: DrawBackground; redraw?: readonly number[] } = {}) => call(`/api/rotoscope/runs/${id}/generate`, post(options), parseRun),
   rename: (id: string, name: string) => call(`/api/rotoscope/runs/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }) }, parseRun),
   /** The character's height and weight for the next drawings (a refit places them at the new height ratio). */
   measure: (id: string, measures: CharacterMeasures) => call(`/api/rotoscope/runs/${id}`, { method: "PATCH", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ measures }) }, parseRun),
@@ -57,7 +59,18 @@ export const rotoscopeApi = {
   /** Every idle run of the batch draws its first frame once more. */
   drawBatch: (id: string) => call(`${rotoscopeUrls.batch(id)}/draw`, post(), parseBatch),
   stop: (id: string) => call(`/api/rotoscope/runs/${id}/stop`, post(), parseRun),
+  /** The prompt test page: a frame and a character drawn once (one Muse Image picture); nothing kept. */
+  test: (form: FormData) => call("/api/rotoscope/test", { method: "POST", body: form }, (value) => TestDrawingSchema.parse(value)),
+  /** Draws a preview background (one Muse Image picture): the video's room cloned without the person, or redrawn in the character's style. */
+  backdrop: (id: string, kind: BackdropKind) => call(rotoscopeUrls.backdrop(id), post({ kind }), parseRun),
   approve: (id: string, frame: number, attempt: number) => call(`/api/rotoscope/runs/${id}/approve`, post({ frame, attempt }), parseRun),
+  /** The person's own picture for a frame: kept as its next attempt and approved. */
+  upload: (id: string, frame: number, image: File) => {
+    const form = new FormData();
+    form.set("frame", String(frame));
+    form.set("image", image);
+    return call(`/api/rotoscope/runs/${id}/upload`, { method: "POST", body: form }, parseRun);
+  },
   /** A pencil note: the red marks as a transparent PNG at the drawing's size, and what to change. */
   correct: (id: string, note: { frame: number; attempt: number; comment: string; marks: Blob }) => {
     const form = new FormData();

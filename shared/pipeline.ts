@@ -41,8 +41,8 @@ export const EFFECTS: readonly {
   {
     id: "erase",
     name: "Erase",
-    summary: "Remove text, logos or objects. SAM 3.1 finds them in every frame; the background fills in.",
-    examples: ["Remove all the text", "Erase the subtitles", "Remove the watermark", "Remove the person in the background"],
+    summary: "Remove or pixelate text, logos, faces or objects. SAM 3.1 finds them in every frame.",
+    examples: ["Remove all the text", "Erase the subtitles", "Remove the watermark", "Pixelate his face", "Censor the license plate"],
   },
   {
     id: "time-freeze",

@@ -72,6 +72,40 @@ async function render(name: string, raw: unknown, source = silent, hasAudio = fa
 }
 
 describe("compositor", () => {
+  it("Pixelate: the subject turns to flat blocks, or only the background does", async () => {
+    // 48 px blocks at 1280 wide → 12 px here. At frame 25 the square starts at x=124, inside the block 120–132.
+    const index = 25;
+    const left = xAt(index);
+    const subject = await render("pixelate-subject", { effect: "pixelate", blockSize: 48, feather: 0 });
+    await verifyOutput(subject.file, { width: W, height: H, fps: FPS, frameCount: FRAMES, hasAudio: false });
+    expect(subject.warnings).toEqual([]);
+    const frame = await frameAt(subject.file, W, H, index);
+    // That block mixes the square's red with the blue next to it; far away the background is untouched.
+    const edge = rgb(frame, W, 122, Y + 6);
+    expect(near(edge, [220, 30, 40], 40) || near(edge, [30, 60, 210], 40)).toBe(false);
+    expect(near(rgb(frame, W, 300, 10), [30, 60, 210])).toBe(true);
+
+    // On the background the square stays sharp: its edge pixel keeps the plain red.
+    const background = await render("pixelate-background", { effect: "pixelate", region: "background", blockSize: 48, feather: 0 });
+    const kept = await frameAt(background.file, W, H, index);
+    expect(near(rgb(kept, W, left + 2, Y + SIZE / 2), [220, 30, 40])).toBe(true);
+    expect(near(rgb(kept, W, left - 2, Y + SIZE / 2), [30, 60, 210])).toBe(false);
+  });
+
+  it("Effect range: original frames outside it, the effect inside, a fade at the inner edge", async () => {
+    // 48 frames = 2 s; the effect runs from 1 s to the end.
+    const out = await render("range", { effect: "selective_color", feather: 0, delivery: { range: { start: 1, end: 2 } } });
+    await verifyOutput(out.file, { width: W, height: H, fps: FPS, frameCount: FRAMES, hasAudio: false });
+    expect(out.framesWithoutMask).toBe(0);
+    const background = (index: number) => frameAt(out.file, W, H, index).then((frame) => rgb(frame, W, 300, 10));
+    expect(near(await background(10), [30, 60, 210])).toBe(true);
+    expect(isGrayish(await background(40))).toBe(true);
+    // Halfway through the 0.25 s ramp: neither the original blue nor fully gray.
+    const ramp = await background(27);
+    expect(near(ramp, [30, 60, 210])).toBe(false);
+    expect(isGrayish(ramp)).toBe(false);
+  });
+
   it("Reality Shift: subject keeps its red, background turns gray, every frame", async () => {
     const out = await render("selective", { effect: "selective_color", feather: 0 });
     await verifyOutput(out.file, { width: W, height: H, fps: FPS, frameCount: FRAMES, hasAudio: false });

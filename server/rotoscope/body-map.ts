@@ -65,7 +65,18 @@ export type BodySpec = {
   readonly headHeight: number;
   /** Shoulders' midpoint to hips' midpoint on the guide, canvas pixels. */
   readonly torso?: number;
+  /**
+   * The character's own torso at the guides' size (usualTorso), canvas pixels. The camera only ever
+   * shortens a torso, so a guide torso longer than this is the video subject's, not the character's.
+   */
+  readonly fullTorso?: number;
+  /** Canvas edges the guide figure reaches (a hand at the frame's border): a drawing that touches them is faithful, not cropped. */
+  readonly reaches?: readonly CanvasEdge[];
 };
+
+export type CanvasEdge = "left" | "right" | "top" | "bottom";
+/** A guide point this close to a canvas edge (a quarter of a cell, the tolerance the generator is held to) reaches it. */
+const EDGE_REACH = GRID.cell / 4;
 
 const LIMBS = [
   { limb: "arm", side: "right", bones: [["upper arm", 6, 8], ["forearm", 8, 10]] },
@@ -108,6 +119,12 @@ const torsoOf = (pose: Pose) => {
   return ls && rs && lh && rh ? distance(mid(ls, rs), mid(lh, rh)) : null;
 };
 
+/** The guides' median torso: the character's torso at the guides' size (sheetLengths scales the sheet to it). */
+export function usualTorso(guides: readonly Pose[]): number | null {
+  const torsos = guides.flatMap((pose) => torsoOf(pose) ?? []).sort((x, y) => x - y);
+  return torsos.length ? torsos[Math.floor(torsos.length / 2)] : null;
+}
+
 /**
  * The character's own limb lengths at the guides' size: each bone on the sheet (the longer
  * side, as a hand may be hidden), scaled from the sheet's torso to the guides' usual torso.
@@ -115,9 +132,9 @@ const torsoOf = (pose: Pose) => {
 export function sheetLengths(reference: Pose, guides: readonly Pose[]): FullLengths {
   const out = new Map<string, number>();
   const sheetTorso = torsoOf(reference);
-  const torsos = guides.flatMap((pose) => torsoOf(pose) ?? []).sort((x, y) => x - y);
-  if (!sheetTorso || !torsos.length) return out;
-  const scale = (torsos[Math.floor(torsos.length / 2)] / sheetTorso) * SHEET_FLOOR;
+  const torso = usualTorso(guides);
+  if (!sheetTorso || !torso) return out;
+  const scale = (torso / sheetTorso) * SHEET_FLOOR;
   for (const [i, { bones }] of LIMBS.entries()) {
     // LIMBS lists each limb's right side, then its left: the twin is the other side.
     const twin = LIMBS[i % 2 === 0 ? i + 1 : i - 1];
@@ -144,9 +161,9 @@ export function sheetLengths(reference: Pose, guides: readonly Pose[]): FullLeng
 export function sheetEstimates(reference: Pose, clip: readonly Pose[], guides: readonly Pose[]): FullLengths {
   const out = new Map<string, number>();
   const sheetTorso = torsoOf(reference);
-  const torsos = guides.flatMap((pose) => torsoOf(pose) ?? []).sort((x, y) => x - y);
-  if (!sheetTorso || !torsos.length) return out;
-  const scale = torsos[Math.floor(torsos.length / 2)] / sheetTorso;
+  const torso = usualTorso(guides);
+  if (!sheetTorso || !torso) return out;
+  const scale = torso / sheetTorso;
   const longest = (poses: readonly Pose[], pairs: readonly (readonly [number, number])[]) => Math.max(0, ...poses.flatMap((pose) => pairs.map(([a, b]) => {
     const [pa, pb] = [point(pose, a), point(pose, b)];
     return pa && pb ? distance(pa, pb) : 0;
@@ -180,7 +197,7 @@ function handCentre(pose: Pose, base: number): Point | null {
  * frame's size; `full` (fullLengths over the clip's guides) tells which bones
  * the camera sees shortened.
  */
-export function bodySpec(guide: Pose, marks: Marks, headHeight: number, full: FullLengths = new Map(), estimates: FullLengths = new Map()): BodySpec | null {
+export function bodySpec(guide: Pose, marks: Marks, headHeight: number, full: FullLengths = new Map(), estimates: FullLengths = new Map(), fullTorso?: number | null): BodySpec | null {
   const [ls, rs, lh, rh, nose] = [point(guide, 5), point(guide, 6), point(guide, 11), point(guide, 12), point(guide, 0)];
   if (!ls || !rs || !lh || !rh) return null;
   const torso = distance(mid(ls, rs), mid(lh, rh));
@@ -223,7 +240,15 @@ export function bodySpec(guide: Pose, marks: Marks, headHeight: number, full: Fu
     lines.push(`The ${limb} on the ${screen} of the image (${colour} in Image 2): ${path}; ${lengths.join(", ")}.${hand ? ` The hand is centred at ${xy(hand)}.` : ""}`);
   }
   lines.push("Limb lengths are fixed by the character: never draw an arm or a leg longer than its numbers above (a shortened one: never longer than fully extended). Over-long arms, forearms, thighs and shins are the most common mistake — check them before finishing.");
-  return { text: lines.join("\n"), bones, headHeight, torso };
+  const seen = guide.keypoints.map((_, i) => point(guide, i)).filter((p): p is Point => p !== null);
+  const [width, height] = [GRID.columns * GRID.cell, GRID.rows * GRID.cell];
+  const reaches = ([
+    ["left", (p: Point) => p[0] <= EDGE_REACH],
+    ["right", (p: Point) => p[0] >= width - EDGE_REACH],
+    ["top", (p: Point) => p[1] <= EDGE_REACH],
+    ["bottom", (p: Point) => p[1] >= height - EDGE_REACH],
+  ] as const).filter(([, near]) => seen.some(near)).map(([edge]) => edge);
+  return { text: lines.join("\n"), bones, headHeight, torso, ...(fullTorso ? { fullTorso } : {}), ...(reaches.length ? { reaches } : {}) };
 }
 
 /**
@@ -271,8 +296,11 @@ export function checkProportions(spec: BodySpec | null, drawn: Pose, drawnMarks:
   if (!spec || !drawnMarks) return { name: "proportions", passed: true, detail: "not measurable (body not found); left to the review" };
   // The drawing's size against the guide's, by the torso: no hand or hair ever hides it, while the top
   // of the hair under a hand on the crown is only an estimate that would stretch every limb measured.
+  // A guide torso past the character's own is the video subject's (leaning, the hips read low): measured against
+  // it, a drawing with the character's torso has every limb and the head read long.
   const drawnTorso = torsoOf(drawn);
-  const scale = drawnTorso && spec.torso ? drawnTorso / spec.torso : (drawnMarks.feet - drawnMarks.head) / Math.max(1, target.feet - target.head);
+  const guideTorso = spec.torso && spec.fullTorso ? Math.min(spec.torso, spec.fullTorso) : spec.torso;
+  const scale = drawnTorso && guideTorso ? drawnTorso / guideTorso : (drawnMarks.feet - drawnMarks.head) / Math.max(1, target.feet - target.head);
   // Too long is measured against the bone fully extended: a limb the pose shows shortened may
   // come out at its full length (a pose matter for the review), never longer than the character's.
   // Too short only counts where the guide's length is clear. In between: 1.

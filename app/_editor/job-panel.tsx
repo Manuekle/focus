@@ -24,6 +24,7 @@ export const PLAN_EFFECT_LABEL: Record<PlanEffect, string> = {
   break_frame: "Break the Frame",
   motion_echo: "Motion Echo",
   erase: "Erase",
+  pixelate: "Pixelate",
   time_freeze_echo: "Time Freeze",
 };
 

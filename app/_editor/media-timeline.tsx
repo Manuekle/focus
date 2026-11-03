@@ -5,6 +5,7 @@ import { MusicNote01Icon, PauseIcon, PlayIcon, ZoomInIcon, ZoomOutIcon } from "@
 import { HugeiconsIcon } from "../../components/icons/icon";
 import { Button } from "../../components/ui/button";
 import { Slider } from "../../components/ui/slider";
+import { snapToFrame, type CutSegment } from "../../shared/cut";
 import { timecode, timelineMarks } from "../flipbook/frame-timeline";
 import styles from "../flipbook/frame-timeline.module.css";
 
@@ -12,7 +13,24 @@ const ZOOM = { min: 1, max: 12, step: 0.25 } as const;
 const FILM_FRAMES = 18;
 
 export type TimelineSpan = { readonly start: number; readonly end: number; readonly tone: "masks" | "effect" | "freeze"; readonly label?: string };
-export type TimelineLane = { readonly id: string; readonly label: string; readonly spans: readonly TimelineSpan[]; readonly markers?: readonly number[] };
+export type TimelineLane = {
+  readonly id: string;
+  readonly label: string;
+  readonly spans: readonly TimelineSpan[];
+  readonly markers?: readonly number[];
+  /** The lane's first span can be resized from both edges (the effect range). */
+  readonly resize?: { readonly fps: number; readonly onEdge: (edge: "start" | "end", time: number) => void; readonly onEnd?: () => void };
+};
+/** The cut list drawn over the video track: kept parts with trim handles, removed parts dimmed. */
+export type TimelineCut = {
+  readonly segments: readonly CutSegment[];
+  readonly selected: number | null;
+  readonly fps: number;
+  readonly onSelect: (index: number) => void;
+  /** A trim handle moved (mid-drag); `onTrimEnd` closes the drag. */
+  readonly onTrim: (index: number, edge: "start" | "end", time: number) => void;
+  readonly onTrimEnd: () => void;
+};
 
 /**
  * Frames of a clip for the video track: a hidden <video> seeks through it once
@@ -63,7 +81,8 @@ function useFilmstrip(src: string, count: number): readonly string[] {
  * (app/flipbook/frame-timeline.tsx): a ruler, the clip as a filmstrip, lanes
  * for what the edit touches (tracked masks, the effect, the freeze), audio,
  * and a playhead on the <video> the stage is playing. Click or drag the ruler
- * or a track to scrub.
+ * or a track to scrub. With a cut list, the video track shows the kept parts
+ * (drag their edges to trim) over the parts that will be removed.
  */
 export function MediaTimeline({
   media,
@@ -72,6 +91,7 @@ export function MediaTimeline({
   lanes,
   audio,
   tools,
+  cut,
 }: {
   /** The <video> on stage; the timeline reads and seeks it. */
   readonly media: HTMLVideoElement | null;
@@ -80,6 +100,7 @@ export function MediaTimeline({
   readonly lanes: readonly TimelineLane[];
   readonly audio: boolean;
   readonly tools?: ReactNode;
+  readonly cut?: TimelineCut;
 }) {
   const scroller = useRef<HTMLDivElement>(null);
   const playhead = useRef<HTMLDivElement>(null);
@@ -151,12 +172,67 @@ export function MediaTimeline({
   };
 
   const scrub = useRef(false);
-  const seekAt = (clientX: number) => {
+  const timeAt = (clientX: number) => {
     const element = scroller.current;
-    if (!element || !media || pps <= 0) return;
+    if (!element || pps <= 0) return null;
     const left = clientX - element.getBoundingClientRect().left + element.scrollLeft;
-    media.currentTime = Math.max(0, Math.min(length - 0.001, (left - 12) / pps));
+    return Math.max(0, Math.min(length, (left - 12) / pps));
   };
+  const seekAt = (clientX: number) => {
+    const at = timeAt(clientX);
+    if (media && at !== null) media.currentTime = Math.min(length - 0.001, at);
+  };
+
+  // A trim handle: the edge follows the pointer frame by frame and the video shows the frame at the edge.
+  // A lane's resize handle works the same way, on its first span.
+  const trim = useRef<{ index: number; edge: "start" | "end"; lane?: TimelineLane["resize"] } | null>(null);
+  const onTrimDown = (event: PointerEvent<HTMLSpanElement>, index: number, edge: "start" | "end", lane?: TimelineLane["resize"]) => {
+    if (event.button !== 0 || (!cut && !lane)) return;
+    event.stopPropagation();
+    event.currentTarget.setPointerCapture(event.pointerId);
+    trim.current = { index, edge, lane };
+    media?.pause();
+    if (!lane) cut?.onSelect(index);
+  };
+  const onTrimMove = (event: PointerEvent<HTMLSpanElement>) => {
+    const at = timeAt(event.clientX);
+    const fps = trim.current?.lane?.fps ?? cut?.fps;
+    if (!trim.current || !fps || at === null) return;
+    const time = snapToFrame(at, fps);
+    if (trim.current.lane) trim.current.lane.onEdge(trim.current.edge, time);
+    else cut?.onTrim(trim.current.index, trim.current.edge, time);
+    if (media) media.currentTime = Math.min(length - 0.001, trim.current.edge === "end" ? Math.max(0, time - 1 / fps) : time);
+  };
+  const onTrimEnd = () => {
+    if (!trim.current) return;
+    const { lane } = trim.current;
+    trim.current = null;
+    if (lane) lane.onEnd?.();
+    else cut?.onTrimEnd();
+  };
+  const handles = (index: number, lane?: TimelineLane["resize"]) => (["start", "end"] as const).map((edge) => (
+    <span
+      key={edge}
+      className={styles.cutHandle}
+      data-edge={edge}
+      aria-hidden
+      onPointerDown={(event) => onTrimDown(event, index, edge, lane)}
+      onPointerMove={onTrimMove}
+      onPointerUp={onTrimEnd}
+      onPointerCancel={onTrimEnd}
+    />
+  ));
+  const gaps = useMemo(() => {
+    if (!cut) return [];
+    const result: { start: number; end: number }[] = [];
+    let at = 0;
+    for (const segment of cut.segments) {
+      if (segment.start > at + 1e-3) result.push({ start: at, end: segment.start });
+      at = segment.end;
+    }
+    if (at < length - 1e-3) result.push({ start: at, end: length });
+    return result;
+  }, [cut, length]);
   const onScrubDown = (event: PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !media) return;
     event.currentTarget.setPointerCapture(event.pointerId);
@@ -221,13 +297,29 @@ export function MediaTimeline({
                 {thumbs.map((thumb, index) => <img key={index} src={thumb} alt="" draggable={false} />)}
                 <span className={styles.filmstripName}>{film.name}</span>
               </span>
+              {gaps.map((gap) => <span key={gap.start} className={styles.cutGap} style={spanStyle(gap.start, gap.end)} aria-hidden />)}
+              {cut?.segments.map((segment, index) => (
+                <span
+                  key={`${segment.start}:${segment.end}`}
+                  className={styles.cutPart}
+                  style={{ left: x(segment.start), width: Math.max(4, (segment.end - segment.start) * pps) }}
+                  role="button"
+                  tabIndex={-1}
+                  aria-label={`Part ${index + 1}, ${timecode(segment.start)} to ${timecode(segment.end)}`}
+                  aria-pressed={cut.selected === index}
+                  onPointerDown={() => cut.onSelect(index)}
+                >
+                  {handles(index)}
+                </span>
+              ))}
             </div>
 
             {lanes.map((lane) => (
               <div key={lane.id} className={styles.track} data-track="lane">
                 {lane.spans.map((span, index) => (
-                  <span key={index} className={styles.span} data-tone={span.tone} style={spanStyle(span.start, span.end)} title={span.label}>
+                  <span key={index} className={styles.span} data-tone={span.tone} data-resizable={(lane.resize && index === 0) || undefined} style={spanStyle(span.start, span.end)} title={span.label}>
                     {span.label ? <span className={styles.clipLabel}>{span.label}</span> : null}
+                    {lane.resize && index === 0 ? handles(index, lane.resize) : null}
                   </span>
                 ))}
                 {lane.markers?.map((at) => <span key={at} className={styles.marker} style={{ left: x(at) }} aria-hidden />)}

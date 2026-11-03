@@ -23,6 +23,7 @@ export function Select({
   placeholder,
   className,
   "aria-label": ariaLabel,
+  container,
 }: {
   readonly value: string;
   readonly onValueChange: (value: string) => void;
@@ -32,6 +33,8 @@ export function Select({
   readonly placeholder?: string;
   readonly className?: string;
   readonly "aria-label"?: string;
+  /** Where the list portals to; the body by default. Pass a fullscreen element so the list shows inside it. */
+  readonly container?: HTMLElement | null;
 }) {
   return (
     <SelectPrimitive.Root value={value} onValueChange={onValueChange} disabled={disabled}>
@@ -51,7 +54,7 @@ export function Select({
           <HugeiconsIcon icon={ArrowDown01Icon} size={14} strokeWidth={1.75} />
         </SelectPrimitive.Icon>
       </SelectPrimitive.Trigger>
-      <SelectPrimitive.Portal>
+      <SelectPrimitive.Portal container={container ?? undefined}>
         <SelectPrimitive.Content
           position="popper"
           sideOffset={6}

@@ -1,5 +1,5 @@
 import path from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { copyFile, cp, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { randomUUID } from "node:crypto";
 import { z } from "zod";
@@ -43,8 +43,12 @@ import { CANVAS } from "./draw";
 import { learn, PROMPT_LESSONS } from "./lessons";
 import { fillCharacterKitFromRun, findCharacterKit, kitFitsBody } from "../characters/kit";
 import { sha256 } from "./provenance";
+import { backdropFile, hasBackdrop, makeBackdrop, type Backdrop } from "./backdrop";
+import { testDraw, type TestBackground, type TestDrawing } from "./test-draw";
+import { drawDirect, type DirectBackground } from "./direct";
+import { faceReference } from "./likeness";
 import { analyzeFramePrompt, characterSheet, diagnoseFrame, extendRun, fitsPerson, framePromptOf, generateRun, initRun, MEASURES_FILE, POSE_SHEET, poseToolAvailable, readingFile, refitRun, reguideRun, runsRoot, SCALED_CHARACTER, scaledCharacter, type LiveEvent } from "./pipeline";
-import { approveManually, attemptFile, readManifest, requestCorrection, type Manifest } from "./run-state";
+import { addOwnAttempt, approveManually, attemptFile, readManifest, requestCorrection, type Manifest } from "./run-state";
 import { assertReady, preflight } from "./guardrails";
 import { readFrameTraces } from "./trace";
 import { readDiagnostics } from "../mapping/diagnostics";
@@ -163,6 +167,24 @@ function friendly(error: unknown): string {
 
 // ── Views ──────────────────────────────────────────────────────────────────
 
+/**
+ * The drawings' canvas on the letterboxed video frame (RotoscopeRun.framing): the run's fit (layout.json) undone and
+ * the frame's letterbox applied. Read synchronously (a few bytes): every view carries it.
+ */
+function framing(dir: string): RotoscopeRun["framing"] {
+  try {
+    const fit = JSON.parse(readFileSync(path.join(dir, "layout.json"), "utf8")) as { scale: number; x: number; y: number };
+    // A PNG's width and height are the IHDR's first two words, at bytes 16 and 20.
+    const header = readFileSync(path.join(dir, "source", frameName(1))).subarray(0, 24);
+    const [width, height] = [header.readUInt32BE(16), header.readUInt32BE(20)];
+    const box = Math.min(CANVAS.width / width, CANVAS.height / height);
+    const scale = box / fit.scale;
+    return { scale, x: ((CANVAS.width - width * box) / 2 - fit.x * scale) / CANVAS.width, y: ((CANVAS.height - height * box) / 2 - fit.y * scale) / CANVAS.height };
+  } catch {
+    return null;
+  }
+}
+
 function view(state: State, manifest: Manifest | null, readings: ReadonlyMap<number, string> = new Map()): RotoscopeRun {
   const frames = (manifest?.frames ?? []).map((frame) => ({
     index: frame.index,
@@ -201,6 +223,8 @@ function view(state: State, manifest: Manifest | null, readings: ReadonlyMap<num
     poseSheet: false,
     batch: state.batch,
     batchFrames: state.batchFrames,
+    backdrops: { plate: hasBackdrop(runDir(state.id), "plate"), scenery: hasBackdrop(runDir(state.id), "scenery") },
+    framing: framing(runDir(state.id)),
     lessons: learn(manifest?.frames ?? []).map(({ rule, count, frames }, i) => ({ rule, count, frames: [...frames], inPrompt: i < PROMPT_LESSONS })),
   };
 }
@@ -434,7 +458,7 @@ const PHASE_BUSY: Partial<Record<RotoscopePhase, string>> = {
 };
 
 /** Draws from the first open frame; approved frames are never drawn again unless a pencil note reopened them. */
-export async function startGeneration(id: string, ownerId: string, gate: () => Promise<void>, options: { dual?: boolean; only?: number; renderer?: Renderer; prompt?: string; attempts?: number; /** Frames 1 to this, each drawn once more (a test batch's round). */ frames?: number } = {}): Promise<RotoscopeRun> {
+export async function startGeneration(id: string, ownerId: string, gate: () => Promise<void>, options: { dual?: boolean; only?: number; renderer?: Renderer; prompt?: string; attempts?: number; /** Frames 1 to this, each drawn once more (a test batch's round). */ frames?: number; /** Draws directly (direct.ts), as the test page does. */ background?: DirectBackground; /** The frames a person picked to redraw directly. */ redraw?: readonly number[] } = {}): Promise<RotoscopeRun> {
   const state = await ownedState(id, ownerId);
   if (PHASE_BUSY[state.phase]) throw new AppError("run_busy", 409, PHASE_BUSY[state.phase]!);
   // Muse Image draws alone (guardrails.ts): a run made with two generators draws with one from now on.
@@ -443,19 +467,21 @@ export async function startGeneration(id: string, ownerId: string, gate: () => P
   const only = options.only;
   // `only` redraws one frame, approved or not; without it the run draws what is still open.
   if (only !== undefined && !manifest.frames.some((frame) => frame.index === only)) throw new AppError("frame_not_found", 404, "That frame doesn’t exist.");
-  if (only === undefined && manifest.frames.every((frame) => frame.status === "approved")) throw new AppError("run_complete", 409, "Every frame is already approved.");
+  const redraw = options.redraw ? [...new Set(options.redraw)] : undefined;
+  if (redraw?.some((index) => !manifest.frames.some((frame) => frame.index === index))) throw new AppError("frame_not_found", 404, "One of those frames doesn’t exist.");
+  if (only === undefined && !redraw && manifest.frames.every((frame) => frame.status === "approved")) throw new AppError("run_complete", 409, "Every frame is already approved.");
   // The environment before anything is charged: a broken Python (DWPose, the fidelity gate) or a non-Muse model stops here, with its fix.
   await assertReady();
   await gate();
   // A prompt under test is a setting of that one drawing, not of the run.
   const renderer = options.renderer ?? state.renderer;
   await updateState(id, (current) => ({ ...current, phase: "generating", error: null, live: null, dual, ...(options.prompt ? {} : { renderer }) }));
-  start(id, (signal) => drawRun(id, signal, { dual, only, frames: options.frames, renderer: options.prompt ? "muse" : renderer, prompt: options.prompt, attempts: options.attempts, poseSheet: state.poseSheet }));
+  start(id, (signal) => drawRun(id, signal, { dual, only, frames: options.frames, renderer: options.prompt ? "muse" : renderer, prompt: options.prompt, attempts: options.attempts, poseSheet: state.poseSheet, background: options.prompt ? undefined : options.background, redraw }));
   return getRun(id, ownerId);
 }
 
 /** The drawing itself, in the run's background job: the run is "generating" when it starts and "ready" when it ends. */
-async function drawRun(id: string, signal: AbortSignal, options: { dual?: boolean; only?: number; frames?: number; renderer: Renderer; prompt?: string; attempts?: number; poseSheet: boolean }): Promise<void> {
+async function drawRun(id: string, signal: AbortSignal, options: { dual?: boolean; only?: number; frames?: number; renderer: Renderer; prompt?: string; attempts?: number; poseSheet: boolean; background?: DirectBackground; redraw?: readonly number[] }): Promise<void> {
   const { only } = options;
   try {
     const onLive = (event: LiveEvent) => void updateState(id, (current) => ({
@@ -463,7 +489,10 @@ async function drawRun(id: string, signal: AbortSignal, options: { dual?: boolea
       live: { ...event, image: event.stage !== "drawing" && event.stage !== "measuring", at: new Date().toISOString() },
     })).catch(() => undefined);
     if (options.prompt) await appendLog(id, `frame ${only}: drawing once with your prompt from the debug panel`);
-    const draw = (frame: number | undefined) => generateRun(runDir(id), { signal, onLive, dual: options.dual, only: frame, renderer: options.renderer, prompt: options.prompt, attempts: options.attempts, poseSheet: options.poseSheet, log: (line) => void appendLog(id, line) });
+    const log = (line: string) => void appendLog(id, line);
+    const draw = (frame: number | undefined) => options.background
+      ? drawDirect(runDir(id), { background: options.background, only: frame, frames: options.redraw, signal, onLive, log })
+      : generateRun(runDir(id), { signal, onLive, dual: options.dual, only: frame, renderer: options.renderer, prompt: options.prompt, attempts: options.attempts, poseSheet: options.poseSheet, log });
     // A batch round: each of its frames drawn once more, approved or not, one after the other.
     let outcome = await draw(options.frames ? 1 : only);
     for (let frame = 2; options.frames && frame <= options.frames && !signal.aborted; frame++) outcome = await draw(frame);
@@ -626,6 +655,31 @@ export async function approveAttempt(id: string, ownerId: string, frame: number,
     throw new AppError("approve_failed", 409, error instanceof Error ? error.message : "That attempt can’t be approved.");
   }
   await appendLog(id, `frame ${frame} approved by you (attempt ${attempt})`);
+  return getRun(id, ownerId);
+}
+
+/**
+ * The person's own picture for a frame, in place of the run's drawing: fitted
+ * into the drawing canvas (transparency kept), added as the frame's next
+ * attempt and approved.
+ */
+export async function uploadAttempt(id: string, ownerId: string, frame: number, image: Buffer): Promise<RotoscopeRun> {
+  const state = await ownedState(id, ownerId);
+  if (state.phase !== "ready") throw new AppError("run_busy", 409, PHASE_BUSY[state.phase] ?? "This run is busy.");
+  let png: Buffer;
+  try {
+    png = await sharp(image, { failOn: "error" }).rotate().ensureAlpha()
+      .resize(CANVAS.width, CANVAS.height, { fit: "contain", background: { r: 0, g: 0, b: 0, alpha: 0 } }).png().toBuffer();
+  } catch {
+    throw new AppError("INPUT_INVALID", 400, "We couldn’t read that image. Use a PNG, JPEG or WebP.");
+  }
+  let attempt: number;
+  try {
+    attempt = await addOwnAttempt(runDir(id), frame, png);
+  } catch (error) {
+    throw new AppError("upload_failed", 409, error instanceof Error ? error.message : "That image couldn’t be used for the frame.");
+  }
+  await appendLog(id, `frame ${frame}: your own image, approved (attempt ${attempt})`);
   return getRun(id, ownerId);
 }
 
@@ -838,6 +892,10 @@ export async function mediaFile(id: string, ownerId: string, kind: RotoscopeMedi
     return file;
   }
   if (kind === "character") return path.join(dir, "input", "character.png");
+  if (kind === "plate" || kind === "scenery") {
+    if (!hasBackdrop(dir, kind)) throw missing();
+    return backdropFile(dir, kind);
+  }
   if (kind === "posesheet") {
     if (!existsSync(path.join(dir, POSE_SHEET))) throw missing();
     return path.join(dir, POSE_SHEET);
@@ -891,6 +949,39 @@ export async function mediaFile(id: string, ownerId: string, kind: RotoscopeMedi
   // The attempt being checked right now: drawn and cut out, not yet in the manifest.
   if (state.live?.image && state.live.frame === entry.index && state.live.attempt === attempt) return path.join(dir, attemptFile(entry.index, attempt));
   throw missing();
+}
+
+/** Draws one of the preview's backgrounds for a run (one Muse Image picture), replacing the one it had. */
+export async function drawBackdrop(id: string, ownerId: string, kind: Backdrop, gate: () => Promise<void>): Promise<RotoscopeRun> {
+  await ownedState(id, ownerId);
+  await gate();
+  await makeBackdrop(runDir(id), kind);
+  return getRun(id, ownerId);
+}
+
+/**
+ * The test page's drawing: an uploaded frame or a run's video frame, and an uploaded character or the run's own,
+ * drawn once with the run's prompt. Nothing is measured or kept.
+ */
+export async function drawTest(ownerId: string, input: {
+  readonly frame: Buffer | { readonly run: string; readonly index: number };
+  readonly character: Buffer | { readonly run: string };
+  readonly background: TestBackground;
+}, gate: () => Promise<void>): Promise<TestDrawing> {
+  const runFile = async (id: string, ...parts: string[]) => {
+    await ownedState(id, ownerId);
+    return readFile(path.join(runDir(id), ...parts));
+  };
+  const frame = Buffer.isBuffer(input.frame) ? input.frame : await runFile(input.frame.run, "source", frameName(input.frame.index)).catch(() => {
+    throw new AppError("media_not_found", 404, "That frame isn’t in this run.");
+  });
+  const fromRun = Buffer.isBuffer(input.character) ? null : input.character.run;
+  const character = fromRun ? await runFile(fromRun, existsSync(path.join(runDir(fromRun), SCALED_CHARACTER)) ? SCALED_CHARACTER : "character.png") : input.character as Buffer;
+  const characterSheet = fromRun ? await runFile(fromRun, "character.png") : undefined;
+  const description = fromRun ? (await runFile(fromRun, "character.txt").then((text) => text.toString("utf8").trim(), () => "")) : "";
+  const face = fromRun ? await faceReference(runDir(fromRun)).catch(() => null) : null;
+  await gate();
+  return testDraw({ frame, character, ...(characterSheet ? { characterSheet } : {}), description, face, background: input.background });
 }
 
 /** The approved drawings as transparent PNGs, named by frame. */

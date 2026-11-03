@@ -1,27 +1,35 @@
 "use client";
 
 import { useEffect, useRef, useState, type CSSProperties, type KeyboardEvent, type PointerEvent, type ReactNode } from "react";
-import { ArrowLeftRightIcon, NextIcon, PauseIcon, PlayIcon, PreviousIcon, Refresh01Icon, RepeatIcon } from "@hugeicons/core-free-icons";
+import { ArrowLeftRightIcon, BlurIcon, Image01Icon, MaximizeScreenIcon, MinimizeScreenIcon, NextIcon, PauseIcon, PlayIcon, PreviousIcon, Refresh01Icon, RepeatIcon, VolumeHighIcon, VolumeOffIcon } from "@hugeicons/core-free-icons";
+import { SlidingTabs } from "../../components/ai-elements/sliding-tabs";
+import { DropdownMenu } from "radix-ui";
 import { HugeiconsIcon } from "../../components/icons/icon";
-import { AspectRatio, AspectRatioImage } from "../../components/motion/aspect-ratio";
+import { AspectRatio } from "../../components/motion/aspect-ratio";
 import { Button } from "../../components/ui/button";
+import { ColorPicker } from "../../components/ui/color-picker";
 import { MediaImage } from "../../components/ui/media-image";
 import { Skeleton } from "../../components/ui/skeleton";
-import { Slider } from "../../components/ui/slider";
-import { Switch } from "../../components/ui/switch";
-import { ToggleChip } from "../../components/ui/toggle-chip";
-import { FRAME_RATIO, FRAME_SIZE } from "../../shared/rotoscope";
+import { Select } from "../../components/ui/select";
+import { Spinner } from "../../components/ui/spinner";
+import { FRAME_RATIO, type BackdropKind } from "../../shared/rotoscope";
 import fb from "../flipbook/flipbook.module.css";
 import styles from "./rotoscope.module.css";
 
-/** Preset speeds; the slider covers everything between them in 0.05× steps. */
+/** The preview speeds offered. */
 export const SPEED_PRESETS = [0.1, 0.25, 0.5, 0.75, 1, 1.5, 2, 3, 4] as const;
-export const SPEED_RANGE = { min: 0.1, max: 4, step: 0.05 } as const;
 
-export type PlayerBackground = "checker" | "white" | "dark";
+/** plate: the video's room with the person taken out (one picture per run). */
+export type PlayerBackground = "checker" | "color" | "plate";
 /** compare: the video and the drawing beside each other; slider: one over the other, cut at a draggable divider; drawing: alone. */
 export type PlayerView = "compare" | "slider" | "drawing";
-export type PlayerFrame = { readonly index: number; readonly drawing: string; readonly source: string };
+const VIEWS: readonly { readonly value: PlayerView; readonly label: string }[] = [
+  { value: "compare", label: "Side by side" },
+  { value: "slider", label: "Wipe" },
+  { value: "drawing", label: "Drawing" },
+];
+/** `direct`: drawn on the video's own framing (direct.ts), shown as it is; otherwise moved by `framing`. */
+export type PlayerFrame = { readonly index: number; readonly drawing: string; readonly source: string; readonly direct?: boolean };
 
 /** Smoother: how much of the outgoing drawing is mixed in at a cut, and over what share of the drawing's time it fades. */
 const SMOOTHER = { strength: 0.5, share: 0.75 } as const;
@@ -30,19 +38,19 @@ const STAGE_CONTENT = "grid place-items-center";
 const SMOOTHER_KEY = "focus.rotoscope.smoother";
 
 /** What the stage shows while a frame is being drawn: the video frame, and the attempt once it exists. */
-export type LiveStage = { readonly index: number; readonly source: string; readonly drawing: string | null; readonly label: string };
+export type LiveStage = { readonly index: number; readonly source: string; readonly drawing: string | null; readonly label: string; readonly direct?: boolean };
 
 /**
  * The preview, as in Flipbook: approved drawings play at the run's frame
  * rate times 0.1× to 4×, beside their video frames or alone. While a run
  * draws, the stage follows the frame in progress instead.
  */
-export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, compact = false, audioSrc, sound, onSoundChange }: {
+export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, compact = false, audioSrc, sound, onSoundChange, backdrops, onMakeBackdrop, framing = null }: {
   readonly frames: readonly PlayerFrame[];
   readonly fps: number;
   readonly live: LiveStage | null;
   /** The frame selected in the strip: shown when paused, drawn or not. */
-  readonly focus: { readonly index: number; readonly source: string; readonly drawing: string | null } | null;
+  readonly focus: { readonly index: number; readonly source: string; readonly drawing: string | null; readonly direct?: boolean } | null;
   readonly onSelect: (index: number) => void;
   readonly strip: ReactNode;
   /** A shorter stage, for the drawer over the canvas. */
@@ -51,6 +59,12 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
   readonly audioSrc: string | null;
   readonly sound: boolean;
   readonly onSoundChange: (on: boolean) => void;
+  /** The run's backgrounds behind the drawings, null until made; without the prop only the plain backgrounds are offered. */
+  readonly backdrops?: Readonly<Record<BackdropKind, string | null>>;
+  /** Makes one (a Muse Image picture); the run comes back with it. */
+  readonly onMakeBackdrop?: (kind: BackdropKind) => Promise<void>;
+  /** Where the drawings' canvas sits on the video frame as the video pane shows it (RotoscopeRun.framing): drawings shown at the video's own size. */
+  readonly framing?: { readonly scale: number; readonly x: number; readonly y: number } | null;
 }) {
   const [position, setPosition] = useState(0);
   const [playing, setPlaying] = useState(false);
@@ -60,6 +74,16 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
   // Where the slider's divider sits, as a share of the width: the video is left of it, the drawing right.
   const [split, setSplit] = useState(50);
   const [background, setBackground] = useState<PlayerBackground>("checker");
+  const [color, setColor] = useState("#ffffff");
+  const stageColor = background === "color" ? { background: color } : undefined;
+  const [making, setMaking] = useState<BackdropKind | null>(null);
+  const backdropSrc = background === "plate" ? backdrops?.plate ?? null : null;
+  const makeBackdrop = async (kind: BackdropKind) => {
+    if (!onMakeBackdrop) return;
+    setMaking(kind);
+    try { await onMakeBackdrop(kind); } finally { setMaking(null); }
+  };
+  const backdrop = backdropSrc ? <MediaImage src={backdropSrc} alt="" aria-hidden loading="eager" draggable={false} /> : null;
   // Off by default: playback shows the drawings exactly as approved.
   const [smoother, setSmoother] = useState(false);
   useEffect(() => {
@@ -71,6 +95,22 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
   };
   const preloaded = useRef(new Map<string, HTMLImageElement>());
   const track = useRef<HTMLAudioElement | null>(null);
+  // The whole player (stage and controls) fills the screen, as the app's video player does.
+  const root = useRef<HTMLDivElement>(null);
+  const [fullscreen, setFullscreen] = useState(false);
+  const [canFullscreen, setCanFullscreen] = useState(false);
+  useEffect(() => {
+    const sync = () => setFullscreen(document.fullscreenElement === root.current);
+    setCanFullscreen(document.fullscreenEnabled);
+    document.addEventListener("fullscreenchange", sync);
+    return () => document.removeEventListener("fullscreenchange", sync);
+  }, []);
+  const toggleFullscreen = async () => {
+    try {
+      if (document.fullscreenElement === root.current) await document.exitFullscreen();
+      else await root.current?.requestFullscreen();
+    } catch { /* fullscreen refused: the preview stays in the panel */ }
+  };
   const current = Math.min(position, Math.max(0, frames.length - 1));
   const frame = frames[current];
   const rate = fps * speed;
@@ -139,12 +179,16 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
   };
 
   const still = !showLive && !playing && focus !== null && !focusPlayable ? focus : null;
-  const shown = showLive ? { source: live.source, drawing: live.drawing } : still ?? (frame ? { source: frame.source, drawing: frame.drawing } : null);
+  const shown = showLive ? { source: live.source, drawing: live.drawing, direct: live.direct } : still ?? (frame ? { source: frame.source, drawing: frame.drawing, direct: frame.direct } : null);
   const panes = view === "compare" ? 2 : 1;
-  const drawingContent = shown?.drawing && smoother && playing && !showLive && !still ? (
-    <SmoothDrawing src={shown.drawing} duration={1000 / rate} />
-  ) : shown?.drawing ? (
-    <AspectRatioImage src={shown.drawing} alt="Drawing" width={FRAME_SIZE.width} height={FRAME_SIZE.height} />
+  // The drawing moved onto the video's framing, so it stands at the size and place of the person in the video pane.
+  const framed = (drawing: ReactNode) => framing && !shown?.direct ? (
+    <div className={styles.framed} style={{ transform: `translate(${framing.x * 100}%, ${framing.y * 100}%) scale(${framing.scale})` }}>{drawing}</div>
+  ) : drawing;
+  const drawingContent = shown?.drawing && smoother && playing && !showLive && !still ? framed(
+    <SmoothDrawing src={shown.drawing} duration={1000 / rate} />,
+  ) : shown?.drawing ? framed(
+    <StageImage src={shown.drawing} alt="Drawing" />,
   ) : showLive ? (
     <>
       <Skeleton className={fb.working} />
@@ -167,14 +211,14 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
   };
 
   return (
-    <div className={fb.player}>
+    <div ref={root} className={`${fb.player} ${styles.player}`}>
       <div className={compact ? `${fb.lightTable} ${styles.compactTable}` : fb.lightTable}>
-        <div className={styles.stagePair} style={{ "--panes": panes, ...(compact ? { "--stage-height": "min(44vh, 420px)" } : {}) } as CSSProperties}>
+        <div className={styles.stagePair} data-panes={panes} style={{ ...(compact ? { "--stage-height": "min(44vh, 420px)" } : {}) } as CSSProperties}>
           {view === "compare" ? (
             <div className={fb.stage} data-transparent="">
               <AspectRatio ratio={FRAME_RATIO} animated={false} className={styles.stagePane} contentClassName={STAGE_CONTENT}>
                 {shown ? (
-                  <MediaImage src={shown.source} alt="Video frame" />
+                  <StageImage src={shown.source} alt="Video frame" />
                 ) : <span className={fb.stageEmpty}>No frames yet</span>}
               </AspectRatio>
             </div>
@@ -183,15 +227,16 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
             <div
               className={`${fb.stage} ${styles.slider}`}
               data-transparent={background === "checker" ? "" : undefined}
-              data-background={background}
+              style={stageColor}
               onPointerDown={(event) => { event.currentTarget.setPointerCapture(event.pointerId); dragTo(event); }}
               onPointerMove={(event) => { if (event.currentTarget.hasPointerCapture(event.pointerId)) dragTo(event); }}
             >
-              <AspectRatio ratio={FRAME_RATIO} animated={false} className={styles.stagePane} contentClassName={STAGE_CONTENT} data-background={background}>
+              <AspectRatio ratio={FRAME_RATIO} animated={false} className={styles.stagePane} contentClassName={STAGE_CONTENT} style={stageColor}>
+                {backdrop}
                 {drawingContent}
                 {shown ? (
                   <div className={styles.sliderVideo} style={{ clipPath: `inset(0 ${100 - split}% 0 0)` }}>
-                    <MediaImage src={shown.source} alt="Video frame" draggable={false} />
+                    <StageImage src={shown.source} alt="Video frame" />
                   </div>
                 ) : null}
                 <span className={styles.sliderTag} data-side="left" aria-hidden>Video</span>
@@ -215,8 +260,9 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
             </div>
           ) : null}
           {view !== "slider" ? (
-            <div className={fb.stage} data-transparent={background === "checker" ? "" : undefined} data-background={background}>
-              <AspectRatio ratio={FRAME_RATIO} animated={false} className={styles.stagePane} contentClassName={STAGE_CONTENT} data-background={background}>
+            <div className={fb.stage} data-transparent={background === "checker" ? "" : undefined} style={stageColor}>
+              <AspectRatio ratio={FRAME_RATIO} animated={false} className={styles.stagePane} contentClassName={STAGE_CONTENT} style={stageColor}>
+                {backdrop}
                 {drawingContent}
               </AspectRatio>
             </div>
@@ -226,58 +272,128 @@ export function RotoscopePlayer({ frames, fps, live, focus, onSelect, strip, com
 
       <div className={fb.transport}>
         <div className={fb.transportGroup}>
-          <Button size="icon-sm" variant="ghost" aria-label="Restart" onClick={() => { setPosition(0); if (frames[0]) onSelect(frames[0].index); }} disabled={!frames.length}><HugeiconsIcon icon={Refresh01Icon} size={16} strokeWidth={1.75} /></Button>
-          <Button size="icon-sm" variant="ghost" aria-label="Previous drawing" onClick={() => step(-1)} disabled={!frames.length}><HugeiconsIcon icon={PreviousIcon} size={16} strokeWidth={1.75} /></Button>
+          <Button size="icon-sm" variant="ghost" aria-label="Restart" title="Restart" onClick={() => { setPosition(0); if (frames[0]) onSelect(frames[0].index); }} disabled={!frames.length}><HugeiconsIcon icon={Refresh01Icon} size={16} strokeWidth={1.75} /></Button>
+          <Button size="icon-sm" variant="ghost" aria-label="Previous drawing" title="Previous drawing" onClick={() => step(-1)} disabled={!frames.length}><HugeiconsIcon icon={PreviousIcon} size={16} strokeWidth={1.75} /></Button>
           <Button size="icon-sm" variant="secondary" aria-label={playing ? "Pause" : "Play"} aria-pressed={playing} onClick={() => { if (!playing && !loop && current === frames.length - 1) setPosition(0); setPlaying((value) => !value); }} disabled={frames.length < 2}>
             <HugeiconsIcon icon={playing ? PauseIcon : PlayIcon} size={16} strokeWidth={1.75} />
           </Button>
-          <Button size="icon-sm" variant="ghost" aria-label="Next drawing" onClick={() => step(1)} disabled={!frames.length}><HugeiconsIcon icon={NextIcon} size={16} strokeWidth={1.75} /></Button>
-          <ToggleChip selected={loop} size="xs" onClick={() => setLoop((value) => !value)} aria-label="Loop">
-            <HugeiconsIcon icon={RepeatIcon} size={13} strokeWidth={1.75} />Loop
-          </ToggleChip>
+          <Button size="icon-sm" variant="ghost" aria-label="Next drawing" title="Next drawing" onClick={() => step(1)} disabled={!frames.length}><HugeiconsIcon icon={NextIcon} size={16} strokeWidth={1.75} /></Button>
+          <output className={`${fb.readout} ${styles.readout}`} aria-live={playing ? "off" : "polite"}>
+            {showLive ? `Drawing frame ${live.index}` : still ? `Frame ${still.index}${still.drawing ? " · last attempt" : " · not drawn"}` : frame ? `${current + 1}/${frames.length} · ${((frame.index - 1) / fps).toFixed(2)} s` : "—"}
+          </output>
         </div>
-        <output className={fb.readout} aria-live={playing ? "off" : "polite"}>
-          {showLive ? `Drawing frame ${live.index}` : still ? `Frame ${still.index}${still.drawing ? " · last attempt" : " · not drawn"}` : frame ? `${current + 1}/${frames.length} · ${((frame.index - 1) / fps).toFixed(2)} s` : "—"}
-        </output>
+        <div className={fb.transportGroup}>
+          <span title={`${Number(rate.toFixed(2))} drawings per second · ${Math.round(1000 / rate)} ms each`}>
+            <Select
+              value={String(speed)}
+              onValueChange={(value) => setSpeed(Number(value))}
+              options={SPEED_PRESETS.map((preset) => ({ value: String(preset), label: `${preset}×` }))}
+              aria-label="Preview speed"
+              className="h-8 w-[88px] gap-1 pl-2.5 pr-2 text-xs tabular-nums"
+              container={fullscreen ? root.current : null}
+            />
+          </span>
+          <PlayerToggle on={loop} onChange={setLoop} icon={RepeatIcon} label="Loop" />
+          <PlayerToggle
+            on={sound && audioSrc !== null}
+            onChange={onSoundChange}
+            disabled={audioSrc === null}
+            icon={sound && audioSrc !== null ? VolumeHighIcon : VolumeOffIcon}
+            label={audioSrc === null ? "This video has no sound" : "Sound: the reference video’s audio, also brought into Flipbook"}
+          />
+          <PlayerToggle on={smoother} onChange={toggleSmoother} icon={BlurIcon} label="Smoother: each drawing dissolves out of the previous one while playing" />
+          {canFullscreen ? (
+            <Button size="icon-sm" variant="ghost" aria-label={fullscreen ? "Exit fullscreen" : "Enter fullscreen"} title={fullscreen ? "Exit fullscreen" : "Fullscreen"} onClick={() => void toggleFullscreen()}>
+              <HugeiconsIcon icon={fullscreen ? MinimizeScreenIcon : MaximizeScreenIcon} size={16} strokeWidth={1.75} />
+            </Button>
+          ) : null}
+        </div>
       </div>
 
       {strip}
 
-      <div className={fb.controlsGrid}>
-        <div className={styles.speedRow}>
-          <div className={fb.controlHeading}>
-            <span className={fb.controlLabel}>Preview speed</span>
-            <span className={fb.controlValue}>{speed.toFixed(2)}× · {Number(rate.toFixed(2))} fps · {Math.round(1000 / rate)} ms per drawing</span>
-          </div>
-          <Slider min={SPEED_RANGE.min} max={SPEED_RANGE.max} step={SPEED_RANGE.step} value={[speed]} onValueChange={([value]) => setSpeed(Math.round(value * 100) / 100)} aria-label="Preview speed" aria-valuetext={`${speed.toFixed(2)} times, ${rate.toFixed(1)} drawings per second`} />
-          <div className={fb.chips} role="group" aria-label="Speed presets">
-            {SPEED_PRESETS.map((preset) => <ToggleChip key={preset} size="xs" selected={speed === preset} onClick={() => setSpeed(preset)}>{preset}×</ToggleChip>)}
-          </div>
+      <div className={styles.displayBar}>
+        <div role="group" aria-label="View">
+          <SlidingTabs
+            className={styles.playerTabs}
+            tabs={VIEWS.map(({ value, label }) => ({ id: value, label }))}
+            value={view}
+            onValueChange={(id) => setView(id as PlayerView)}
+          />
         </div>
-        <div className={fb.controlRow} role="group" aria-label="View">
-          <span className={fb.controlLabel}>View</span>
-          <ToggleChip size="xs" selected={view === "compare"} onClick={() => setView("compare")}>Video | drawing</ToggleChip>
-          <ToggleChip size="xs" selected={view === "slider"} onClick={() => setView("slider")} title="Both in one picture: drag the divider to wipe between the video and the drawing.">Slider</ToggleChip>
-          <ToggleChip size="xs" selected={view === "drawing"} onClick={() => setView("drawing")}>Drawing</ToggleChip>
-        </div>
-        <div className={fb.controlRow} role="group" aria-label="Background">
-          <span className={fb.controlLabel}>Background</span>
-          {(["checker", "white", "dark"] as const).map((value) => (
-            <ToggleChip key={value} size="xs" selected={background === value} onClick={() => setBackground(value)}>{value === "checker" ? "Transparent" : value === "white" ? "White" : "Dark"}</ToggleChip>
-          ))}
-        </div>
-        <div className={fb.controlRow}>
-          <span className={fb.controlLabel} title={audioSrc ? "Plays the reference video’s sound in sync with the preview, and brings it into Flipbook." : "This video has no sound track."}>Sound</span>
-          <Switch checked={sound && audioSrc !== null} disabled={audioSrc === null} onCheckedChange={onSoundChange} label="Sound: play the reference video’s audio with the preview" />
-          {audioSrc === null ? <span className={fb.controlValue}>No sound in this video</span> : null}
-        </div>
-        <div className={fb.controlRow}>
-          <span className={fb.controlLabel} title="While playing, each drawing dissolves out of the previous one instead of cutting.">Smoother</span>
-          <Switch checked={smoother} onCheckedChange={toggleSmoother} label="Smoother: dissolve between drawings while playing" />
+        <div className={styles.swatches} role="group" aria-label="Background">
+          <button type="button" className={styles.swatch} data-kind="checker" aria-pressed={background === "checker"} aria-label="Transparent background" title="Transparent" onClick={() => setBackground("checker")} />
+          <span className={styles.swatchRing} data-selected={background === "color" || undefined} title="Color" onClickCapture={() => setBackground("color")}>
+            <ColorPicker value={color} onChange={(next) => { setColor(next); setBackground("color"); }} label="Background color" className="size-6 rounded-full" container={fullscreen ? root.current : null} />
+          </span>
+          {backdrops ? (
+            <DropdownMenu.Root modal={false} onOpenChange={(open) => { if (open) setBackground("plate"); }}>
+              <DropdownMenu.Trigger className={styles.swatch} data-kind="plate" data-selected={background === "plate" || undefined} aria-label="Video background" title="Video">
+                {making ? <Spinner className="size-3" /> : backdrops.plate ? <MediaImage src={backdrops.plate} alt="" aria-hidden draggable={false} /> : <HugeiconsIcon icon={Image01Icon} size={13} strokeWidth={1.75} />}
+              </DropdownMenu.Trigger>
+              <DropdownMenu.Portal container={fullscreen ? root.current : undefined}>
+                <DropdownMenu.Content align="end" sideOffset={6} className="t-dropdown z-50 w-60 rounded-xl border border-border bg-card p-1 shadow-xl">
+                  <div className="px-2.5 py-2">
+                    <p className="text-sm font-medium text-foreground">Video background</p>
+                    <p className="text-xs text-muted-foreground">The video’s own room behind the drawings, the person taken out. One Muse Image picture for the whole run.</p>
+                  </div>
+                  {onMakeBackdrop ? (
+                    <>
+                      <DropdownMenu.Separator className="my-1 h-px bg-border" />
+                      <DropdownMenu.Item
+                        disabled={making !== null}
+                        onSelect={() => void makeBackdrop("plate")}
+                        className="flex cursor-pointer items-center gap-2 rounded-lg px-2.5 py-2 text-sm text-foreground outline-none data-[highlighted]:bg-muted data-[disabled]:pointer-events-none data-[disabled]:opacity-50"
+                      >
+                        {making ? <Spinner className="size-3" /> : null}
+                        {making ? "Cloning the background…" : backdrops.plate ? "Make again" : "Clone from the video"}
+                      </DropdownMenu.Item>
+                    </>
+                  ) : null}
+                </DropdownMenu.Content>
+              </DropdownMenu.Portal>
+            </DropdownMenu.Root>
+          ) : null}
         </div>
       </div>
     </div>
   );
+}
+
+/** An icon button that stays pressed while its setting is on. */
+function PlayerToggle({ on, onChange, icon, label, disabled = false }: {
+  readonly on: boolean;
+  readonly onChange: (on: boolean) => void;
+  readonly icon: typeof RepeatIcon;
+  readonly label: string;
+  readonly disabled?: boolean;
+}) {
+  return (
+    <Button size="icon-sm" variant={on ? "secondary" : "ghost"} aria-label={label} title={label} aria-pressed={on} disabled={disabled} onClick={() => onChange(!on)}>
+      <HugeiconsIcon icon={icon} size={16} strokeWidth={1.75} />
+    </Button>
+  );
+}
+
+/**
+ * A picture on the stage that never blinks: a new src is decoded off screen
+ * and swapped in only once it can paint, so the previous frame stays up until
+ * then. (MediaImage fades every new src in from nothing, which at 9 fps reads
+ * as flicker.)
+ */
+function StageImage({ src, alt }: { readonly src: string; readonly alt: string }) {
+  const [shown, setShown] = useState(src);
+  useEffect(() => {
+    if (src === shown) return;
+    let live = true;
+    const next = new Image();
+    next.src = src;
+    // A picture that can't be decoded is still swapped in, so the stage never keeps a stale frame.
+    void next.decode().catch(() => undefined).then(() => { if (live) setShown(src); });
+    return () => { live = false; };
+  }, [src, shown]);
+  // eslint-disable-next-line @next/next/no-img-element -- run media from the API, swapped by hand
+  return <img src={shown} alt={alt} draggable={false} onError={(event) => { event.currentTarget.style.visibility = "hidden"; }} onLoad={(event) => { event.currentTarget.style.visibility = ""; }} />;
 }
 
 /**
